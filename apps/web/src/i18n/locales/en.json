@@ -61,6 +61,8 @@
     "language": "Language",
     "theme": "Theme",
     "claudeCode": "Claude Code",
+    "claudeCodeWithVersion": "Claude Code v{{version}}",
+    "claudeCodeWithVersions": "Claude Code v{{codeVersion}} / SDK v{{sdkVersion}}",
     "skills": "Skills",
     "agents": "Subagents",
     "mcp": "MCP Servers",
@@ -76,6 +78,7 @@
     "cancel": "Cancel",
     "save": "Save",
     "add": "Add",
+    "clear": "Clear",
     "loadMore": "Load more"
   },
   "time": {

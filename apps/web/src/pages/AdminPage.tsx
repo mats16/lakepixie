@@ -6,6 +6,7 @@ import type { AdminUserInfo, AppSettingsResponse, ServingEndpointsByTier } from 
 import { useUser } from '@/hooks/useUser';
 import { adminService } from '@/services';
 import { Button } from '@/components/ui/button';
+import { ClearableInput } from '@/components/ui/clearable-input';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -43,8 +44,8 @@ function useAdminSettings() {
     async (key: string, patch: Parameters<typeof adminService.updateSettings>[0]) => {
       setSavingKey(key);
       try {
-        await adminService.updateSettings(patch);
-        setSettings(prev => (prev ? ({ ...prev, ...patch } as AppSettingsResponse) : prev));
+        const updatedSettings = await adminService.updateSettings(patch);
+        setSettings(updatedSettings);
         toast.success(t('admin.updateSettingsSuccess'));
         return true;
       } catch {
@@ -330,13 +331,13 @@ function AdminBrandingContent() {
             >
               <p className="text-sm font-medium shrink-0">{label}</p>
               <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-                <Input
-                  className="w-full sm:w-[260px]"
+                <ClearableInput
+                  clearLabel={t('common.clear')}
+                  disabled={savingKey !== null}
                   maxLength={80}
+                  onChange={onChange}
                   placeholder={placeholder}
                   value={value}
-                  onChange={e => onChange(e.target.value)}
-                  disabled={savingKey !== null}
                 />
                 <Button
                   variant="outline"

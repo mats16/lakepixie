@@ -61,6 +61,8 @@
     "language": "言語",
     "theme": "テーマ",
     "claudeCode": "Claude Code",
+    "claudeCodeWithVersion": "Claude Code v{{version}}",
+    "claudeCodeWithVersions": "Claude Code v{{codeVersion}} / SDK v{{sdkVersion}}",
     "skills": "スキル",
     "agents": "サブエージェント",
     "mcp": "MCP サーバー",
@@ -76,6 +78,7 @@
     "cancel": "キャンセル",
     "save": "保存",
     "add": "追加",
+    "clear": "クリア",
     "loadMore": "もっと読み込む"
   },
   "time": {
