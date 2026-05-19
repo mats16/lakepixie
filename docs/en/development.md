@@ -132,8 +132,8 @@ DATABRICKS_USER_EMAIL=your-email@example.com
 # SQL Warehouse (if using Databricks SQL)
 WAREHOUSE_ID=your-warehouse-id
 
-# Anthropic API (auto-constructed from DATABRICKS_WORKSPACE_ID; override here if needed)
-ANTHROPIC_BASE_URL=https://your-workspace-id.ai-gateway.cloud.databricks.com/anthropic
+# Anthropic API (auto-constructed from DATABRICKS_HOST; override here if needed)
+ANTHROPIC_BASE_URL=https://your-workspace.cloud.databricks.com/ai-gateway/anthropic
 # Model defaults (opus/sonnet/haiku) are managed via the Admin Settings UI
 
 # ccbricks base directory

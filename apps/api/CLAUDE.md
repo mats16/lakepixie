@@ -236,8 +236,8 @@ NODE_ENV=development          # development | production | test
 PORT=8000                     # Server port
 CCBRICKS_BASE_DIR=/home/app  # Base directory (users/, sessions/, db/ inside)
 
-# Anthropic API (auto-constructed from DATABRICKS_WORKSPACE_ID; override here if needed)
-ANTHROPIC_BASE_URL=https://your-workspace-id.ai-gateway.cloud.databricks.com/anthropic
+# Anthropic API (auto-constructed from DATABRICKS_HOST; override here if needed)
+ANTHROPIC_BASE_URL=https://your-workspace.cloud.databricks.com/ai-gateway/anthropic
 # Model defaults (opus/sonnet/haiku) are managed via app_settings DB table
 ```
 

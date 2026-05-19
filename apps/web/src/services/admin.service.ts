@@ -18,7 +18,7 @@ export const adminService = {
   getSettings: () => apiClient<AppSettingsResponse>('/api/admin/settings'),
 
   updateSettings: (settings: UpdateAppSettingsRequest) =>
-    apiClient<{ success: true }>('/api/admin/settings', {
+    apiClient<AppSettingsResponse>('/api/admin/settings', {
       method: 'PATCH',
       body: JSON.stringify(settings),
     }),

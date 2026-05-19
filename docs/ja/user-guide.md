@@ -81,7 +81,7 @@ ccbricks では、操作の種類によって異なる認証方式を使用し�
 
 | カテゴリ | 使用トークン | 説明 |
 |---------|-------------|------|
-| **Claude Code 基盤モデル** | SP | Databricks がホストする Foundation Model API |
+| **Claude Code 基盤モデル** | OBO | Databricks がホストする Foundation Model API |
 | **Databricks CLI (Claude 実行)** | OBO | `databricks workspace import-dir` やアプリの作成・デプロイなどの CLI コマンド |
 | **Databricks SQL (MCP)** | OBO | ユーザー権限で SQL を実行 |
 
@@ -91,14 +91,14 @@ ccbricks では、操作の種類によって異なる認証方式を使用し�
 
 Databricks Apps の認証プロキシが自動的に付与するトークンです。**ユーザーの操作は不要** で、アプリにアクセスするだけで利用できます。
 
-- **用途**: Claude が実行する CLI コマンド、MCP 経由の Databricks SQL 実行
+- **用途**: Claude Code の基盤モデル呼び出し、Claude が実行する CLI コマンド、MCP 経由の Databricks SQL 実行
 - **権限**: ユーザー自身の Databricks 権限
 
 #### Service Principal (SP)
 
 アプリケーションに設定されたサービスアカウントのトークンです。
 
-- **用途**: Claude Code の基盤モデル呼び出し
+- **用途**: アプリ内部の Databricks API 操作、テレメトリヘルパー認証
 - **権限**: SP に付与された権限範囲のみ
 
 ## スキルシステム

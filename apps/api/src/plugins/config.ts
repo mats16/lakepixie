@@ -156,7 +156,7 @@ export default fp(
       fastify.config.PATH = `${fastify.config.HOME}/bin:${fastify.config.PATH}`;
       // Set Anthropic base URL (AI Gateway)
       if (!fastify.config.ANTHROPIC_BASE_URL) {
-        fastify.config.ANTHROPIC_BASE_URL = `https://${fastify.config.DATABRICKS_WORKSPACE_ID}.ai-gateway.cloud.databricks.com/anthropic`;
+        fastify.config.ANTHROPIC_BASE_URL = `https://${fastify.config.DATABRICKS_HOST}/ai-gateway/anthropic`;
       }
       fastify.log.info('Configuration loaded and validated');
     } catch (error) {

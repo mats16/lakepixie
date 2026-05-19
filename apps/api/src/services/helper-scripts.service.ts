@@ -4,8 +4,8 @@
  * apiKeyHelper / otelHeadersHelper 用のシェルスクリプトを
  * ユーザーの $CLAUDE_CONFIG_DIR に書き出す。
  *
- * OAuth Client Credentials フローは databricks-auth.ts と同じロジックだが、
- * Claude Code 子プロセス内で実行される bash スクリプトとして独立して保持している。
+ * apiKeyHelper は Claude Code のモデル呼び出しに使う OBO トークンを返す。
+ * otelHeadersHelper は OTel エクスポート用に SP OAuth トークンを取得する。
  */
 
 import { writeFile } from 'node:fs/promises';
@@ -24,23 +24,17 @@ export interface HelperScriptPaths {
 }
 
 /**
- * SP OAuth Client Credentials でトークンを取得する bash スクリプト本体
+ * Claude Code のモデル呼び出しに使う OBO トークンを返す bash スクリプト本体
  *
- * 環境変数 DATABRICKS_HOST, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET を使用。
+ * 環境変数 DATABRICKS_TOKEN を使用。
  */
 export const API_KEY_HELPER_SCRIPT = `#!/bin/bash
 set -euo pipefail
-HOST="\${DATABRICKS_HOST#https://}"
-HOST="\${HOST#http://}"
-RESPONSE=$(curl -s -X POST "https://\${HOST}/oidc/v1/token" \\
-  -H "Content-Type: application/x-www-form-urlencoded" \\
-  -d "grant_type=client_credentials&client_id=\${DATABRICKS_CLIENT_ID}&client_secret=\${DATABRICKS_CLIENT_SECRET}&scope=all-apis")
-TOKEN=$(echo "\${RESPONSE}" | jq -r '.access_token')
-if [ -z "\${TOKEN}" ] || [ "\${TOKEN}" = "null" ]; then
-  echo "ERROR: Failed to obtain access token from \${DATABRICKS_HOST}" >&2
+if [ -z "\${DATABRICKS_TOKEN:-}" ]; then
+  echo "ERROR: DATABRICKS_TOKEN is not set; OBO token is required for Claude Code model access" >&2
   exit 1
 fi
-echo "\${TOKEN}"
+echo "\${DATABRICKS_TOKEN}"
 `;
 
 /**

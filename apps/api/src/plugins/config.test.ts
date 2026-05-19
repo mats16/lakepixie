@@ -86,7 +86,7 @@ describe('config plugin', () => {
       expect(app.config.PORT).toBe(9000);
     });
 
-    it('should construct ANTHROPIC_BASE_URL from DATABRICKS_WORKSPACE_ID', async () => {
+    it('should construct ANTHROPIC_BASE_URL from DATABRICKS_HOST', async () => {
       process.env.DATABASE_URL = 'postgresql://localhost:5432/test';
       process.env.DATABRICKS_HOST = 'myworkspace.databricks.com';
       process.env.DATABRICKS_WORKSPACE_ID = '1234567890';
@@ -94,7 +94,7 @@ describe('config plugin', () => {
       await app.register(configPlugin);
 
       expect(app.config.ANTHROPIC_BASE_URL).toBe(
-        'https://1234567890.ai-gateway.cloud.databricks.com/anthropic'
+        'https://myworkspace.databricks.com/ai-gateway/anthropic'
       );
     });
 

@@ -26,9 +26,18 @@ export function UserFooterExpanded({
   initials,
   databricksHost,
 }: UserFooterExpandedProps) {
-  const { isAdmin } = useUser();
+  const { isAdmin, claudeAgentSdkVersion, claudeCodeVersion } = useUser();
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const versionLabel =
+    claudeCodeVersion && claudeAgentSdkVersion
+      ? t('user.claudeCodeWithVersions', {
+          codeVersion: claudeCodeVersion,
+          sdkVersion: claudeAgentSdkVersion,
+        })
+      : claudeCodeVersion
+        ? t('user.claudeCodeWithVersion', { version: claudeCodeVersion })
+        : t('user.claudeCode');
 
   const changeLanguage = (lang: string) => {
     i18n.changeLanguage(lang);
@@ -52,7 +61,7 @@ export function UserFooterExpanded({
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-            {t('user.claudeCode')}
+            {versionLabel}
           </DropdownMenuLabel>
           <DropdownMenuItem onClick={() => navigate('/skills')}>
             <Puzzle className="h-4 w-4 mr-2" />

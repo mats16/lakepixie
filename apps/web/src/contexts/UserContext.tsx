@@ -5,6 +5,8 @@ import { appSettingsService, userService } from '@/services';
 export interface UserContextValue {
   user: UserInfo | null;
   databricksHost: string | null;
+  claudeAgentSdkVersion: string | null;
+  claudeCodeVersion: string | null;
   appTitle: string;
   welcomeHeading: string;
   isLoading: boolean;
@@ -23,6 +25,8 @@ interface UserProviderProps {
 export function UserProvider({ children }: UserProviderProps) {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [databricksHost, setDatabricksHost] = useState<string | null>(null);
+  const [claudeAgentSdkVersion, setClaudeAgentSdkVersion] = useState<string | null>(null);
+  const [claudeCodeVersion, setClaudeCodeVersion] = useState<string | null>(null);
   const [appTitle, setAppTitle] = useState('');
   const [welcomeHeading, setWelcomeHeading] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -48,12 +52,16 @@ export function UserProvider({ children }: UserProviderProps) {
       const data = await userService.getCurrentUser();
       setUser(data.user);
       setDatabricksHost(data.databricks_host);
+      setClaudeAgentSdkVersion(data.claude_agent_sdk_version);
+      setClaudeCodeVersion(data.claude_code_version);
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Unknown error');
       console.error('Failed to fetch user:', error);
       setError(error);
       setUser(null);
       setDatabricksHost(null);
+      setClaudeAgentSdkVersion(null);
+      setClaudeCodeVersion(null);
     } finally {
       setIsLoading(false);
     }
@@ -69,6 +77,8 @@ export function UserProvider({ children }: UserProviderProps) {
       value={{
         user,
         databricksHost,
+        claudeAgentSdkVersion,
+        claudeCodeVersion,
         appTitle,
         welcomeHeading,
         isLoading,

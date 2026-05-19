@@ -81,7 +81,7 @@ ccbricks uses different authentication methods depending on the type of operatio
 
 | Category | Token Used | Description |
 |----------|------------|-------------|
-| **Claude Code Model** | SP | Databricks-hosted Foundation Model API |
+| **Claude Code Model** | OBO | Databricks-hosted Foundation Model API |
 | **Databricks CLI (Claude execution)** | OBO | CLI commands like `databricks workspace import-dir`, app create/deploy |
 | **Databricks SQL (MCP)** | OBO | Execute SQL with user permissions |
 
@@ -91,14 +91,14 @@ ccbricks uses different authentication methods depending on the type of operatio
 
 A token automatically provided by the Databricks Apps authentication proxy. **No user action required** - it's available just by accessing the app.
 
-- **Use case**: CLI commands executed by Claude, Databricks SQL execution via MCP
+- **Use case**: Claude Code foundation model calls, CLI commands executed by Claude, Databricks SQL execution via MCP
 - **Permissions**: User's own Databricks permissions
 
 #### Service Principal (SP)
 
 A service account token configured in the application.
 
-- **Use case**: Claude Code's foundation model calls
+- **Use case**: App-internal Databricks API operations and telemetry helper authentication
 - **Permissions**: Limited to permissions granted to the SP
 
 ## Skills System
