@@ -13,20 +13,21 @@ resources:
       #      permission: READ
       user_api_scopes:
         - sql
-        - vectorsearch.vector-search-indexes
-        - serving.serving-endpoints
-        - files.files
-        - dashboards.genie
+        - genie
         - catalog.catalogs:read
         - catalog.schemas:read
         - catalog.tables:read
         - catalog.connections
+        - files
+        - ai-gateway
+        - vector-search
+        - dashboards.genie
         - mcp.external
-        - mcp.genie
         - mcp.functions
+        - mcp.genie
         - mcp.vectorsearch
-        - apps
         - workspace.workspace
+        - apps
       permissions:
         - level: CAN_USE
           group_name: users

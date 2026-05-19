@@ -132,8 +132,8 @@ DATABRICKS_USER_EMAIL=your-email@example.com
 # SQL Warehouse（Databricks SQL を使用する場合）
 WAREHOUSE_ID=your-warehouse-id
 
-# Anthropic API（DATABRICKS_WORKSPACE_ID から自動構築; 必要に応じてオーバーライド）
-ANTHROPIC_BASE_URL=https://your-workspace-id.ai-gateway.cloud.databricks.com/anthropic
+# Anthropic API（DATABRICKS_HOST から自動構築; 必要に応じてオーバーライド）
+ANTHROPIC_BASE_URL=https://your-workspace.cloud.databricks.com/ai-gateway/anthropic
 # モデルのデフォルト設定（opus/sonnet/haiku）は管理画面から設定します
 
 # ccbricks ベースディレクトリ

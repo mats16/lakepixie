@@ -476,10 +476,10 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
             'thinking,adaptive_thinking,effort,interleaved_thinking',
           ANTHROPIC_CUSTOM_HEADERS: 'x-databricks-use-coding-agent-mode: true',
           CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
-          // Databricks CLI 認証: OBO トークンを使用
+          // Databricks CLI と Claude Code モデル認証: OBO トークンを使用
           DATABRICKS_HOST: `https://${fastify.config.DATABRICKS_HOST}`,
           DATABRICKS_TOKEN: oboToken ?? '',
-          // SP 認証情報: ヘルパースクリプトが OAuth トークン取得に使用
+          // SP 認証情報: OTel ヘッダーヘルパーが OAuth トークン取得に使用
           DATABRICKS_CLIENT_ID: fastify.config.DATABRICKS_CLIENT_ID,
           DATABRICKS_CLIENT_SECRET: fastify.config.DATABRICKS_CLIENT_SECRET,
           ...claudeTelemetryEnv,
