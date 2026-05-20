@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { EventEmitter } from 'node:events';
 import { SessionId } from '../models/session.model.js';
 
@@ -222,6 +223,26 @@ describe('session.service', () => {
           [{ ...outcome, git_info: { ...outcome.git_info, repo: 'acme/other' } }]
         )
       ).toThrow('must match');
+    });
+  });
+
+  describe('event UUID normalization', () => {
+    it('keeps valid PostgreSQL UUID values', () => {
+      const uuid = '019bdf24-b923-7aaa-918c-8ce71422def0';
+
+      expect(__testing.extractEventUuid({ type: 'system', uuid } as unknown as SDKMessage)).toBe(
+        uuid
+      );
+    });
+
+    it('replaces non-UUID event ids before Lakebase persistence', () => {
+      const eventUuid = __testing.extractEventUuid({
+        type: 'system',
+        uuid: 'event-not-a-postgres-uuid',
+      } as unknown as SDKMessage);
+
+      expect(eventUuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+      expect(eventUuid).not.toBe('event-not-a-postgres-uuid');
     });
   });
 

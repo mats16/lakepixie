@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import type { ServingEndpointsByTier, ApiError } from '@repo/types';
-import { createUserContext } from '../lib/user-context.js';
+import { getAuthProvider } from '../lib/databricks-auth.js';
 
 interface ServingEndpointsResponse {
   endpoints?: Array<{
@@ -25,14 +25,16 @@ const modelsRoute: FastifyPluginAsync = async fastify => {
   // GET /models - Claude モデル（Serving Endpoint）一覧
   fastify.get<{
     Reply: ServingEndpointsByTier | ApiError;
-  }>('/models', async (request, reply) => {
-    const ctx = createUserContext(fastify, request);
-    const oboToken = ctx.oboAccessToken;
+  }>('/models', async (_request, reply) => {
+    const authProvider = getAuthProvider(fastify);
+    let token: string;
 
-    if (!oboToken) {
+    try {
+      token = await authProvider.getToken();
+    } catch {
       return reply.status(401).send({
         error: 'Unauthorized',
-        message: 'OBO token is not available',
+        message: 'Access token is required (Service Principal)',
         statusCode: 401,
       });
     }
@@ -40,7 +42,7 @@ const modelsRoute: FastifyPluginAsync = async fastify => {
     const response = await fetch(`https://${databricksHost}/api/2.0/serving-endpoints`, {
       method: 'GET',
       headers: {
-        authorization: `Bearer ${oboToken}`,
+        authorization: `Bearer ${token}`,
       },
     });
 

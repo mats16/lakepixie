@@ -13,10 +13,10 @@
     "clean": "rm -rf dist .turbo node_modules"
   },
   "devDependencies": {
-    "@repo/eslint-config": "*",
-    "@repo/typescript-config": "*"
+    "@repo/eslint-config": "*"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.110"
+    "@anthropic-ai/claude-agent-sdk": "^0.2.110",
+    "@repo/typescript-config": "*"
   }
 }

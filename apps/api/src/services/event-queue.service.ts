@@ -172,22 +172,43 @@ export class EventBatcher {
     );
 
     for (let i = 0; i < results.length; i++) {
+      const userId = userIds[i];
+      const events = eventsByUser.get(userId)!;
       if (results[i].status === 'rejected') {
-        const userId = userIds[i];
-        const events = eventsByUser.get(userId)!;
         const error = (results[i] as PromiseRejectedResult).reason;
         this.fastify.log.warn(
           {
             err: error,
             userId,
-            eventCount: events.length,
-            sessionIds: [...new Set(events.map(e => e.sessionId))],
+            ...this.summarizeEvents(events),
           },
           'Event flush failed for user, scheduling retry'
         );
         this.scheduleRetry(userId, events, 1);
+      } else {
+        this.fastify.log.info(
+          {
+            userId,
+            ...this.summarizeEvents(events),
+          },
+          'Event flush succeeded for user'
+        );
       }
     }
+  }
+
+  private summarizeEvents(events: SessionEventJobPayload[]): {
+    eventCount: number;
+    sessionIds: string[];
+    eventTypes: string[];
+    firstEventUuid: string | undefined;
+  } {
+    return {
+      eventCount: events.length,
+      sessionIds: [...new Set(events.map(e => e.sessionId))],
+      eventTypes: [...new Set(events.map(e => e.type))],
+      firstEventUuid: events[0]?.eventUuid,
+    };
   }
 
   private groupByUser(events: SessionEventJobPayload[]): Map<string, SessionEventJobPayload[]> {

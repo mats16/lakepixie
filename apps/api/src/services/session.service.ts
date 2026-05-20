@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, and, inArray, lt, asc } from 'drizzle-orm';
+import { accessSync, constants as fsConstants } from 'node:fs';
 import { chmod, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { spawnAsync } from '../utils/spawn.js';
 import {
   query,
@@ -64,6 +66,8 @@ import {
 const sessionAbortControllers = new Map<string, AbortController>();
 const QUEUED_USER_EVENT_SUBTYPE = 'queued';
 const GIT_COMMAND_TIMEOUT_MS = 60000;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const moduleRequire = createRequire(import.meta.url);
 
 export class SessionValidationError extends Error {
   constructor(message: string) {
@@ -76,6 +80,135 @@ interface QueuedUserMessageResume {
   userMessage: SDKUserMessage;
   sessionContext: SessionContextResponse;
   sdkSessionId: string;
+}
+
+type SupportedClaudeArch = 'x64' | 'arm64';
+type LinuxLibc = 'glibc' | 'musl';
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function toLogError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function getSupportedClaudeArch(): SupportedClaudeArch {
+  if (process.arch === 'x64' || process.arch === 'arm64') {
+    return process.arch;
+  }
+  throw new Error(`Unsupported Claude Agent SDK architecture: ${process.arch}`);
+}
+
+function getLinuxLibc(): LinuxLibc {
+  const report = process.report?.getReport() as
+    | { header?: { glibcVersionRuntime?: string } }
+    | undefined;
+  const header = report?.header;
+  return header?.glibcVersionRuntime ? 'glibc' : 'musl';
+}
+
+function getClaudeNativePackageName(): string {
+  const arch = getSupportedClaudeArch();
+  if (process.platform === 'linux') {
+    const libcSuffix = getLinuxLibc() === 'musl' ? '-musl' : '';
+    return `@anthropic-ai/claude-agent-sdk-linux-${arch}${libcSuffix}`;
+  }
+  if (process.platform === 'darwin' || process.platform === 'win32') {
+    return `@anthropic-ai/claude-agent-sdk-${process.platform}-${arch}`;
+  }
+  throw new Error(`Unsupported Claude Agent SDK platform: ${process.platform}`);
+}
+
+function resolveClaudeCodeExecutable(packageName = getClaudeNativePackageName()): string {
+  const executableName = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  let executablePath: string;
+  try {
+    executablePath = moduleRequire.resolve(`${packageName}/${executableName}`);
+  } catch (err) {
+    throw new Error(
+      `Claude Agent SDK native binary package is missing for ${process.platform}-${process.arch}` +
+        `${process.platform === 'linux' ? `-${getLinuxLibc()}` : ''}: ${packageName}`,
+      { cause: toLogError(err) }
+    );
+  }
+
+  try {
+    accessSync(executablePath, fsConstants.X_OK);
+  } catch (err) {
+    throw new Error(`Claude Agent SDK native binary is not executable: ${executablePath}`, {
+      cause: toLogError(err),
+    });
+  }
+
+  return executablePath;
+}
+
+async function setSessionStatusError(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId,
+  stage: string
+): Promise<void> {
+  try {
+    await fastify.withUserContext(userId, async tx => {
+      await tx
+        .update(sessions)
+        .set({ status: 'error', updatedAt: new Date() })
+        .where(eq(sessions.id, sessionId.toUUID()));
+    });
+  } catch (err) {
+    fastify.log.error(
+      { err: toLogError(err), sessionId: sessionId.toString(), userId, stage },
+      'Failed to mark session as error'
+    );
+  }
+}
+
+async function persistSessionFailureEvent(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId,
+  stage: string,
+  error: unknown
+): Promise<void> {
+  const message = errorMessage(error);
+  const eventUuid = crypto.randomUUID();
+  const failureEvent = {
+    type: 'result',
+    subtype: 'error_during_execution',
+    uuid: eventUuid,
+    session_id: sessionId.toString(),
+    is_error: true,
+    errors: [`${stage}: ${message}`],
+    result: message,
+  } as unknown as SDKResultMessage;
+
+  broadcastToSession(sessionId.toString(), failureEvent);
+
+  try {
+    await fastify.withUserContext(userId, async tx => {
+      await insertSessionEventInTx(tx, {
+        uuid: eventUuid,
+        sessionId: sessionId.toUUID(),
+        type: failureEvent.type,
+        subtype: failureEvent.subtype,
+        message: failureEvent,
+      });
+    });
+  } catch (err) {
+    fastify.log.error(
+      {
+        err: toLogError(err),
+        sessionId: sessionId.toString(),
+        userId,
+        stage,
+        failureEventUuid: eventUuid,
+        originalError: message,
+      },
+      'Failed to persist session failure event'
+    );
+  }
 }
 
 /**
@@ -285,11 +418,41 @@ const SESSION_SELECT_COLUMNS = {
 } as const;
 
 /**
- * SDKMessage から UUID を安全に抽出する。有効な文字列でない場合はランダム UUID を生成する。
+ * SDKMessage から PostgreSQL uuid 型に保存できる UUID を抽出する。
+ * SQLite は任意文字列を受け入れるため、Lakebase 移行後にここが不正値検出ポイントになる。
  */
-function extractEventUuid(message: SDKMessage): string {
+function extractEventUuid(message: SDKMessage | SDKUserMessage): string {
   const raw = 'uuid' in message ? message.uuid : undefined;
-  return typeof raw === 'string' && raw ? raw : crypto.randomUUID();
+  return typeof raw === 'string' && UUID_RE.test(raw) ? raw : crypto.randomUUID();
+}
+
+function normalizeMessageUuid<T extends SDKMessage | SDKUserMessage>(
+  fastify: FastifyInstance,
+  sessionId: SessionId,
+  message: T
+): { eventUuid: string; message: T } {
+  const raw = 'uuid' in message ? message.uuid : undefined;
+  const eventUuid = extractEventUuid(message);
+  if (typeof raw === 'string' && raw === eventUuid) {
+    return { eventUuid, message };
+  }
+
+  if (typeof raw === 'string' && raw.length > 0) {
+    fastify.log.warn(
+      {
+        sessionId: sessionId.toString(),
+        originalUuid: raw,
+        replacementUuid: eventUuid,
+        messageType: message.type,
+      },
+      'Replacing non-PostgreSQL UUID event id before persistence'
+    );
+  }
+
+  return {
+    eventUuid,
+    message: { ...message, uuid: eventUuid } as T,
+  };
 }
 
 /**
@@ -306,21 +469,24 @@ function saveAndBroadcastEvent(
   sessionId: SessionId,
   message: SDKMessage
 ): void {
-  const eventUuid = extractEventUuid(message);
-  const eventSubtype = 'subtype' in message ? (message.subtype as string | undefined) : undefined;
+  const normalized = normalizeMessageUuid(fastify, sessionId, message);
+  const eventSubtype =
+    'subtype' in normalized.message
+      ? (normalized.message.subtype as string | undefined)
+      : undefined;
 
   // 1. バッチバッファに追加（バッチサイズ到達 or インターバル経過で DB 永続化）
   enqueueSessionEvent(fastify, {
     userId,
     sessionId: sessionId.toUUID(),
-    eventUuid,
-    type: message.type,
+    eventUuid: normalized.eventUuid,
+    type: normalized.message.type,
     subtype: eventSubtype ?? null,
-    message,
+    message: normalized.message,
   });
 
   // 2. リアルタイム接続にブロードキャスト
-  broadcastToSession(sessionId.toString(), message);
+  broadcastToSession(sessionId.toString(), normalized.message);
 }
 
 /**
@@ -354,9 +520,11 @@ async function processAllEvents(
   const { userId } = ctx;
   let hasError = false;
   let pendingSdkSessionId: string | null = null;
+  let eventCount = 0;
 
   try {
     for await (const message of response) {
+      eventCount++;
       // バッチバッファに追加 & WebSocket 送信
       saveAndBroadcastEvent(fastify, userId, sessionId, message);
 
@@ -379,7 +547,7 @@ async function processAllEvents(
           pendingSdkSessionId = null; // 成功したのでフォールバック不要
         } catch (updateError) {
           fastify.log.error(
-            { sessionId: sessionId.toString(), updateError },
+            { err: toLogError(updateError), sessionId: sessionId.toString(), userId },
             'Failed to update session status to running (continuing event processing)'
           );
         }
@@ -403,22 +571,14 @@ async function processAllEvents(
     }
   } catch (error) {
     hasError = true;
-    fastify.log.error({ sessionId: sessionId.toString(), error }, 'Error processing events');
+    const stage = 'process_events';
+    fastify.log.error(
+      { err: toLogError(error), sessionId: sessionId.toString(), userId, eventCount },
+      'Error processing session events'
+    );
 
-    // セッション状態を error に更新
-    try {
-      await fastify.withUserContext(userId, async tx => {
-        await tx
-          .update(sessions)
-          .set({ status: 'error' })
-          .where(eq(sessions.id, sessionId.toUUID()));
-      });
-    } catch (updateError) {
-      fastify.log.error(
-        { sessionId: sessionId.toString(), updateError },
-        'Failed to update session status to error'
-      );
-    }
+    await persistSessionFailureEvent(fastify, userId, sessionId, stage, error);
+    await setSessionStatusError(fastify, userId, sessionId, stage);
 
     throw error;
   } finally {
@@ -453,7 +613,7 @@ async function processAllEvents(
         }
       } catch (updateError) {
         fastify.log.error(
-          { sessionId: sessionId.toString(), updateError },
+          { err: toLogError(updateError), sessionId: sessionId.toString(), userId },
           'Failed to complete session run in finally'
         );
       }
@@ -638,6 +798,8 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
     });
 
     // ヘルパースクリプトを配置（apiKeyHelper / otelHeadersHelper）
+    const claudeNativePackage = getClaudeNativePackageName();
+    const pathToClaudeCodeExecutable = resolveClaudeCodeExecutable(claudeNativePackage);
     const helperPaths = await writeHelperScripts(userHome);
     if (gitSource) {
       cleanupGitCredential = await configureGitCredentialHelper(
@@ -647,12 +809,32 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       );
     }
 
+    fastify.log.info(
+      {
+        sessionId: sessionId.toString(),
+        userId,
+        cwd: sessionContext.cwd,
+        model: sessionContext.model,
+        resume: Boolean(sdkSessionId),
+        hasOboToken: Boolean(oboToken),
+        isSqlite: fastify.isSqlite,
+        hasLakebaseEndpoint: fastify.config.LAKEBASE_ENDPOINT.trim() !== '',
+        claudeNativePackage,
+        pathToClaudeCodeExecutable,
+        mcpServerCount: Object.keys(mcpServers).length,
+        allowedToolCount: sessionContext.allowed_tools?.length ?? 0,
+        disallowedToolCount: sessionContext.disallowed_tools?.length ?? 0,
+      },
+      'Starting Claude Agent SDK query'
+    );
+
     const response = query({
       prompt,
       options: {
         abortController,
         ...(sdkSessionId ? { resume: sdkSessionId } : {}),
         cwd: sessionContext.cwd,
+        pathToClaudeCodeExecutable,
         model: sessionContext.model,
         maxTurns: 100,
         thinking: { type: 'adaptive' },
@@ -716,6 +898,11 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       },
     });
 
+    fastify.log.info(
+      { sessionId: sessionId.toString(), userId },
+      'Claude Agent SDK query iterable created'
+    );
+
     sessionAbortControllers.set(sessionId.toString(), abortController);
 
     // バックグラウンド処理開始（await しない）
@@ -728,16 +915,19 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       cleanupGitCredential
     ).catch(error => {
       fastify.log.error(
-        { sessionId: sessionId.toString(), error },
+        { err: toLogError(error), sessionId: sessionId.toString(), userId },
         'Background event processing failed'
       );
     });
   } catch (error) {
+    const stage = 'start_query_pipeline';
     cleanupGitCredential?.();
-    fastify.log.error({ sessionId: sessionId.toString(), error }, 'SDK query failed');
-    await fastify.withUserContext(userId, async tx => {
-      await tx.update(sessions).set({ status: 'error' }).where(eq(sessions.id, sessionId.toUUID()));
-    });
+    fastify.log.error(
+      { err: toLogError(error), sessionId: sessionId.toString(), userId },
+      'SDK query failed before event processing started'
+    );
+    await persistSessionFailureEvent(fastify, userId, sessionId, stage, error);
+    await setSessionStatusError(fastify, userId, sessionId, stage);
     throw error;
   }
 }
@@ -771,7 +961,7 @@ async function resolveAppsOutcomeName(
       );
     } catch (error) {
       fastify.log.warn(
-        { appName: frontendName, sessionId: sessionId.toString(), error },
+        { err: toLogError(error), appName: frontendName, sessionId: sessionId.toString() },
         'Failed to check app name availability, using fallback name'
       );
     }
@@ -948,6 +1138,19 @@ export async function createSession(
       context: sessionContext,
     });
   });
+  fastify.log.info(
+    {
+      sessionId: sessionId.toString(),
+      userId,
+      cwd,
+      isSqlite: fastify.isSqlite,
+      hasLakebaseEndpoint: fastify.config.LAKEBASE_ENDPOINT.trim() !== '',
+      sourceCount: sessionContext.sources.length,
+      outcomeCount: sessionContext.outcomes.length,
+      hasOboToken: Boolean(ctx.oboAccessToken),
+    },
+    'Session row created; background setup will start'
+  );
 
   // 9. prompt の構築
   const prompt: string | SDKUserMessage =
@@ -964,8 +1167,21 @@ export async function createSession(
         : '';
 
   // 10. バックグラウンドで workspace export → query pipeline を実行
+  let setupStage = 'session_setup';
+  let queryPipelineStarted = false;
   (async () => {
+    fastify.log.info(
+      {
+        sessionId: sessionId.toString(),
+        userId,
+        workspaceSourceCount: workspaceSources.length,
+        gitSourceCount: gitSources.length,
+      },
+      'Background session setup started'
+    );
+
     // Workspace ソースからファイルをインポート（OBO トークンで REST API 直接呼び出し）
+    setupStage = 'workspace_export';
     if (workspaceSources.length > 0) {
       const oboToken = ctx.oboAccessToken;
       if (oboToken) {
@@ -979,7 +1195,12 @@ export async function createSession(
             );
           } catch (error) {
             fastify.log.error(
-              { sessionId: sessionId.toString(), sourcePath: source.path, error },
+              {
+                err: toLogError(error),
+                sessionId: sessionId.toString(),
+                userId,
+                sourcePath: source.path,
+              },
               'Failed to export workspace directory'
             );
           }
@@ -992,6 +1213,7 @@ export async function createSession(
       }
     }
 
+    setupStage = 'git_clone';
     if (gitSources.length > 0) {
       if (!gitOutcome) {
         throw new Error('Git repository source requires a git_repository outcome');
@@ -1011,6 +1233,8 @@ export async function createSession(
     }
 
     // SDK query パイプラインを開始（export 完了後）
+    setupStage = 'query_pipeline';
+    queryPipelineStarted = true;
     await startQueryPipeline({
       fastify,
       ctx,
@@ -1022,20 +1246,25 @@ export async function createSession(
     });
   })().catch(error => {
     fastify.log.error(
-      { sessionId: sessionId.toString(), error },
+      {
+        err: toLogError(error),
+        sessionId: sessionId.toString(),
+        userId,
+        setupStage,
+        queryPipelineStarted,
+      },
       'Background session setup failed'
     );
-    fastify
-      .withUserContext(userId, async tx => {
-        await tx
-          .update(sessions)
-          .set({ status: 'error', updatedAt: new Date() })
-          .where(eq(sessions.id, sessionId.toUUID()));
-      })
-      .catch(updateError => {
+    const stage = queryPipelineStarted ? 'query_pipeline' : setupStage;
+    const persistFailure = queryPipelineStarted
+      ? Promise.resolve()
+      : persistSessionFailureEvent(fastify, userId, sessionId, stage, error);
+    persistFailure
+      .then(() => setSessionStatusError(fastify, userId, sessionId, stage))
+      .catch(err => {
         fastify.log.error(
-          { sessionId: sessionId.toString(), updateError },
-          'Failed to update session status to error after setup failure'
+          { err: toLogError(err), sessionId: sessionId.toString(), userId, stage },
+          'Failed to record background setup failure'
         );
       });
   });
@@ -1255,14 +1484,14 @@ export async function sendMessageToSession(
   // 4. 実行中は user message を queued event として保存するだけにする。
   // 現在の SDK stream 完了後に processAllEvents() の finally で最古の queued event を resume する。
   if (sessionRow.status === 'init' || sessionRow.status === 'running') {
-    const eventUuid = extractEventUuid(userMessage);
+    const normalized = normalizeMessageUuid(fastify, sessionId, userMessage);
     await fastify.withUserContext(userId, async tx => {
       await insertSessionEventInTx(tx, {
-        uuid: eventUuid,
+        uuid: normalized.eventUuid,
         sessionId: sessionId.toUUID(),
         type: 'user',
         subtype: QUEUED_USER_EVENT_SUBTYPE,
-        message: userMessage,
+        message: normalized.message,
       });
 
       await tx
@@ -1271,20 +1500,20 @@ export async function sendMessageToSession(
         .where(eq(sessions.id, sessionId.toUUID()));
     });
 
-    broadcastToSession(sessionId.toString(), userMessage);
+    broadcastToSession(sessionId.toString(), normalized.message);
     return;
   }
 
   // 5. user message を DB に保存し、status を running に更新
-  const eventUuid = extractEventUuid(userMessage);
+  const normalized = normalizeMessageUuid(fastify, sessionId, userMessage);
   await fastify.withUserContext(userId, async tx => {
     // user message を session_events に INSERT
     await insertSessionEventInTx(tx, {
-      uuid: eventUuid,
+      uuid: normalized.eventUuid,
       sessionId: sessionId.toUUID(),
       type: 'user',
       subtype: null,
-      message: userMessage,
+      message: normalized.message,
     });
 
     // sessions.status を running に UPDATE
@@ -1295,7 +1524,7 @@ export async function sendMessageToSession(
   });
 
   // リアルタイム接続にユーザーメッセージをブロードキャスト
-  broadcastToSession(sessionId.toString(), userMessage);
+  broadcastToSession(sessionId.toString(), normalized.message);
 
   if (!sessionRow.sdkSessionId) {
     throw new Error('Session is not ready (still initializing)');
@@ -1306,7 +1535,7 @@ export async function sendMessageToSession(
     fastify,
     ctx,
     sessionId,
-    prompt: userMessage,
+    prompt: normalized.message,
     sessionContext,
     sdkSessionId: sessionRow.sdkSessionId,
     initialUserEvent: undefined,
@@ -1357,7 +1586,7 @@ export async function archiveSession(
         .then(safeCwd => removeDirectory(safeCwd))
         .catch(error => {
           fastify.log.error(
-            { sessionId: sessionId.toString(), cwd, sessionsBaseDir, error },
+            { err: toLogError(error), sessionId: sessionId.toString(), cwd, sessionsBaseDir },
             'Failed to remove working directory'
           );
         });
@@ -1372,7 +1601,7 @@ export async function archiveSession(
       const appsClient = new DatabricksAppsClient(authProvider);
       appsClient.delete(appsOutcome.name).catch(error => {
         fastify.log.error(
-          { sessionId: sessionId.toString(), appName: appsOutcome.name, error },
+          { err: toLogError(error), sessionId: sessionId.toString(), appName: appsOutcome.name },
           'Failed to delete Databricks App'
         );
       });
@@ -1444,6 +1673,7 @@ export async function executeAbort(
 
 export const __testing = {
   cloneGitRepositorySource,
+  extractEventUuid,
   getGitBranchFromRevision,
   validateGitBranchName,
   validateGitSessionContext,

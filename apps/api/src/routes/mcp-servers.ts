@@ -54,11 +54,13 @@ const mcpServersRoute: FastifyPluginAsync = async fastify => {
         });
       }
 
-      const rows = await fastify.db
-        .select()
-        .from(mcpServers)
-        .where(eq(mcpServers.userId, user.id))
-        .orderBy(desc(mcpServers.createdAt));
+      const rows = await fastify.withUserContext(user.id, async tx =>
+        tx
+          .select()
+          .from(mcpServers)
+          .where(eq(mcpServers.userId, user.id))
+          .orderBy(desc(mcpServers.createdAt))
+      );
 
       return reply.send({
         mcp_servers: rows.map(row => toRecord(row)),
@@ -152,18 +154,20 @@ const mcpServersRoute: FastifyPluginAsync = async fastify => {
         generatedUrl = `https://${databricksHost}/api/2.0/mcp/genie/${trimmedSpaceId}`;
       }
 
-      const rows = (await fastify.db
-        .insert(mcpServers)
-        .values({
-          userId: user.id,
-          id: generatedId,
-          name: name.trim(),
-          type: 'http',
-          url: generatedUrl,
-          managedType: managed_type,
-        })
-        .onConflictDoNothing({ target: [mcpServers.userId, mcpServers.id] })
-        .returning()) as Array<typeof mcpServers.$inferSelect>;
+      const rows = (await fastify.withUserContext(user.id, async tx =>
+        tx
+          .insert(mcpServers)
+          .values({
+            userId: user.id,
+            id: generatedId,
+            name: name.trim(),
+            type: 'http',
+            url: generatedUrl,
+            managedType: managed_type,
+          })
+          .onConflictDoNothing({ target: [mcpServers.userId, mcpServers.id] })
+          .returning()
+      )) as Array<typeof mcpServers.$inferSelect>;
 
       if (rows.length === 0) {
         return reply.status(409).send({
@@ -229,21 +233,23 @@ const mcpServersRoute: FastifyPluginAsync = async fastify => {
     }
 
     const trimmedId = id.trim();
-    const rows = (await fastify.db
-      .insert(mcpServers)
-      .values({
-        userId: user.id,
-        id: trimmedId,
-        name: name.trim(),
-        type,
-        url: url?.trim() || null,
-        headers: headers ?? null,
-        command: command?.trim() || null,
-        args: args ?? null,
-        env: env ?? null,
-      })
-      .onConflictDoNothing({ target: [mcpServers.userId, mcpServers.id] })
-      .returning()) as Array<typeof mcpServers.$inferSelect>;
+    const rows = (await fastify.withUserContext(user.id, async tx =>
+      tx
+        .insert(mcpServers)
+        .values({
+          userId: user.id,
+          id: trimmedId,
+          name: name.trim(),
+          type,
+          url: url?.trim() || null,
+          headers: headers ?? null,
+          command: command?.trim() || null,
+          args: args ?? null,
+          env: env ?? null,
+        })
+        .onConflictDoNothing({ target: [mcpServers.userId, mcpServers.id] })
+        .returning()
+    )) as Array<typeof mcpServers.$inferSelect>;
 
     if (rows.length === 0) {
       return reply.status(409).send({
@@ -313,11 +319,13 @@ const mcpServersRoute: FastifyPluginAsync = async fastify => {
       });
     }
 
-    const [row] = await fastify.db
-      .update(mcpServers)
-      .set(updates)
-      .where(and(eq(mcpServers.userId, user.id), eq(mcpServers.id, id)))
-      .returning();
+    const [row] = await fastify.withUserContext(user.id, async tx =>
+      tx
+        .update(mcpServers)
+        .set(updates)
+        .where(and(eq(mcpServers.userId, user.id), eq(mcpServers.id, id)))
+        .returning()
+    );
 
     if (!row) {
       return reply.status(404).send({
@@ -346,10 +354,12 @@ const mcpServersRoute: FastifyPluginAsync = async fastify => {
 
     const { id } = request.params;
 
-    const deleted = await fastify.db
-      .delete(mcpServers)
-      .where(and(eq(mcpServers.userId, user.id), eq(mcpServers.id, id)))
-      .returning({ id: mcpServers.id });
+    const deleted = await fastify.withUserContext(user.id, async tx =>
+      tx
+        .delete(mcpServers)
+        .where(and(eq(mcpServers.userId, user.id), eq(mcpServers.id, id)))
+        .returning({ id: mcpServers.id })
+    );
 
     if (deleted.length === 0) {
       return reply.status(404).send({

@@ -1,7 +1,7 @@
 resources:
   apps:
     ccbricks_app:
-      name: ${var.app_name}
+      name: ccbricks-${bundle.target}
       description: Claude Code on Databricks
       source_code_path: ../
       resources:
@@ -33,10 +33,9 @@ resources:
 
   postgres_projects:
     ccbricks_db:
-      project_id: ccbricks-${bundle.target}
+      project_id: ccbricks-db-${bundle.target}
       display_name: 'ccbricks Database ${bundle.target}'
       pg_version: 17
-      default_branch: projects/ccbricks-${bundle.target}/branches/production
       default_endpoint_settings:
         autoscaling_limit_min_cu: 0.5
         autoscaling_limit_max_cu: 4
