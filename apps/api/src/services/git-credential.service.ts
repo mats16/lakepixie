@@ -45,6 +45,10 @@ export function registerGitCredential(
   return { bearerToken, repoFullName };
 }
 
+export function revokeGitCredential(bearerToken: string): boolean {
+  return registeredCredentials.delete(bearerToken);
+}
+
 function parseCredentialInput(input: string): Record<string, string> {
   const result: Record<string, string> = {};
   for (const line of input.split(/\r?\n/)) {
@@ -130,5 +134,6 @@ export const __testing = {
   buildGitCredentialHelperScript,
   normalizeCredentialPath,
   parseCredentialInput,
+  revokeGitCredential,
   registeredCredentials,
 };

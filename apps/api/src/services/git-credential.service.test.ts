@@ -63,4 +63,18 @@ describe('git-credential.service', () => {
       )
     ).resolves.toBe('');
   });
+
+  it('does not resolve credentials after a registration is revoked', async () => {
+    const registration = registerGitCredential('https://github.com/acme/widgets.git', 'write');
+    expect(__testing.revokeGitCredential(registration.bearerToken)).toBe(true);
+
+    await expect(
+      resolveGitCredentialRequest(
+        fastify,
+        registration.bearerToken,
+        ['protocol=https', 'host=github.com', 'path=acme/widgets.git', '', ''].join('\n')
+      )
+    ).resolves.toBe('');
+    expect(mockGetGitHubAppInstallationToken).not.toHaveBeenCalled();
+  });
 });

@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { typeid } from 'typeid-js';
+import { randomUUID } from 'node:crypto';
 import type { GenerateTitleResponse } from '@repo/types';
 
 // Constants for title generation
@@ -16,7 +17,6 @@ Message: `;
 
 const MAX_TOKENS = 150;
 const FALLBACK_TITLE = 'General coding session';
-const DEFAULT_BRANCH_NAME = 'ccbricks/hobe-piyp-fuga';
 const REQUEST_TIMEOUT_MS = 30000; // 30 seconds
 
 const APP_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -83,6 +83,12 @@ function generateFallbackAppName(): string {
   return typeid().toString().replaceAll('_', '-');
 }
 
+function generateBranchName(appName: string): string {
+  const safeAppName = isValidAppName(appName) ? appName : 'session';
+  const shortId = randomUUID().replaceAll('-', '').slice(0, 8);
+  return `ccbricks/${safeAppName}-${shortId}`;
+}
+
 export interface TitleServiceConfig {
   databricksHost: string;
 }
@@ -130,10 +136,11 @@ export class TitleService {
     const rawContent = response.choices[0]?.message?.content;
 
     if (!rawContent) {
+      const appName = generateFallbackAppName();
       return {
         title: FALLBACK_TITLE,
-        app_name: generateFallbackAppName(),
-        branch_name: DEFAULT_BRANCH_NAME,
+        app_name: appName,
+        branch_name: generateBranchName(appName),
       };
     }
 
@@ -142,17 +149,19 @@ export class TitleService {
 
       const title = parsed.title ? cleanTitle(parsed.title) : '';
       const appName = parsed.app_name ?? '';
+      const safeAppName = isValidAppName(appName) ? appName : generateFallbackAppName();
 
       return {
         title: title || FALLBACK_TITLE,
-        app_name: isValidAppName(appName) ? appName : generateFallbackAppName(),
-        branch_name: DEFAULT_BRANCH_NAME,
+        app_name: safeAppName,
+        branch_name: generateBranchName(safeAppName),
       };
     } catch {
+      const appName = generateFallbackAppName();
       return {
         title: FALLBACK_TITLE,
-        app_name: generateFallbackAppName(),
-        branch_name: DEFAULT_BRANCH_NAME,
+        app_name: appName,
+        branch_name: generateBranchName(appName),
       };
     }
   }

@@ -497,6 +497,9 @@ function AdminGitContent() {
       ) : (
         <div className="border border-border rounded-lg p-4 space-y-4">
           <p className="text-xs text-muted-foreground">{t('admin.githubAppAuthDescription')}</p>
+          <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+            {t('admin.githubAppAccessModel')}
+          </p>
           <div className="flex items-center justify-between gap-4">
             <div className="shrink-0">
               <p className="text-sm font-medium">{t('admin.githubAppId')}</p>
@@ -536,6 +539,11 @@ function AdminGitContent() {
                 <Upload className="h-4 w-4" />
                 {t('admin.githubAppPrivateKeySelectFile')}
               </Button>
+              <p className="text-xs text-muted-foreground">
+                {githubAppAuth?.private_key_configured
+                  ? t('admin.githubAppPrivateKeyConfigured')
+                  : t('admin.githubAppPrivateKeyNotConfigured')}
+              </p>
               {githubAppPrivateKeyFileName && (
                 <p className="truncate text-xs text-muted-foreground">
                   {t('admin.githubAppPrivateKeySelectedFile', {

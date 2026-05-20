@@ -176,6 +176,53 @@ describe('session.service', () => {
         'Only HTTPS GitHub repository URLs are supported'
       );
     });
+
+    it('should reject unsupported git session context shapes before setup starts', () => {
+      const source = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets.git',
+      };
+      const outcome = {
+        type: 'git_repository' as const,
+        git_info: {
+          type: 'github' as const,
+          repo: 'acme/widgets',
+          branches: ['ccbricks/test-branch'],
+        },
+      };
+
+      expect(() => __testing.validateGitSessionContext([source], [outcome])).not.toThrow();
+      expect(() => __testing.validateGitSessionContext([source, source], [outcome])).toThrow(
+        'Only one git repository source is supported'
+      );
+      expect(() =>
+        __testing.validateGitSessionContext(
+          [source, { type: 'databricks_workspace', path: '/Workspace/test' }],
+          [outcome]
+        )
+      ).toThrow('cannot be combined');
+      expect(() => __testing.validateGitSessionContext([source], [])).toThrow(
+        'requires exactly one git repository outcome'
+      );
+      expect(() =>
+        __testing.validateGitSessionContext(
+          [{ ...source, allow_unrestricted_git_push: false }],
+          [outcome]
+        )
+      ).toThrow('Read-only git repository sessions are not supported yet');
+      expect(() =>
+        __testing.validateGitSessionContext([{ ...source, revision: 'main' }], [outcome])
+      ).toThrow('refs/heads');
+      expect(() =>
+        __testing.validateGitSessionContext(
+          [source],
+          [{ ...outcome, git_info: { ...outcome.git_info, repo: 'acme/other' } }]
+        )
+      ).toThrow('must match');
+    });
   });
 
   describe('canAbortSession', () => {

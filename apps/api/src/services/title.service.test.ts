@@ -62,7 +62,7 @@ describe('TitleService', () => {
       expect(result).toEqual({
         title: 'React Component Development',
         app_name: 'react-component-dev',
-        branch_name: 'ccbricks/hobe-piyp-fuga',
+        branch_name: expect.stringMatching(/^ccbricks\/react-component-dev-[a-f0-9]{8}$/),
       });
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -98,7 +98,7 @@ describe('TitleService', () => {
 
       expect(result.title).toBe('General coding session');
       expect(result.app_name).toMatch(/^[a-z0-9]{26}$/);
-      expect(result.branch_name).toBe('ccbricks/hobe-piyp-fuga');
+      expect(result.branch_name).toMatch(/^ccbricks\/[a-z0-9]{26}-[a-f0-9]{8}$/);
     });
 
     it('should return fallback title when choices array is empty', async () => {
@@ -114,7 +114,7 @@ describe('TitleService', () => {
 
       expect(result.title).toBe('General coding session');
       expect(result.app_name).toMatch(/^[a-z0-9]{26}$/);
-      expect(result.branch_name).toBe('ccbricks/hobe-piyp-fuga');
+      expect(result.branch_name).toMatch(/^ccbricks\/[a-z0-9]{26}-[a-f0-9]{8}$/);
     });
 
     it('should return fallback title when message content is null', async () => {
@@ -136,7 +136,35 @@ describe('TitleService', () => {
 
       expect(result.title).toBe('General coding session');
       expect(result.app_name).toMatch(/^[a-z0-9]{26}$/);
-      expect(result.branch_name).toBe('ccbricks/hobe-piyp-fuga');
+      expect(result.branch_name).toMatch(/^ccbricks\/[a-z0-9]{26}-[a-f0-9]{8}$/);
+    });
+
+    it('should generate unique branch names for each request', async () => {
+      mockCreate.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                title: 'React Component Development',
+                app_name: 'react-component-dev',
+              }),
+            },
+          },
+        ],
+      });
+
+      const first = await service.generateTitle({
+        firstSessionMessage: 'Help me create a React component',
+        accessToken: 'test-token',
+        model: defaultModel,
+      });
+      const second = await service.generateTitle({
+        firstSessionMessage: 'Help me create a React component',
+        accessToken: 'test-token',
+        model: defaultModel,
+      });
+
+      expect(first.branch_name).not.toBe(second.branch_name);
     });
 
     it('should throw error when API fails', async () => {

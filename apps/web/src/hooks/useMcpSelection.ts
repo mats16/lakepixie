@@ -7,6 +7,7 @@ export interface McpSelectionItem {
   space_id: string;
   title: string;
   mcp_url: string;
+  managed_type?: McpServerRecord['managed_type'];
   enabled: boolean;
 }
 
@@ -70,6 +71,7 @@ export function useMcpSelection(): UseMcpSelectionReturn {
         space_id: server.id,
         title: server.name,
         mcp_url: displayUrl,
+        managed_type: server.managed_type,
         enabled: sessionOverrides[server.id] ?? true,
       });
     }

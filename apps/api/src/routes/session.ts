@@ -31,6 +31,7 @@ import { isAuthError } from '@repo/types';
 import { resolveUserAnswer } from '../services/ask-user-question.service.js';
 import {
   createSession,
+  SessionValidationError,
   listSessions,
   getSession,
   updateSession,
@@ -203,6 +204,9 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
       return reply.status(201).send(result);
     } catch (error) {
       request.log.error(error, 'Failed to create session');
+      if (error instanceof SessionValidationError) {
+        return sendError(reply, 400, 'BadRequest', error.message);
+      }
       if (error instanceof TelemetryConfigurationError) {
         return sendError(reply, 500, 'InternalServerError', error.message);
       }

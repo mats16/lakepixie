@@ -24,7 +24,11 @@ import { AskUserQuestionProvider } from '@/contexts/AskUserQuestionContext';
 import { sessionService } from '@/services/session.service';
 import { extractTextFromContent } from '@/lib/content-builder';
 
-const FALLBACK_BRANCH_NAME = 'ccbricks/hobe-piyp-fuga';
+function createFallbackBranchName(appName?: string): string {
+  const safeAppName = appName && /^[a-z0-9][a-z0-9-]{0,25}$/.test(appName) ? appName : 'session';
+  const shortId = crypto.randomUUID().replaceAll('-', '').slice(0, 8);
+  return `ccbricks/${safeAppName}-${shortId}`;
+}
 
 interface MainAreaProps {
   branchName?: string;
@@ -187,7 +191,8 @@ export function MainArea({
       // タイトル生成用にテキストを抽出
       const textContent = extractTextFromContent(content);
       const titleResult = await sessionService.generateTitle(textContent);
-      const branchName = titleResult?.branch_name ?? FALLBACK_BRANCH_NAME;
+      const branchName =
+        titleResult?.branch_name ?? createFallbackBranchName(titleResult?.app_name);
       const sources: SessionSource[] = [];
       const outcomes: SessionOutcome[] = [];
 
