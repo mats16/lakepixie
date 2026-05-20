@@ -6,42 +6,28 @@
 
 - Databricks CLI がインストール・設定済みであること
 - Apps が有効な Databricks ワークスペースへのアクセス
-- PostgreSQL 互換データベース（Lakebase 推奨）
+- 永続化用の Databricks Lakebase リソース
 
 ## 1. データベースのセットアップ
 
-### 1.1 データベースインスタンスの作成
+### 1.1 Lakebase リソースの作成
 
-Databricks Lakebase または外部の PostgreSQL インスタンスを用意します。
+bundle は Lakebase Postgres プロジェクトを定義し、アプリに `lakebase`
+リソースとしてバインドします。Databricks Apps は、バインドしたリソースに対して
+PostgreSQL 接続用の環境変数（`PGAPPNAME`, `PGDATABASE`, `PGHOST`,
+`PGPORT`, `PGSSLMODE`, `PGUSER`）を自動的に注入します。
+起動時に API は `{PGAPPNAME}_schema_{ハイフンを除いたPGUSER}` という
+アプリ専用 PostgreSQL schema を作成し、`search_path` をその schema に設定して
+マイグレーションを実行します。
 
-- **Databricks Lakebase（推奨）:** Databricks コンソールから Lakebase インスタンスを作成
-- **外部の PostgreSQL:** ネットワーク設定により、Databricks Apps からアクセス可能であることを確認
+### 1.2 アプリケーションユーザー
 
-> **注:** このアプリケーションは外部 PostgreSQL プロバイダーとして [Neon](https://neon.tech/) での動作確認を行っています。
+Lakebase リソースをアプリに追加すると、Databricks はアプリのサービスプリンシパル用の
+PostgreSQL ロールを作成または再利用し、接続と作成の権限を付与します。
 
-### 1.2 アプリケーション用ユーザーの作成
+**重要:** このアプリケーションは Row-Level Security (RLS) を使用し、`current_setting('app.user_id', true)` でユーザーを識別します。アプリケーションは各リクエストでこのセッション変数を設定し、ユーザー分離を強制します。
 
-アプリケーション専用のデータベースユーザーを作成します。
-
-```sql
--- アプリケーションユーザーを作成（RLS バイパスを明示的に無効化）
-CREATE ROLE ccbricks_user WITH LOGIN PASSWORD 'your-secure-password' NOBYPASSRLS;
-
--- 現在のユーザーにロールの権限を付与（データベース作成に必要）
-GRANT ccbricks_user TO CURRENT_USER WITH SET TRUE;
-```
-
-**重要:** このアプリケーションは Row-Level Security (RLS) を使用し、`current_setting('app.user_id', true)` でユーザーを識別します。アプリケーションは各リクエストでこのセッション変数を設定し、ユーザー分離を強制します。`NOBYPASSRLS` オプションにより、アプリケーションユーザーが RLS ポリシーをバイパスできないことが保証され、追加のセキュリティレイヤーが提供されます。
-
-### 1.3 データベースの作成
-
-アプリケーション用のデータベースを作成し、オーナーを設定します。
-
-```sql
-CREATE DATABASE ccbricks OWNER ccbricks_user;
-```
-
-### 1.4 データベースマイグレーション
+### 1.3 データベースマイグレーション
 
 データベースマイグレーションはサーバー起動時に自動的に適用されます。デプロイ時に手動でマイグレーションを実行する必要はありません。
 
@@ -52,8 +38,14 @@ CREATE DATABASE ccbricks OWNER ccbricks_user;
 **ローカル開発または手動マイグレーションの場合:**
 
 ```bash
-# データベース URL を設定
-export DATABASE_URL="postgresql://ccbricks_user:password@host:5432/ccbricks"
+# Lakebase モードを使用
+export LAKEBASE_ENDPOINT="projects/.../branches/.../endpoints/..."
+export PGAPPNAME="ccbricks"
+export PGDATABASE="databricks-postgres"
+export PGHOST="..."
+export PGPORT="5432"
+export PGSSLMODE="require"
+export PGUSER="service-principal-client-id"
 
 # api ディレクトリに移動
 cd apps/api
@@ -81,12 +73,6 @@ databricks secrets create-scope ccbricks-prod
 
 ### 2.2 必要なシークレットの追加
 
-**データベース URL:**
-
-```bash
-databricks secrets put-secret ccbricks-[dev|prod] database-url --string-value "postgresql://ccbricks_user:password@host:5432/ccbricks"
-```
-
 **暗号化キー:**
 
 機密データ（OAuth トークンなど）を暗号化するための安全な暗号化キーを生成します。32 バイト（64 文字の 16 進数）のランダムキーが必要です。
@@ -97,8 +83,6 @@ databricks secrets put-secret ccbricks-[dev|prod] encryption-key --string-value 
 ```
 
 ## 3. Asset Bundles によるデプロイ
-
-> **注意:** Databricks Asset Bundles を使用したこのデプロイ方法は、Lakebase サポートがバンドル設定で利用可能になるまでの暫定的な対応です。Lakebase 統合がサポートされると、データベースとユーザーの作成手順はバンドルリソースを通じて自動化され、データベースを含めた完全な Infrastructure as Code でのデプロイが可能になることを想定しています。
 
 > **デフォルトターゲット:** `databricks.yaml` ではデフォルトで `dev` ターゲットが使用されるように設定されています。開発環境へのデプロイでは `--target` を省略できます。
 
@@ -136,13 +120,13 @@ databricks apps get ccbricks-dev-<user-id>
 
 ### データベース接続の問題
 
-1. シークレットのデータベース URL が正しいことを確認
-2. Databricks Apps とデータベース間のネットワーク接続を確認
-3. データベースユーザーが適切な権限を持っていることを確認
+1. `lakebase` resource binding が `LAKEBASE_ENDPOINT` と `PG*` を注入していることを確認
+2. Databricks Apps と Lakebase 間のネットワーク接続を確認
+3. アプリのサービスプリンシパルが connect/create 権限を持っていることを確認
 
 ### マイグレーションの失敗
 
-1. データベースユーザーが owner 権限を持っていることを確認
+1. アプリのサービスプリンシパルが app schema にオブジェクトを作成できることを確認
 2. 競合する可能性のある既存のオブジェクトを確認
 3. マイグレーション SQL ファイルにエラーがないか確認
 
@@ -163,7 +147,7 @@ databricks apps get ccbricks-dev-<user-id>
 
 ## セキュリティに関する考慮事項
 
-1. **データベース認証情報:** 管理者アカウントではなく、必ず専用のアプリケーションユーザーを使用
+1. **Lakebase 権限:** アプリのサービスプリンシパルを使用し、環境ごとにリソースを分離
 2. **暗号化キー:** 各環境に固有のキーを生成
 3. **シークレットスコープ:** シークレットスコープへのアクセスを適切に制限
 4. **ネットワークセキュリティ:** 可能な限りプライベートエンドポイントを設定

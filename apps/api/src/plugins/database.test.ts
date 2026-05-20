@@ -1,8 +1,70 @@
 // apps/api/src/plugins/database.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
 import configPlugin from './config.js';
 import databasePlugin, { RLSContextError } from './database.js';
+
+const {
+  mockCreateLakebasePool,
+  mockPoolEnd,
+  mockPoolQuery,
+  mockPoolConnect,
+  mockClientQuery,
+  mockClientRelease,
+  mockMigrate,
+} = vi.hoisted(() => {
+  const mockPoolEnd = vi.fn();
+  const mockPoolQuery = vi.fn().mockResolvedValue({ rows: [] });
+  const mockClientRelease = vi.fn();
+  const mockClientQuery = vi.fn(async (query: string) => {
+    if (query.includes('information_schema.tables')) {
+      return {
+        rows: [
+          {
+            has_app_tables: false,
+            has_app_migration_history: false,
+            has_legacy_migration_history: false,
+          },
+        ],
+      };
+    }
+    return { rows: [] };
+  });
+  const mockPoolConnect = vi.fn(async () => ({
+    query: mockClientQuery,
+    release: mockClientRelease,
+  }));
+  const mockCreateLakebasePool = vi.fn(() => ({
+    end: mockPoolEnd,
+    query: mockPoolQuery,
+    connect: mockPoolConnect,
+  }));
+
+  const mockMigrate = vi.fn();
+
+  return {
+    mockCreateLakebasePool,
+    mockPoolEnd,
+    mockPoolQuery,
+    mockPoolConnect,
+    mockClientQuery,
+    mockClientRelease,
+    mockMigrate,
+  };
+});
+
+vi.mock('@databricks/appkit', () => ({
+  createLakebasePool: mockCreateLakebasePool,
+}));
+vi.mock('drizzle-orm/node-postgres/migrator', () => ({
+  migrate: mockMigrate,
+}));
+
+const TEST_LAKEBASE_ENDPOINT = 'projects/test-project/branches/test-branch/endpoints/test-endpoint';
+const TEST_PGAPPNAME = 'ccbricks';
+const TEST_PGUSER = 'service-principal-client-id';
+const TEST_PGHOST = 'lakebase.example.databricks.com';
+const TEST_PGDATABASE = 'databricks-postgres';
 
 describe('database plugin', () => {
   let app: FastifyInstance;
@@ -13,8 +75,34 @@ describe('database plugin', () => {
     originalEnv = { ...process.env };
 
     // Set required environment variables for config plugin
-    process.env.DATABASE_URL = 'postgresql://localhost:5432/test_db';
     process.env.DATABRICKS_HOST = 'test.databricks.com';
+    process.env.CCBRICKS_BASE_DIR = '/private/tmp/ccbricks-database-test';
+    delete process.env.LAKEBASE_ENDPOINT;
+    delete process.env.PGAPPNAME;
+    delete process.env.PGUSER;
+    delete process.env.PGHOST;
+    delete process.env.PGDATABASE;
+    mockCreateLakebasePool.mockClear();
+    mockPoolEnd.mockClear();
+    mockPoolQuery.mockClear();
+    mockPoolConnect.mockClear();
+    mockClientQuery.mockClear();
+    mockClientRelease.mockClear();
+    mockMigrate.mockClear();
+    mockClientQuery.mockImplementation(async (query: string) => {
+      if (query.includes('information_schema.tables')) {
+        return {
+          rows: [
+            {
+              has_app_tables: false,
+              has_app_migration_history: false,
+              has_legacy_migration_history: false,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
 
     // Create a fresh Fastify instance for each test
     app = Fastify({
@@ -43,6 +131,33 @@ describe('database plugin', () => {
       expect(typeof app.db).toBe('object');
     });
 
+    it('should use Lakebase when LAKEBASE_ENDPOINT is set', async () => {
+      process.env.LAKEBASE_ENDPOINT = TEST_LAKEBASE_ENDPOINT;
+      process.env.PGAPPNAME = TEST_PGAPPNAME;
+      process.env.PGUSER = TEST_PGUSER;
+      process.env.PGHOST = TEST_PGHOST;
+      process.env.PGDATABASE = TEST_PGDATABASE;
+
+      await app.register(configPlugin);
+      await app.register(databasePlugin);
+
+      expect(app.db).toBeDefined();
+      expect(app.isSqlite).toBe(false);
+      expect(mockCreateLakebasePool).toHaveBeenCalledTimes(1);
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        'create schema if not exists "ccbricks_schema_serviceprincipalclientid"'
+      );
+    });
+
+    it('should use SQLite when LAKEBASE_ENDPOINT is missing', async () => {
+      await app.register(configPlugin);
+      await app.register(databasePlugin);
+
+      expect(app.db).toBeDefined();
+      expect(app.isSqlite).toBe(true);
+      expect(mockCreateLakebasePool).not.toHaveBeenCalled();
+    });
+
     it('should have access to schema through fastify.db', async () => {
       await app.register(configPlugin);
       await app.register(databasePlugin);
@@ -55,7 +170,13 @@ describe('database plugin', () => {
       expect(typeof app.db.query).toBe('object');
     });
 
-    it('should close database connection on app close', async () => {
+    it('should close Lakebase database connection on app close', async () => {
+      process.env.LAKEBASE_ENDPOINT = TEST_LAKEBASE_ENDPOINT;
+      process.env.PGAPPNAME = TEST_PGAPPNAME;
+      process.env.PGUSER = TEST_PGUSER;
+      process.env.PGHOST = TEST_PGHOST;
+      process.env.PGDATABASE = TEST_PGDATABASE;
+
       await app.register(configPlugin);
       await app.register(databasePlugin);
 
@@ -65,14 +186,71 @@ describe('database plugin', () => {
       // Close app (should trigger onClose hook)
       await app.close();
 
-      // After close, creating a new instance should still work
-      const app2 = Fastify({ logger: false });
-      await app2.register(configPlugin);
-      await app2.register(databasePlugin);
+      expect(mockPoolEnd).toHaveBeenCalledTimes(1);
+    });
 
-      expect(app2.db).toBeDefined();
+    it('should run Lakebase migrations in the app schema', async () => {
+      process.env.LAKEBASE_ENDPOINT = TEST_LAKEBASE_ENDPOINT;
+      process.env.PGAPPNAME = TEST_PGAPPNAME;
+      process.env.PGUSER = TEST_PGUSER;
+      process.env.PGHOST = TEST_PGHOST;
+      process.env.PGDATABASE = TEST_PGDATABASE;
 
-      await app2.close();
+      await app.register(configPlugin);
+      app.config.NODE_ENV = 'development';
+      await app.register(databasePlugin);
+
+      expect(mockMigrate).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          migrationsSchema: 'ccbricks_schema_serviceprincipalclientid',
+        })
+      );
+      expect(mockClientQuery).toHaveBeenCalledWith(
+        'set search_path to "ccbricks_schema_serviceprincipalclientid"'
+      );
+    });
+
+    it('should release Lakebase clients when setting search_path fails', async () => {
+      process.env.LAKEBASE_ENDPOINT = TEST_LAKEBASE_ENDPOINT;
+      process.env.PGAPPNAME = TEST_PGAPPNAME;
+      process.env.PGUSER = TEST_PGUSER;
+      process.env.PGHOST = TEST_PGHOST;
+      process.env.PGDATABASE = TEST_PGDATABASE;
+      mockClientQuery.mockRejectedValueOnce(new Error('set search_path failed'));
+
+      await app.register(configPlugin);
+      app.config.NODE_ENV = 'development';
+
+      await expect(app.register(databasePlugin)).rejects.toThrow('set search_path failed');
+      expect(mockClientRelease).toHaveBeenCalledWith(expect.any(Error));
+    });
+
+    it('should provide a release callback for callback-style Lakebase connect', async () => {
+      process.env.LAKEBASE_ENDPOINT = TEST_LAKEBASE_ENDPOINT;
+      process.env.PGAPPNAME = TEST_PGAPPNAME;
+      process.env.PGUSER = TEST_PGUSER;
+      process.env.PGHOST = TEST_PGHOST;
+      process.env.PGDATABASE = TEST_PGDATABASE;
+
+      await app.register(configPlugin);
+      await app.register(databasePlugin);
+
+      const pool = mockCreateLakebasePool.mock.results[0]?.value;
+      await new Promise<void>((resolve, reject) => {
+        pool.connect(
+          (error: Error | undefined, _client: unknown, release: (error?: unknown) => void) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            release('release-error');
+            resolve();
+          }
+        );
+      });
+
+      expect(mockClientRelease).toHaveBeenCalledWith(expect.any(Error));
     });
   });
 
@@ -82,13 +260,12 @@ describe('database plugin', () => {
       await expect(app.register(databasePlugin)).rejects.toThrow();
     });
 
-    it('should fail when DATABASE_URL is invalid', async () => {
-      process.env.DATABASE_URL = 'invalid-url';
-
+    it('should continue using SQLite when LAKEBASE_ENDPOINT is unset', async () => {
       await app.register(configPlugin);
+      await app.register(databasePlugin);
 
-      // database plugin should fail with invalid connection string
-      await expect(app.register(databasePlugin)).rejects.toThrow();
+      expect(app.isSqlite).toBe(true);
+      expect(mockCreateLakebasePool).not.toHaveBeenCalled();
     });
   });
 

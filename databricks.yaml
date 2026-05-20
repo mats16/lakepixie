@@ -17,7 +17,10 @@ sync:
     - "**/.turbo"          # Turborepoキャッシュ
     - "**/dist"            # ビルド成果物(必要に応じて)
     - "**/*.test.ts"       # テストファイル
+    - "**/*.test.tsx"      # テストファイル
     - "**/*.spec.ts"       # テストファイル
+    - "**/*.spec.tsx"      # テストファイル
+    - "**/src/test"        # テストセットアップ
     - "**/coverage"        # カバレッジレポート
 
 variables:

@@ -1,6 +1,8 @@
 import fp from 'fastify-plugin';
 import fastifyEnv from '@fastify/env';
+import type { FastifyInstance } from 'fastify';
 import path from 'path';
+import { loadRootEnv } from '../lib/load-env.js';
 
 const __dirname = import.meta.dirname;
 
@@ -22,11 +24,42 @@ const schema = {
       description:
         'Server port (used in development, overridden by DATABRICKS_APP_PORT in production)',
     },
-    // Database (optional — empty string triggers SQLite fallback)
-    DATABASE_URL: {
+    // Database
+    LAKEBASE_ENDPOINT: {
       type: 'string',
       default: '',
-      description: 'PostgreSQL connection string (empty = SQLite fallback)',
+      description: 'Lakebase endpoint resource path (empty = SQLite fallback)',
+    },
+    PGAPPNAME: {
+      type: 'string',
+      default: '',
+      description: 'PostgreSQL application name injected by Databricks Apps for Lakebase.',
+    },
+    PGDATABASE: {
+      type: 'string',
+      default: '',
+      description: 'PostgreSQL database name injected by Databricks Apps for Lakebase.',
+    },
+    PGHOST: {
+      type: 'string',
+      default: '',
+      description: 'PostgreSQL host injected by Databricks Apps for Lakebase.',
+    },
+    PGPORT: {
+      type: 'string',
+      default: '',
+      description: 'PostgreSQL port injected by Databricks Apps for Lakebase.',
+    },
+    PGSSLMODE: {
+      type: 'string',
+      default: '',
+      enum: ['', 'require', 'prefer', 'disable'],
+      description: 'PostgreSQL SSL mode injected by Databricks Apps for Lakebase.',
+    },
+    PGUSER: {
+      type: 'string',
+      default: '',
+      description: 'PostgreSQL user injected by Databricks Apps for Lakebase.',
     },
     DISABLE_AUTO_MIGRATION: {
       type: 'boolean',
@@ -106,8 +139,20 @@ declare module 'fastify' {
       NODE_ENV: 'development' | 'production' | 'test';
       /** The network port the app should listen on. (only used in development) */
       PORT: number;
-      /** The PostgreSQL connection string. */
-      DATABASE_URL: string;
+      /** Lakebase endpoint resource path. Empty string selects SQLite. */
+      LAKEBASE_ENDPOINT: string;
+      /** PostgreSQL application name injected by Databricks Apps for Lakebase. */
+      PGAPPNAME: string;
+      /** PostgreSQL database name injected by Databricks Apps for Lakebase. */
+      PGDATABASE: string;
+      /** PostgreSQL host injected by Databricks Apps for Lakebase. */
+      PGHOST: string;
+      /** PostgreSQL port injected by Databricks Apps for Lakebase. */
+      PGPORT: string;
+      /** PostgreSQL SSL mode injected by Databricks Apps for Lakebase. */
+      PGSSLMODE: string;
+      /** PostgreSQL user injected by Databricks Apps for Lakebase. */
+      PGUSER: string;
       /** Disable automatic database migration on startup. */
       DISABLE_AUTO_MIGRATION: boolean;
       /** The base directory for ccbricks data (e.g. /home/app). */
@@ -139,19 +184,13 @@ declare module 'fastify' {
 export default fp(
   async fastify => {
     try {
+      loadRootEnv();
       await fastify.register(fastifyEnv, {
         confKey: 'config',
         schema,
-        dotenv:
-          process.env.NODE_ENV == 'test'
-            ? false
-            : {
-                path: [
-                  path.join(__dirname, '../../../../.env.local'), // -> project root .env.local (優先)
-                  path.join(__dirname, '../../../../.env'), // -> project root .env
-                ],
-              },
+        dotenv: false,
       });
+      validateLakebaseConfig(fastify.config);
       // Add bin directory to PATH (for databricks-cli and jq)
       fastify.config.PATH = `${fastify.config.HOME}/bin:${fastify.config.PATH}`;
       // Set Anthropic base URL (AI Gateway)
@@ -170,3 +209,19 @@ export default fp(
     // No dependencies - must load first
   }
 );
+
+function validateLakebaseConfig(config: FastifyInstance['config']): void {
+  if (config.LAKEBASE_ENDPOINT.trim() === '') {
+    return;
+  }
+
+  const missing = ['PGAPPNAME', 'PGUSER', 'PGHOST', 'PGDATABASE'].filter(
+    key => config[key as keyof FastifyInstance['config']].toString().trim() === ''
+  );
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Lakebase configuration is incomplete. Missing required environment variable(s): ${missing.join(', ')}`
+    );
+  }
+}

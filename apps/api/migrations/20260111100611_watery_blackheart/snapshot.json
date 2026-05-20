@@ -7,12 +7,6 @@
   ],
   "ddl": [
     {
-      "isRlsEnabled": true,
-      "name": "oauth_tokens",
-      "entityType": "tables",
-      "schema": "public"
-    },
-    {
       "isRlsEnabled": false,
       "name": "session_events",
       "entityType": "tables",
@@ -41,110 +35,6 @@
       "name": "app_settings",
       "entityType": "tables",
       "schema": "public"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "user_id",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "oauth_tokens"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "provider",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "oauth_tokens"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "auth_type",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "oauth_tokens"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "access_token",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "oauth_tokens"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "refresh_token",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "oauth_tokens"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "expires_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "oauth_tokens"
-    },
-    {
-      "type": "timestamp",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "created_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "oauth_tokens"
-    },
-    {
-      "type": "timestamp",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "updated_at",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "oauth_tokens"
     },
     {
       "type": "uuid",
@@ -488,27 +378,6 @@
       "nameExplicit": true,
       "columns": [
         {
-          "value": "user_id",
-          "isExpression": false,
-          "asc": true,
-          "nullsFirst": false,
-          "opclass": null
-        }
-      ],
-      "isUnique": false,
-      "where": null,
-      "with": "",
-      "method": "btree",
-      "concurrently": false,
-      "name": "oauth_tokens_user_id_idx",
-      "entityType": "indexes",
-      "schema": "public",
-      "table": "oauth_tokens"
-    },
-    {
-      "nameExplicit": true,
-      "columns": [
-        {
           "value": "session_id",
           "isExpression": false,
           "asc": true,
@@ -627,23 +496,6 @@
     {
       "nameExplicit": false,
       "columns": [
-        "user_id"
-      ],
-      "schemaTo": "public",
-      "tableTo": "users",
-      "columnsTo": [
-        "id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "CASCADE",
-      "name": "oauth_tokens_user_id_users_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "oauth_tokens"
-    },
-    {
-      "nameExplicit": false,
-      "columns": [
         "session_id"
       ],
       "schemaTo": "public",
@@ -694,18 +546,6 @@
     },
     {
       "columns": [
-        "user_id",
-        "provider",
-        "auth_type"
-      ],
-      "nameExplicit": false,
-      "name": "oauth_tokens_pkey",
-      "entityType": "pks",
-      "schema": "public",
-      "table": "oauth_tokens"
-    },
-    {
-      "columns": [
         "uuid"
       ],
       "nameExplicit": false,
@@ -753,19 +593,6 @@
       "schema": "public",
       "table": "app_settings",
       "entityType": "pks"
-    },
-    {
-      "as": "PERMISSIVE",
-      "for": "ALL",
-      "roles": [
-        "public"
-      ],
-      "using": "user_id = current_setting('app.user_id', true)",
-      "withCheck": "user_id = current_setting('app.user_id', true)",
-      "name": "oauth_tokens_user_isolation_policy",
-      "entityType": "policies",
-      "schema": "public",
-      "table": "oauth_tokens"
     },
     {
       "as": "PERMISSIVE",

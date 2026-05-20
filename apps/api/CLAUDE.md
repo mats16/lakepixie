@@ -10,7 +10,7 @@ REST API server built with Fastify 5. Uses Drizzle ORM for database operations a
 | ORM | Drizzle ORM 1.0.0-beta |
 | Event Persistence | In-Memory EventBatcher |
 | AI | Claude Agent SDK |
-| Database | PostgreSQL (postgres.js) |
+| Database | Lakebase PostgreSQL via AppKit, SQLite fallback |
 | Testing | Vitest |
 | Development | tsx 4.x |
 
@@ -225,7 +225,6 @@ enqueueSessionEvent(fastify, {
 ### Required
 
 ```bash
-DATABASE_URL=postgresql://localhost:5432/mydb
 DATABRICKS_HOST=your-workspace.databricks.com
 ```
 
@@ -235,6 +234,12 @@ DATABRICKS_HOST=your-workspace.databricks.com
 NODE_ENV=development          # development | production | test
 PORT=8000                     # Server port
 CCBRICKS_BASE_DIR=/home/app  # Base directory (users/, sessions/, db/ inside)
+
+# Database
+# Empty LAKEBASE_ENDPOINT selects SQLite fallback.
+# Set LAKEBASE_ENDPOINT for Lakebase; Databricks Apps injects PG* variables.
+# Lakebase migrations run in {PGAPPNAME}_schema_{PGUSER-without-hyphens}.
+LAKEBASE_ENDPOINT=projects/.../branches/.../endpoints/...
 
 # Anthropic API (auto-constructed from DATABRICKS_HOST; override here if needed)
 ANTHROPIC_BASE_URL=https://your-workspace.cloud.databricks.com/ai-gateway/anthropic
@@ -247,7 +252,7 @@ ANTHROPIC_BASE_URL=https://your-workspace.cloud.databricks.com/ai-gateway/anthro
 fastify.get('/example', async (request, reply) => {
   const port = fastify.config.PORT;
   const nodeEnv = fastify.config.NODE_ENV;
-  const databaseUrl = fastify.config.DATABASE_URL;
+  const lakebaseEndpoint = fastify.config.LAKEBASE_ENDPOINT;
   // ...
 });
 ```
@@ -389,5 +394,5 @@ kill -9 <PID>    # Kill process
 ### Database Connection Errors
 
 1. Verify PostgreSQL is running
-2. Check `DATABASE_URL` is correct
+2. Check `LAKEBASE_ENDPOINT` and the Databricks-injected `PG*` variables
 3. Sync schema with `npm run db:push`

@@ -4,6 +4,7 @@ env:
   - name: CCBRICKS_BASE_DIR
     value: /home/app
   - name: NODE_ENV
-    value: development
-#  - name: DATABASE_URL
-#    value: postgresql://postgres:postgres@localhost:5432/postgres
+    value: production
+  # When LAKEBASE_ENDPOINT is injected, use Lakebase. When not injected, use SQLite.
+  - name: LAKEBASE_ENDPOINT
+    valueFrom: lakebase

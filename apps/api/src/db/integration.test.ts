@@ -1,18 +1,30 @@
 // apps/api/src/db/integration.test.ts
 // 統合テスト: 実際のデータベースに接続してテスト
-// ローカル: .env の DATABASE_URL を使用
-// CI: Docker の PostgreSQL を使用
+// Lakebase: .env / Databricks Apps が提供する LAKEBASE_ENDPOINT と PG* を使用
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { config } from 'dotenv';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import { createLakebasePool } from '@databricks/appkit';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import type { NodePgClient, NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { sql, eq, desc, lt } from 'drizzle-orm';
-import postgres from 'postgres';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import * as schema from './schema.js';
+import * as schema from './schema.pg.js';
+
+function quoteIdent(identifier: string): string {
+  return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+function resolveLakebaseSchema(): string {
+  const appName = process.env.PGAPPNAME || process.env.DATABRICKS_APP_NAME;
+  const servicePrincipalId = process.env.PGUSER || process.env.DATABRICKS_CLIENT_ID;
+  if (!appName || !servicePrincipalId) {
+    throw new Error('PGAPPNAME and PGUSER are required for Lakebase integration tests.');
+  }
+  return `${appName}_schema_${servicePrincipalId.replaceAll('-', '')}`;
+}
 
 // .env をロード（ローカル開発用）
 const __filename = fileURLToPath(import.meta.url);
@@ -26,9 +38,10 @@ const TEST_USER_2 = 'test-user-2';
 const TEST_SESSION_1 = '11111111-1111-1111-1111-111111111111';
 const TEST_SESSION_2 = '22222222-2222-2222-2222-222222222222';
 
-describe.skipIf(!process.env.DATABASE_URL)('Database Integration Tests', () => {
-  let client: ReturnType<typeof postgres>;
-  let db: PostgresJsDatabase<typeof schema>;
+describe.skipIf(!process.env.LAKEBASE_ENDPOINT)('Database Integration Tests', () => {
+  let pool: ReturnType<typeof createLakebasePool>;
+  let db: NodePgDatabase<typeof schema>;
+  let schemaName: string;
 
   /**
    * RLS 保護テーブルへのアクセス用ヘルパー
@@ -45,29 +58,29 @@ describe.skipIf(!process.env.DATABASE_URL)('Database Integration Tests', () => {
   }
 
   beforeAll(async () => {
-    const databaseUrl = process.env.DATABASE_URL!;
-
-    client = postgres(databaseUrl, { max: 1 });
-    db = drizzle({ client, schema });
+    schemaName = resolveLakebaseSchema();
+    pool = createLakebasePool({ max: 1, options: `-c search_path=${schemaName}` });
+    db = drizzle({ client: pool as unknown as NodePgClient, schema });
+    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(schemaName)}`);
 
     // マイグレーション実行
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = path.dirname(__filename);
     const migrationsFolder = path.join(__dirname, '../../migrations');
-    await migrate(db, { migrationsFolder });
+    await migrate(db, { migrationsFolder, migrationsSchema: schemaName });
 
     // 常に FORCE ROW LEVEL SECURITY を適用
     // 理由:
     // 1. BYPASSRLS 属性を持つユーザー（ローカル Neon など）は RLS をバイパスする
     // 2. テーブルオーナー（CI で testuser がマイグレーションを実行した場合など）も RLS をバイパスする
     // FORCE RLS により、どちらのケースでも RLS が強制される
-    await client`ALTER TABLE sessions FORCE ROW LEVEL SECURITY`;
-    await client`ALTER TABLE user_settings FORCE ROW LEVEL SECURITY`;
+    await pool.query('ALTER TABLE sessions FORCE ROW LEVEL SECURITY');
+    await pool.query('ALTER TABLE user_settings FORCE ROW LEVEL SECURITY');
   });
 
   afterAll(async () => {
-    if (client) {
-      await client.end();
+    if (pool) {
+      await pool.end();
     }
   });
 
@@ -75,7 +88,7 @@ describe.skipIf(!process.env.DATABASE_URL)('Database Integration Tests', () => {
     // テストデータをクリーンアップ
     // TRUNCATE は RLS をバイパスするため、ユーザーコンテキストなしで実行可能
     // CASCADE で外部キー参照を持つテーブルも一緒にクリア
-    await client`TRUNCATE TABLE session_events, sessions, user_settings, users CASCADE`;
+    await pool.query('TRUNCATE TABLE session_events, sessions, user_settings, users CASCADE');
   });
 
   describe('sessionEvents table', () => {
@@ -169,10 +182,10 @@ describe.skipIf(!process.env.DATABASE_URL)('Database Integration Tests', () => {
     beforeAll(async () => {
       // 現在のロールがBYPASSRLS属性を持っているかチェック
       // Neonのneondb_ownerなど、BYPASSRLS属性があるとRLSをバイパスするためテストをスキップ
-      const result = await client`
-        SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user
-      `;
-      skipRlsTests = result[0]?.rolbypassrls === true;
+      const result = await pool.query(
+        'SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user'
+      );
+      skipRlsTests = result.rows[0]?.rolbypassrls === true;
       if (skipRlsTests) {
         console.log('Skipping RLS tests: current role has BYPASSRLS attribute');
       }

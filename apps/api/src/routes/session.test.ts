@@ -75,7 +75,6 @@ describe('session route - invalid session ID handling', () => {
   beforeEach(() => {
     originalEnv = { ...process.env };
 
-    process.env.DATABASE_URL = 'postgresql://localhost:5432/test';
     process.env.DATABRICKS_HOST = 'test.databricks.com';
     process.env.NODE_ENV = 'test';
 

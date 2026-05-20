@@ -18,17 +18,20 @@
     "clean": "turbo run clean && rm -rf node_modules",
     "type-check": "turbo run type-check"
   },
-  "devDependencies": {
-    "eslint": "^9.18.0",
-    "prettier": "^3.4.2",
+  "dependencies": {
     "turbo": "^2.9.6",
     "typescript": "^5.8.3"
+  },
+  "devDependencies": {
+    "eslint": "^9.18.0",
+    "prettier": "^3.4.2"
   },
   "engines": {
     "node": ">=22.16",
     "npm": ">=10.0.0"
   },
   "optionalDependencies": {
+    "@ast-grep/napi-linux-x64-gnu": "0.37.0",
     "@rolldown/binding-linux-x64-gnu": "^1.0.0-rc.15",
     "@rollup/rollup-linux-x64-gnu": "^4.60.0"
   },
