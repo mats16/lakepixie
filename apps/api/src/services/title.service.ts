@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { typeid } from 'typeid-js';
+import { randomUUID } from 'node:crypto';
 import type { GenerateTitleResponse } from '@repo/types';
 
 // Constants for title generation
@@ -82,6 +83,12 @@ function generateFallbackAppName(): string {
   return typeid().toString().replaceAll('_', '-');
 }
 
+function generateBranchName(appName: string): string {
+  const safeAppName = isValidAppName(appName) ? appName : 'session';
+  const shortId = randomUUID().replaceAll('-', '').slice(0, 8);
+  return `ccbricks/${safeAppName}-${shortId}`;
+}
+
 export interface TitleServiceConfig {
   databricksHost: string;
 }
@@ -129,7 +136,12 @@ export class TitleService {
     const rawContent = response.choices[0]?.message?.content;
 
     if (!rawContent) {
-      return { title: FALLBACK_TITLE, app_name: generateFallbackAppName() };
+      const appName = generateFallbackAppName();
+      return {
+        title: FALLBACK_TITLE,
+        app_name: appName,
+        branch_name: generateBranchName(appName),
+      };
     }
 
     try {
@@ -137,13 +149,20 @@ export class TitleService {
 
       const title = parsed.title ? cleanTitle(parsed.title) : '';
       const appName = parsed.app_name ?? '';
+      const safeAppName = isValidAppName(appName) ? appName : generateFallbackAppName();
 
       return {
         title: title || FALLBACK_TITLE,
-        app_name: isValidAppName(appName) ? appName : generateFallbackAppName(),
+        app_name: safeAppName,
+        branch_name: generateBranchName(safeAppName),
       };
     } catch {
-      return { title: FALLBACK_TITLE, app_name: generateFallbackAppName() };
+      const appName = generateFallbackAppName();
+      return {
+        title: FALLBACK_TITLE,
+        app_name: appName,
+        branch_name: generateBranchName(appName),
+      };
     }
   }
 }

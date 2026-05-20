@@ -13,9 +13,26 @@ export interface DatabricksWorkspaceSource {
   path: string;
 }
 
+export interface GitRepositorySource {
+  type: 'git_repository';
+  url: string;
+  revision: string;
+  sparse_checkout_paths: string[];
+  allow_unrestricted_git_push: boolean;
+}
+
 export interface DatabricksAppsOutcome {
   type: 'databricks_apps';
   name?: string;
+}
+
+export interface GitRepositoryOutcome {
+  type: 'git_repository';
+  git_info: {
+    type: 'github';
+    repo: string;
+    branches: string[];
+  };
 }
 
 /** resolveAppsOutcomeName() 通過後の DatabricksAppsOutcome（name は必ず存在） */
@@ -24,9 +41,15 @@ export interface ResolvedDatabricksAppsOutcome {
   name: string;
 }
 
-export type SessionSource = DatabricksWorkspaceSource;
-export type SessionOutcome = DatabricksWorkspaceSource | DatabricksAppsOutcome;
-export type ResolvedSessionOutcome = DatabricksWorkspaceSource | ResolvedDatabricksAppsOutcome;
+export type SessionSource = DatabricksWorkspaceSource | GitRepositorySource;
+export type SessionOutcome =
+  | DatabricksWorkspaceSource
+  | DatabricksAppsOutcome
+  | GitRepositoryOutcome;
+export type ResolvedSessionOutcome =
+  | DatabricksWorkspaceSource
+  | ResolvedDatabricksAppsOutcome
+  | GitRepositoryOutcome;
 
 // =====================================================
 // Session Context Types

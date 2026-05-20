@@ -48,6 +48,17 @@ export interface UpdateAppSettingsRequest {
   otel_traces_table_name?: string | null;
 }
 
+export interface GitHubAppAuthResponse {
+  secret_scope: string;
+  github_app_id: string | null;
+  private_key_configured: boolean;
+}
+
+export interface UpdateGitHubAppAuthRequest {
+  github_app_id?: string | null;
+  github_app_private_key?: string | null;
+}
+
 export interface ServingEndpointsByTier {
   opus: string[];
   sonnet: string[];

@@ -4,6 +4,8 @@ import type {
   UpdateUserRoleRequest,
   AppSettingsResponse,
   UpdateAppSettingsRequest,
+  GitHubAppAuthResponse,
+  UpdateGitHubAppAuthRequest,
   ApiError,
 } from '@repo/types';
 import { adminGuard } from '../hooks/admin-guard.js';
@@ -14,6 +16,11 @@ import {
   getAppSettings,
   LastAdminError,
 } from '../services/admin.service.js';
+import {
+  getGitHubAppAuthStatus,
+  updateGitHubAppAuth,
+} from '../services/github-app-auth.service.js';
+import { DatabricksSecretsPermissionError } from '../services/databricks-secrets.service.js';
 
 const adminRoute: FastifyPluginAsync = async fastify => {
   const guard = adminGuard(fastify);
@@ -155,6 +162,90 @@ const adminRoute: FastifyPluginAsync = async fastify => {
     await updateAppSettings(fastify, settings);
     const updated = await getAppSettings(fastify);
     return reply.send(updated);
+  });
+
+  // GitHub App 認証設定取得（private key は返さない）
+  fastify.get<{ Reply: GitHubAppAuthResponse | ApiError }>(
+    '/admin/github-app-auth',
+    { preHandler: guard },
+    async (_request, reply) => {
+      try {
+        const status = await getGitHubAppAuthStatus(fastify);
+        return reply.send(status);
+      } catch (error) {
+        if (error instanceof DatabricksSecretsPermissionError) {
+          return reply.status(400).send({
+            error: 'BadRequest',
+            message: error.message,
+            statusCode: 400,
+          });
+        }
+        throw error;
+      }
+    }
+  );
+
+  // GitHub App 認証設定更新（App ID は app_settings、private key は Databricks Secrets に保存）
+  fastify.patch<{
+    Body: UpdateGitHubAppAuthRequest;
+    Reply: GitHubAppAuthResponse | ApiError;
+  }>('/admin/github-app-auth', { preHandler: guard }, async (request, reply) => {
+    const body = request.body;
+    const settings: UpdateGitHubAppAuthRequest = {};
+
+    if (body.github_app_id !== undefined) {
+      if (body.github_app_id !== null && typeof body.github_app_id !== 'string') {
+        return reply.status(400).send({
+          error: 'BadRequest',
+          message: 'github_app_id must be a string or null',
+          statusCode: 400,
+        });
+      }
+
+      const value = body.github_app_id?.trim() ?? null;
+      if (value !== null && value !== '' && !/^\d{1,20}$/.test(value)) {
+        return reply.status(400).send({
+          error: 'BadRequest',
+          message: 'github_app_id must be a numeric GitHub App ID or null',
+          statusCode: 400,
+        });
+      }
+      settings.github_app_id = value || null;
+    }
+
+    if (body.github_app_private_key !== undefined) {
+      if (body.github_app_private_key !== null && typeof body.github_app_private_key !== 'string') {
+        return reply.status(400).send({
+          error: 'BadRequest',
+          message: 'github_app_private_key must be a string or null',
+          statusCode: 400,
+        });
+      }
+
+      const value = body.github_app_private_key?.trim() ?? null;
+      if (value !== null && value !== '' && !value.includes('BEGIN')) {
+        return reply.status(400).send({
+          error: 'BadRequest',
+          message: 'github_app_private_key must be a PEM private key or null',
+          statusCode: 400,
+        });
+      }
+      settings.github_app_private_key = value || null;
+    }
+
+    try {
+      const updated = await updateGitHubAppAuth(fastify, settings);
+      return reply.send(updated);
+    } catch (error) {
+      if (error instanceof DatabricksSecretsPermissionError) {
+        return reply.status(400).send({
+          error: 'BadRequest',
+          message: error.message,
+          statusCode: 400,
+        });
+      }
+      throw error;
+    }
   });
 };
 

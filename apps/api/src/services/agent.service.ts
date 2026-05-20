@@ -1,8 +1,9 @@
 import { readdir, readFile, writeFile, rm, stat, cp } from 'node:fs/promises';
 import { join, basename, extname, isAbsolute } from 'node:path';
-import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import type { FastifyInstance } from 'fastify';
+import { spawnAsync } from '../utils/spawn.js';
 import yaml from 'js-yaml';
 import type {
   AgentInfo,
@@ -18,6 +19,7 @@ import type { UserContext } from '../lib/user-context.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { ensureDirectory, removeDirectory } from '../utils/directory.js';
 import { validatePathWithinBase } from '../utils/path-validation.js';
+import { createGitHubGitAuthEnvironment } from './github-app-auth.service.js';
 
 /**
  * サービス層用のシンプルなロガー
@@ -418,54 +420,6 @@ export async function createAgent(
 }
 
 /**
- * spawn でコマンドを実行し、Promise を返すヘルパー関数
- */
-function spawnAsync(
-  command: string,
-  args: string[],
-  options: { timeout?: number; cwd?: string } = {}
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      shell: false, // シェルを使わない（コマンドインジェクション防止）
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    child.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    const timeoutId = options.timeout
-      ? setTimeout(() => {
-          child.kill('SIGTERM');
-          reject(new Error(`Command timed out after ${options.timeout}ms`));
-        }, options.timeout)
-      : null;
-
-    child.on('close', code => {
-      if (timeoutId) clearTimeout(timeoutId);
-      if (code === 0) {
-        resolve({ stdout, stderr });
-      } else {
-        reject(new Error(`Command failed with exit code ${code}: ${stderr}`));
-      }
-    });
-
-    child.on('error', err => {
-      if (timeoutId) clearTimeout(timeoutId);
-      reject(err);
-    });
-  });
-}
-
-/**
  * エージェントファイルのメタデータをマージして書き戻す
  * @param destFile - 対象ファイルパス
  * @param importMetadata - インポート時に追加するメタデータ
@@ -603,7 +557,8 @@ async function copyAgentFromDir(
  */
 export async function importAgentsFromGit(
   ctx: UserContext,
-  request: AgentImportRequest
+  request: AgentImportRequest,
+  fastify?: FastifyInstance
 ): Promise<AgentInfo[]> {
   const { repository_url, paths, branch = 'main' } = request;
   const agentsDir = getAgentsDir(ctx);
@@ -622,21 +577,28 @@ export async function importAgentsFromGit(
   try {
     // 1. git clone（blobless clone + no-checkout で最小限のメタデータのみ取得）
     // spawn を使用してコマンドインジェクションを防止
-    await spawnAsync(
-      'git',
-      [
-        'clone',
-        '--filter=blob:none',
-        '--no-checkout',
-        '--depth',
-        '1',
-        '--branch',
-        branch,
-        repository_url,
-        tempDir,
-      ],
-      { timeout: 60000 } // 60秒タイムアウト
-    );
+    const gitAuth = fastify
+      ? await createGitHubGitAuthEnvironment(fastify, repository_url, 'read')
+      : null;
+    try {
+      await spawnAsync(
+        'git',
+        [
+          'clone',
+          '--filter=blob:none',
+          '--no-checkout',
+          '--depth',
+          '1',
+          '--branch',
+          branch,
+          repository_url,
+          tempDir,
+        ],
+        { timeout: 60000, env: gitAuth?.env } // 60秒タイムアウト
+      );
+    } finally {
+      await gitAuth?.cleanup();
+    }
 
     // 2. sparse-checkout を設定して必要なパスのみをチェックアウト
     try {

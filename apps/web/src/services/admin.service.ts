@@ -1,8 +1,10 @@
 import type {
   AdminUserListResponse,
   AppSettingsResponse,
+  GitHubAppAuthResponse,
   ServingEndpointsByTier,
   UpdateAppSettingsRequest,
+  UpdateGitHubAppAuthRequest,
 } from '@repo/types';
 import { apiClient } from './api-client';
 
@@ -19,6 +21,14 @@ export const adminService = {
 
   updateSettings: (settings: UpdateAppSettingsRequest) =>
     apiClient<AppSettingsResponse>('/api/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(settings),
+    }),
+
+  getGitHubAppAuth: () => apiClient<GitHubAppAuthResponse>('/api/admin/github-app-auth'),
+
+  updateGitHubAppAuth: (settings: UpdateGitHubAppAuthRequest) =>
+    apiClient<GitHubAppAuthResponse>('/api/admin/github-app-auth', {
       method: 'PATCH',
       body: JSON.stringify(settings),
     }),

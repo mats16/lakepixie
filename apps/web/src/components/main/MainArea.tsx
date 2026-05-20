@@ -8,6 +8,8 @@ import type {
   UserMessageContentBlock,
   WsAskUserQuestionRequest,
   DatabricksWorkspaceSource,
+  SessionOutcome,
+  SessionSource,
   ResolvedDatabricksAppsOutcome,
 } from '@repo/types';
 import { MainHeader } from './MainHeader';
@@ -21,6 +23,12 @@ import { useSession } from '@/hooks/useSession';
 import { AskUserQuestionProvider } from '@/contexts/AskUserQuestionContext';
 import { sessionService } from '@/services/session.service';
 import { extractTextFromContent } from '@/lib/content-builder';
+
+function createFallbackBranchName(appName?: string): string {
+  const safeAppName = appName && /^[a-z0-9][a-z0-9-]{0,25}$/.test(appName) ? appName : 'session';
+  const shortId = crypto.randomUUID().replaceAll('-', '').slice(0, 8);
+  return `ccbricks/${safeAppName}-${shortId}`;
+}
 
 interface MainAreaProps {
   branchName?: string;
@@ -112,10 +120,13 @@ export function MainArea({
     return sessionStatus === 'init' || sessionStatus === 'running';
   }, [sessionStatus, pendingQuestions.size]);
 
-  // Workspace ソースがあり init 状態の場合、データ同期中
-  const isSyncing = useMemo(() => {
+  // init 中の準備処理表示。Git repository は clone、Workspace は sync として見せる。
+  const syncingKind = useMemo((): 'workspace' | 'git' | null => {
+    if (sessionStatus !== 'init') return null;
     const sources = session?.session_context?.sources ?? [];
-    return sources.length > 0 && sessionStatus === 'init';
+    if (sources.some(source => source.type === 'git_repository')) return 'git';
+    if (sources.some(source => source.type === 'databricks_workspace')) return 'workspace';
+    return null;
   }, [session?.session_context?.sources, sessionStatus]);
 
   // session_context.outcomes から workspace / apps outcome を取得
@@ -154,6 +165,9 @@ export function MainArea({
     modelId,
     enableDatabricksSqlWrite,
     enableDatabricksApps,
+    sourceType,
+    gitRepository,
+    gitRepositoryBranch,
     workspaceSelection,
     mcpConfig,
     allowedTools,
@@ -161,6 +175,15 @@ export function MainArea({
   }: NewSessionParams) => {
     try {
       setCreateSessionError(null);
+      const gitRepositoryForSession = sourceType === 'git_repository' ? gitRepository : null;
+      if (sourceType === 'git_repository' && !gitRepositoryForSession) {
+        setCreateSessionError(t('welcome.sourceType.repositoryRequired'));
+        return;
+      }
+      if (sourceType === 'git_repository' && !gitRepositoryBranch) {
+        setCreateSessionError(t('welcome.sourceType.branchRequired'));
+        return;
+      }
 
       // UUID を外で生成（API と navigate state の両方で使用）
       const messageUuid = crypto.randomUUID();
@@ -168,6 +191,46 @@ export function MainArea({
       // タイトル生成用にテキストを抽出
       const textContent = extractTextFromContent(content);
       const titleResult = await sessionService.generateTitle(textContent);
+      const branchName =
+        titleResult?.branch_name ?? createFallbackBranchName(titleResult?.app_name);
+      const sources: SessionSource[] = [];
+      const outcomes: SessionOutcome[] = [];
+
+      if (gitRepositoryForSession) {
+        sources.push({
+          allow_unrestricted_git_push: true,
+          revision: `refs/heads/${gitRepositoryBranch}`,
+          sparse_checkout_paths: [],
+          type: 'git_repository',
+          url: gitRepositoryForSession.url,
+        });
+        outcomes.push({
+          git_info: {
+            branches: [branchName],
+            repo: gitRepositoryForSession.full_name,
+            type: 'github',
+          },
+          type: 'git_repository',
+        });
+      } else if (workspaceSelection) {
+        sources.push({
+          type: 'databricks_workspace',
+          path: workspaceSelection.path,
+        });
+        outcomes.push({
+          type: 'databricks_workspace',
+          path: '/Workspace/Shared/ccbricks/sessions/{session_id}',
+        });
+      } else {
+        outcomes.push({
+          type: 'databricks_workspace',
+          path: '/Workspace/Shared/ccbricks/sessions/{session_id}',
+        });
+      }
+
+      if (enableDatabricksApps) {
+        outcomes.push({ type: 'databricks_apps', name: titleResult?.app_name });
+      }
 
       const request: SessionCreateRequest = {
         title: titleResult?.title ?? undefined,
@@ -188,23 +251,8 @@ export function MainArea({
         ],
         session_context: {
           model: modelId as 'opus' | 'sonnet' | 'haiku',
-          sources: workspaceSelection
-            ? [
-                {
-                  type: 'databricks_workspace',
-                  path: workspaceSelection.path,
-                },
-              ]
-            : [],
-          outcomes: [
-            {
-              type: 'databricks_workspace',
-              path: '/Workspace/Shared/ccbricks/sessions/{session_id}',
-            },
-            ...(enableDatabricksApps
-              ? [{ type: 'databricks_apps' as const, name: titleResult?.app_name }]
-              : []),
-          ],
+          sources,
+          outcomes,
           allowed_tools: allowedTools,
           disallowed_tools: [
             ...(enableDatabricksSqlWrite ? [] : ['mcp__dbsql__execute_sql']),
@@ -274,7 +322,7 @@ export function MainArea({
           isLoading={isLoading}
           error={error}
           isAgentThinking={isAgentThinking}
-          isSyncing={isSyncing}
+          syncingKind={syncingKind}
           hasFloatingButton={hasFloatingButtons}
         />
         <InputArea

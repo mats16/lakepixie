@@ -1,13 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, ShieldCheck, ShieldOff, Loader2, Save } from 'lucide-react';
-import type { AdminUserInfo, AppSettingsResponse, ServingEndpointsByTier } from '@repo/types';
+import {
+  ArrowLeft,
+  ExternalLink,
+  HelpCircle,
+  Loader2,
+  Save,
+  ShieldCheck,
+  ShieldOff,
+  Upload,
+} from 'lucide-react';
+import type {
+  AdminUserInfo,
+  AppSettingsResponse,
+  GitHubAppAuthResponse,
+  ServingEndpointsByTier,
+} from '@repo/types';
 import { useUser } from '@/hooks/useUser';
 import { adminService } from '@/services';
 import { Button } from '@/components/ui/button';
 import { ClearableInput } from '@/components/ui/clearable-input';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -16,7 +31,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
+
+const GITHUB_APPS_SETTINGS_URL = 'https://github.com/settings/apps';
 
 function useAdminSettings() {
   const { t } = useTranslation();
@@ -59,6 +83,119 @@ function useAdminSettings() {
   );
 
   return { settings, isLoadingSettings, savingKey, saveSetting };
+}
+
+function useGitHubAppAuth() {
+  const { t } = useTranslation();
+  const [githubAppAuth, setGitHubAppAuth] = useState<GitHubAppAuthResponse | null>(null);
+  const [isLoadingGitHubAppAuth, setIsLoadingGitHubAppAuth] = useState(true);
+  const [isSavingGitHubAppAuth, setIsSavingGitHubAppAuth] = useState(false);
+
+  const fetchGitHubAppAuth = useCallback(async () => {
+    try {
+      setIsLoadingGitHubAppAuth(true);
+      const data = await adminService.getGitHubAppAuth();
+      setGitHubAppAuth(data);
+    } catch {
+      toast.error(t('admin.fetchGitHubAppAuthError'));
+    } finally {
+      setIsLoadingGitHubAppAuth(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    fetchGitHubAppAuth();
+  }, [fetchGitHubAppAuth]);
+
+  const saveGitHubAppAuth = useCallback(
+    async (patch: Parameters<typeof adminService.updateGitHubAppAuth>[0]) => {
+      setIsSavingGitHubAppAuth(true);
+      try {
+        const updated = await adminService.updateGitHubAppAuth(patch);
+        setGitHubAppAuth(updated);
+        toast.success(t('admin.updateSettingsSuccess'));
+        return true;
+      } catch {
+        toast.error(t('admin.updateGitHubAppAuthError'));
+        return false;
+      } finally {
+        setIsSavingGitHubAppAuth(false);
+      }
+    },
+    [t]
+  );
+
+  return {
+    githubAppAuth,
+    isLoadingGitHubAppAuth,
+    isSavingGitHubAppAuth,
+    saveGitHubAppAuth,
+  };
+}
+
+interface GitHubAppGuideDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+function GitHubAppGuideDialog({ open, onOpenChange }: GitHubAppGuideDialogProps) {
+  const { t } = useTranslation();
+  const steps = [
+    t('admin.githubAppGuideStepCreate'),
+    t('admin.githubAppGuideStepUrls'),
+    t('admin.githubAppGuideStepPermissions'),
+    t('admin.githubAppGuideStepInstall'),
+    t('admin.githubAppGuideStepPrivateKey'),
+    t('admin.githubAppGuideStepSave'),
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{t('admin.githubAppGuideTitle')}</DialogTitle>
+          <DialogDescription>{t('admin.githubAppGuideDescription')}</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-5">
+          <Button variant="outline" asChild>
+            <a href={GITHUB_APPS_SETTINGS_URL} target="_blank" rel="noreferrer">
+              <ExternalLink className="h-4 w-4" />
+              {t('admin.githubAppGuideOpenSettings')}
+            </a>
+          </Button>
+
+          <div className="rounded-md border border-border p-4">
+            <h3 className="text-sm font-medium">{t('admin.githubAppGuideStepsTitle')}</h3>
+            <ol className="mt-3 space-y-3 text-sm text-muted-foreground">
+              {steps.map((step, index) => (
+                <li key={step} className="flex gap-3">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-foreground">
+                    {index + 1}
+                  </span>
+                  <span className="pt-0.5">{step}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          <div className="rounded-md border border-border p-4">
+            <h3 className="text-sm font-medium">{t('admin.githubAppGuideValuesTitle')}</h3>
+            <dl className="mt-3 grid grid-cols-[160px_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+              <dt className="text-muted-foreground">{t('admin.githubAppGuideCallbackUrl')}</dt>
+              <dd>{t('admin.githubAppGuideCallbackUrlValue')}</dd>
+              <dt className="text-muted-foreground">{t('admin.githubAppGuideWebhook')}</dt>
+              <dd>{t('admin.githubAppGuideWebhookValue')}</dd>
+              <dt className="text-muted-foreground">
+                {t('admin.githubAppGuideContentsPermission')}
+              </dt>
+              <dd>{t('admin.githubAppGuideContentsPermissionValue')}</dd>
+            </dl>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function AdminSettingsContent() {
@@ -122,7 +259,7 @@ function AdminSettingsContent() {
   };
 
   return (
-    <div className="flex-1 overflow-auto p-6 space-y-8">
+    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-8">
       <section>
         <h2 className="text-lg font-semibold mb-4">{t('admin.settings')}</h2>
         {isLoadingSettings ? (
@@ -273,6 +410,181 @@ function AdminSettingsContent() {
   );
 }
 
+function AdminGitContent() {
+  const { t } = useTranslation();
+  const { githubAppAuth, isLoadingGitHubAppAuth, isSavingGitHubAppAuth, saveGitHubAppAuth } =
+    useGitHubAppAuth();
+
+  const [githubAppIdInput, setGitHubAppIdInput] = useState('');
+  const [githubAppPrivateKeyInput, setGitHubAppPrivateKeyInput] = useState('');
+  const [githubAppPrivateKeyFileName, setGitHubAppPrivateKeyFileName] = useState<string | null>(
+    null
+  );
+  const [isGitHubAppGuideOpen, setIsGitHubAppGuideOpen] = useState(false);
+  const githubAppPrivateKeyFileInputRef = useRef<HTMLInputElement>(null);
+  const lastSyncedGitHubAppIdRef = useRef('');
+
+  useEffect(() => {
+    if (githubAppAuth) {
+      const persistedAppId = githubAppAuth.github_app_id ?? '';
+      const previousPersistedAppId = lastSyncedGitHubAppIdRef.current;
+      setGitHubAppIdInput(current =>
+        current === previousPersistedAppId ? persistedAppId : current
+      );
+      lastSyncedGitHubAppIdRef.current = persistedAppId;
+      setGitHubAppPrivateKeyInput('');
+    }
+  }, [githubAppAuth]);
+
+  const githubAppAuthDirty =
+    githubAppIdInput.trim() !== (githubAppAuth?.github_app_id ?? '') ||
+    githubAppPrivateKeyInput.trim().length > 0;
+
+  const handleGitHubAppAuthSave = async () => {
+    const patch: Parameters<typeof adminService.updateGitHubAppAuth>[0] = {};
+    if (githubAppIdInput.trim() !== (githubAppAuth?.github_app_id ?? '')) {
+      patch.github_app_id = githubAppIdInput.trim() || null;
+    }
+    if (githubAppPrivateKeyInput.trim()) {
+      patch.github_app_private_key = githubAppPrivateKeyInput.trim();
+    }
+
+    const saved = await saveGitHubAppAuth(patch);
+    if (saved) {
+      setGitHubAppPrivateKeyInput('');
+      setGitHubAppPrivateKeyFileName(null);
+    }
+  };
+
+  const handleGitHubAppPrivateKeyFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    setGitHubAppPrivateKeyFileName(null);
+
+    try {
+      const text = await file.text();
+      if (!text.includes('PRIVATE KEY')) {
+        toast.error(t('admin.githubAppPrivateKeyFileInvalid'));
+        return;
+      }
+
+      const saved = await saveGitHubAppAuth({ github_app_private_key: text });
+      if (saved) {
+        setGitHubAppPrivateKeyInput('');
+        setGitHubAppPrivateKeyFileName(file.name);
+      }
+    } catch {
+      toast.error(t('admin.githubAppPrivateKeyFileError'));
+    } finally {
+      input.value = '';
+    }
+  };
+
+  return (
+    <section className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold">{t('admin.githubAppAuthConfiguration')}</h2>
+        <Button variant="outline" size="sm" onClick={() => setIsGitHubAppGuideOpen(true)}>
+          <HelpCircle className="h-4 w-4" />
+          {t('admin.githubAppGuideButton')}
+        </Button>
+      </div>
+      {isLoadingGitHubAppAuth ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <div className="border border-border rounded-lg p-4 space-y-4">
+          <p className="text-xs text-muted-foreground">{t('admin.githubAppAuthDescription')}</p>
+          <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+            {t('admin.githubAppAccessModel')}
+          </p>
+          <div className="flex items-center justify-between gap-4">
+            <div className="shrink-0">
+              <p className="text-sm font-medium">{t('admin.githubAppId')}</p>
+              <p className="text-xs text-muted-foreground">{t('admin.githubAppIdDescription')}</p>
+            </div>
+            <Input
+              className="w-[320px]"
+              placeholder={t('admin.githubAppIdPlaceholder')}
+              value={githubAppIdInput}
+              onChange={e => setGitHubAppIdInput(e.target.value)}
+              disabled={isSavingGitHubAppAuth}
+            />
+          </div>
+          <div className="flex items-start justify-between gap-4">
+            <div className="shrink-0">
+              <p className="text-sm font-medium">{t('admin.githubAppPrivateKey')}</p>
+              <p className="text-xs text-muted-foreground">
+                {t('admin.githubAppPrivateKeyDescription')}
+              </p>
+            </div>
+            <div className="w-[320px] space-y-2">
+              <input
+                ref={githubAppPrivateKeyFileInputRef}
+                type="file"
+                accept=".pem,.key,.txt,text/plain"
+                className="hidden"
+                onChange={handleGitHubAppPrivateKeyFileChange}
+                disabled={isSavingGitHubAppAuth}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => githubAppPrivateKeyFileInputRef.current?.click()}
+                disabled={isSavingGitHubAppAuth}
+              >
+                <Upload className="h-4 w-4" />
+                {t('admin.githubAppPrivateKeySelectFile')}
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                {githubAppAuth?.private_key_configured
+                  ? t('admin.githubAppPrivateKeyConfigured')
+                  : t('admin.githubAppPrivateKeyNotConfigured')}
+              </p>
+              {githubAppPrivateKeyFileName && (
+                <p className="truncate text-xs text-muted-foreground">
+                  {t('admin.githubAppPrivateKeySelectedFile', {
+                    fileName: githubAppPrivateKeyFileName,
+                  })}
+                </p>
+              )}
+              <Textarea
+                className="min-h-[140px] font-mono text-xs"
+                placeholder={t('admin.githubAppPrivateKeyPlaceholder')}
+                value={githubAppPrivateKeyInput}
+                onChange={e => {
+                  setGitHubAppPrivateKeyInput(e.target.value);
+                  setGitHubAppPrivateKeyFileName(null);
+                }}
+                disabled={isSavingGitHubAppAuth}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleGitHubAppAuthSave}
+              disabled={isSavingGitHubAppAuth || !githubAppAuthDirty}
+            >
+              {isSavingGitHubAppAuth ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Save className="h-4 w-4 mr-2" />
+              )}
+              {t('common.save')}
+            </Button>
+          </div>
+        </div>
+      )}
+      <GitHubAppGuideDialog open={isGitHubAppGuideOpen} onOpenChange={setIsGitHubAppGuideOpen} />
+    </section>
+  );
+}
+
 function AdminBrandingContent() {
   const { t } = useTranslation();
   const { refetchAppSettings } = useUser();
@@ -314,7 +626,7 @@ function AdminBrandingContent() {
   };
 
   return (
-    <section className="flex-1 overflow-auto p-6">
+    <section className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6">
       <h2 className="text-lg font-semibold mb-4">{t('admin.branding')}</h2>
       {isLoadingSettings ? (
         <div className="flex items-center justify-center py-8">
@@ -401,7 +713,7 @@ function AdminUsersContent() {
   };
 
   return (
-    <section className="flex-1 overflow-auto p-6">
+    <section className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6">
       <h2 className="text-lg font-semibold mb-4">{t('admin.userManagement')}</h2>
       {isLoadingUsers ? (
         <div className="flex items-center justify-center py-8">
@@ -514,7 +826,9 @@ export function AdminContent() {
       ? 'users'
       : location.pathname === '/admin/branding'
         ? 'branding'
-        : 'settings';
+        : location.pathname === '/admin/git'
+          ? 'git'
+          : 'settings';
 
   const [mounted, setMounted] = useState<Set<string>>(() => new Set([activeTab]));
   useEffect(() => {
@@ -530,7 +844,7 @@ export function AdminContent() {
   if (!isAdmin) return null;
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full min-h-0 flex flex-col overflow-hidden">
       <div className="flex items-center gap-3 p-4 border-b border-border shrink-0">
         <Button variant="ghost" size="icon" onClick={() => navigate('/')}>
           <ArrowLeft className="h-4 w-4" />
@@ -542,19 +856,23 @@ export function AdminContent() {
         <Tabs value={activeTab} onValueChange={val => navigate(`/admin/${val}`, { replace: true })}>
           <TabsList>
             <TabsTrigger value="settings">{t('admin.settings')}</TabsTrigger>
+            <TabsTrigger value="git">{t('admin.git')}</TabsTrigger>
             <TabsTrigger value="branding">{t('admin.branding')}</TabsTrigger>
             <TabsTrigger value="users">{t('admin.userManagement')}</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
 
-      <div className={activeTab === 'settings' ? 'flex-1 flex flex-col' : 'hidden'}>
+      <div className={activeTab === 'settings' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
         {mounted.has('settings') && <AdminSettingsContent />}
       </div>
-      <div className={activeTab === 'branding' ? 'flex-1 flex flex-col' : 'hidden'}>
+      <div className={activeTab === 'git' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
+        {mounted.has('git') && <AdminGitContent />}
+      </div>
+      <div className={activeTab === 'branding' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
         {mounted.has('branding') && <AdminBrandingContent />}
       </div>
-      <div className={activeTab === 'users' ? 'flex-1 flex flex-col' : 'hidden'}>
+      <div className={activeTab === 'users' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
         {mounted.has('users') && <AdminUsersContent />}
       </div>
     </div>

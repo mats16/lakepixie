@@ -3,7 +3,7 @@ import type { SDKMessage } from '@repo/types';
 import { hasParentToolUseId } from '@repo/types';
 import { EventItem } from './EventItem';
 import { ThinkingIndicator } from './ThinkingIndicator';
-import { SyncingIndicator } from './SyncingIndicator';
+import { SyncingIndicator, type SyncingIndicatorKind } from './SyncingIndicator';
 import { LoadingScreen } from '@/components/ui/loading-spinner';
 import { extractToolResults, groupChildEvents } from '@/lib/message-utils';
 import { HIDDEN_EVENT_TYPES } from '@/lib/tool-constants';
@@ -14,7 +14,7 @@ interface MessageAreaProps {
   isLoading?: boolean;
   error?: Error | null;
   isAgentThinking?: boolean;
-  isSyncing?: boolean;
+  syncingKind?: SyncingIndicatorKind | null;
   hasFloatingButton?: boolean;
 }
 
@@ -26,7 +26,7 @@ export function MessageArea({
   isLoading,
   error,
   isAgentThinking,
-  isSyncing,
+  syncingKind,
   hasFloatingButton,
 }: MessageAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -107,8 +107,8 @@ export function MessageArea({
             childEventsMap={childEventsMap}
           />
         ))}
-        {isSyncing && <SyncingIndicator />}
-        {isAgentThinking && !isSyncing && <ThinkingIndicator />}
+        {syncingKind && <SyncingIndicator kind={syncingKind} />}
+        {isAgentThinking && !syncingKind && <ThinkingIndicator />}
         <div ref={bottomRef} />
       </div>
     </div>

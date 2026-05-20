@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, and, inArray, lt, asc } from 'drizzle-orm';
+import { chmod, writeFile } from 'node:fs/promises';
+import { spawnAsync } from '../utils/spawn.js';
 import {
   query,
   type McpServerConfig,
@@ -22,7 +24,11 @@ import type {
   SessionUpdateRequest,
   DatabricksWorkspaceSource,
   DatabricksAppsOutcome,
+  GitRepositoryOutcome,
+  GitRepositorySource,
   ResolvedDatabricksAppsOutcome,
+  SessionOutcome,
+  SessionSource,
   WsServerMessage,
 } from '@repo/types';
 import { buildSystemPromptConfig } from '../utils/system-prompt.helper.js';
@@ -44,10 +50,27 @@ import { waitForUserAnswer } from './ask-user-question.service.js';
 import { SessionId } from '../models/session.model.js';
 import type { UserContext } from '../lib/user-context.js';
 import path from 'node:path';
+import {
+  createGitHubGitAuthEnvironment,
+  toGitHubRepositoryFullName,
+} from './github-app-auth.service.js';
+import {
+  buildGitCredentialHelperScript,
+  registerGitCredential,
+  revokeGitCredential,
+} from './git-credential.service.js';
 
 /** セッションID → AbortController のマッピング（abort 用） */
 const sessionAbortControllers = new Map<string, AbortController>();
 const QUEUED_USER_EVENT_SUBTYPE = 'queued';
+const GIT_COMMAND_TIMEOUT_MS = 60000;
+
+export class SessionValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SessionValidationError';
+  }
+}
 
 interface QueuedUserMessageResume {
   userMessage: SDKUserMessage;
@@ -61,6 +84,192 @@ interface QueuedUserMessageResume {
  */
 async function* singleMessageIterable(msg: SDKUserMessage): AsyncIterable<SDKUserMessage> {
   yield msg;
+}
+
+function validateGitBranchName(branch: string): void {
+  const validBranchPattern = /^[a-zA-Z0-9]([a-zA-Z0-9._/-]*[a-zA-Z0-9])?$/;
+  const invalidPatterns = [/\.\./, /\/\//, /@\{/, /\\/, /\.lock$/];
+  // eslint-disable-next-line no-control-regex
+  const controlCharPattern = /[\x00-\x1f\x7f]/;
+
+  if (!branch || branch.length > 255) {
+    throw new Error('Invalid git branch name: must be 1-255 characters');
+  }
+  if (controlCharPattern.test(branch)) {
+    throw new Error('Invalid git branch name: contains control characters');
+  }
+  if (/[~^:?*[\]]/.test(branch)) {
+    throw new Error('Invalid git branch name: contains forbidden characters');
+  }
+  if (!validBranchPattern.test(branch)) {
+    throw new Error('Invalid git branch name: contains invalid characters');
+  }
+  for (const pattern of invalidPatterns) {
+    if (pattern.test(branch)) {
+      throw new Error('Invalid git branch name: contains forbidden pattern');
+    }
+  }
+}
+
+function getGitBranchFromRevision(revision: string): string {
+  const prefix = 'refs/heads/';
+  if (!revision.startsWith(prefix)) {
+    throw new Error('Git repository revision must start with refs/heads/');
+  }
+  const branch = revision.slice(prefix.length);
+  validateGitBranchName(branch);
+  return branch;
+}
+
+function validateGitRepositoryUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('Invalid git repository URL');
+  }
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') {
+    throw new Error('Only HTTPS GitHub repository URLs are supported');
+  }
+}
+
+function validateSparseCheckoutPath(pathValue: string): void {
+  if (
+    !pathValue ||
+    pathValue.startsWith('/') ||
+    pathValue.includes('..') ||
+    pathValue.includes('\\') ||
+    pathValue.includes('\0')
+  ) {
+    throw new Error(`Invalid sparse checkout path: ${pathValue}`);
+  }
+}
+
+function assertSessionValidation(condition: unknown, message: string): asserts condition {
+  if (!condition) {
+    throw new SessionValidationError(message);
+  }
+}
+
+function runGitSessionValidation(validate: () => void): void {
+  try {
+    validate();
+  } catch (error) {
+    throw new SessionValidationError(error instanceof Error ? error.message : 'Invalid git source');
+  }
+}
+
+function validateGitSessionContext(sources: SessionSource[], outcomes: SessionOutcome[]): void {
+  const gitSources = sources.filter((source): source is GitRepositorySource => {
+    return source.type === 'git_repository';
+  });
+  const workspaceSources = sources.filter((source): source is DatabricksWorkspaceSource => {
+    return source.type === 'databricks_workspace';
+  });
+  const gitOutcomes = outcomes.filter((outcome): outcome is GitRepositoryOutcome => {
+    return outcome.type === 'git_repository';
+  });
+
+  if (gitSources.length === 0) {
+    assertSessionValidation(
+      gitOutcomes.length === 0,
+      'Git repository outcome requires a git repository source'
+    );
+    return;
+  }
+
+  assertSessionValidation(gitSources.length === 1, 'Only one git repository source is supported');
+  assertSessionValidation(
+    workspaceSources.length === 0,
+    'Git repository sources cannot be combined with Databricks Workspace sources'
+  );
+  assertSessionValidation(
+    gitOutcomes.length === 1,
+    'Git repository source requires exactly one git repository outcome'
+  );
+
+  const source = gitSources[0];
+  const outcome = gitOutcomes[0];
+  const gitInfo = outcome.git_info;
+
+  assertSessionValidation(
+    source.allow_unrestricted_git_push === true,
+    'Read-only git repository sessions are not supported yet'
+  );
+  assertSessionValidation(
+    Array.isArray(source.sparse_checkout_paths),
+    'Git repository sparse checkout paths must be an array'
+  );
+  assertSessionValidation(
+    gitInfo?.type === 'github',
+    'Git repository outcome must describe a GitHub repository'
+  );
+  assertSessionValidation(
+    Array.isArray(gitInfo.branches),
+    'Git repository outcome branches must be an array'
+  );
+  assertSessionValidation(
+    gitInfo.branches.length === 1,
+    'Git repository outcome requires exactly one branch'
+  );
+
+  runGitSessionValidation(() => validateGitRepositoryUrl(source.url));
+  runGitSessionValidation(() => {
+    getGitBranchFromRevision(source.revision);
+  });
+  runGitSessionValidation(() => validateGitBranchName(gitInfo.branches[0]));
+  for (const sparsePath of source.sparse_checkout_paths) {
+    runGitSessionValidation(() => validateSparseCheckoutPath(sparsePath));
+  }
+
+  let sourceRepo: string;
+  try {
+    sourceRepo = toGitHubRepositoryFullName(source.url);
+  } catch (error) {
+    throw new SessionValidationError(
+      error instanceof Error ? error.message : 'Invalid GitHub repository URL'
+    );
+  }
+  assertSessionValidation(
+    gitInfo.repo === sourceRepo,
+    'Git repository source URL must match the git repository outcome'
+  );
+}
+
+function getInternalGitCredentialUrl(fastify: FastifyInstance): string {
+  const port =
+    fastify.config.NODE_ENV === 'development'
+      ? fastify.config.PORT
+      : fastify.config.DATABRICKS_APP_PORT;
+  return `http://127.0.0.1:${port}/api/internal/git-credential`;
+}
+
+async function configureGitCredentialHelper(
+  fastify: FastifyInstance,
+  cwd: string,
+  repositoryUrl: string
+): Promise<() => void> {
+  const registration = registerGitCredential(repositoryUrl, 'write');
+  const helperPath = path.join(cwd, '.git', 'ccbricks-credential-helper.mjs');
+  await writeFile(
+    helperPath,
+    buildGitCredentialHelperScript(getInternalGitCredentialUrl(fastify), registration.bearerToken),
+    'utf-8'
+  );
+  await chmod(helperPath, 0o700);
+
+  await spawnAsync('git', ['config', '--local', 'credential.helper', helperPath], {
+    cwd,
+    timeout: GIT_COMMAND_TIMEOUT_MS,
+  });
+  await spawnAsync('git', ['config', '--local', 'credential.useHttpPath', 'true'], {
+    cwd,
+    timeout: GIT_COMMAND_TIMEOUT_MS,
+  });
+
+  return () => {
+    revokeGitCredential(registration.bearerToken);
+  };
 }
 
 /**
@@ -139,7 +348,8 @@ async function processAllEvents(
   fastify: FastifyInstance,
   ctx: UserContext,
   sessionId: SessionId,
-  initialUserEvent?: SessionCreateEventData
+  initialUserEvent?: SessionCreateEventData,
+  cleanupGitCredential?: () => void
 ): Promise<void> {
   const { userId } = ctx;
   let hasError = false;
@@ -212,6 +422,8 @@ async function processAllEvents(
 
     throw error;
   } finally {
+    cleanupGitCredential?.();
+
     // AbortController を削除
     sessionAbortControllers.delete(sessionId.toString());
 
@@ -358,6 +570,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
     initialUserEvent,
   } = params;
   const { userId, userHome } = ctx;
+  let cleanupGitCredential: (() => void) | undefined;
 
   try {
     // Prompt: 構造化コンテンツは AsyncIterable にラップ、文字列はそのまま
@@ -404,6 +617,13 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
     const appsOutcomeName = sessionContext.outcomes.find(
       (o): o is ResolvedDatabricksAppsOutcome => o.type === 'databricks_apps'
     )?.name;
+    const gitOutcome = sessionContext.outcomes.find(
+      (o): o is GitRepositoryOutcome => o.type === 'git_repository'
+    );
+    const gitBranch = gitOutcome?.git_info.branches[0];
+    const gitSource = sessionContext.sources.find(
+      (source): source is GitRepositorySource => source.type === 'git_repository'
+    );
 
     const appSettings = await getAppSettings(fastify);
     const modelSettings = resolveModelSettings(appSettings);
@@ -419,6 +639,13 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
 
     // ヘルパースクリプトを配置（apiKeyHelper / otelHeadersHelper）
     const helperPaths = await writeHelperScripts(userHome);
+    if (gitSource) {
+      cleanupGitCredential = await configureGitCredentialHelper(
+        fastify,
+        sessionContext.cwd,
+        gitSource.url
+      );
+    }
 
     const response = query({
       prompt,
@@ -464,6 +691,8 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
           SESSION_ID: sessionId.toString(),
           ...(workspacePath ? { SESSION_WORKSPACE_PATH: workspacePath } : {}),
           ...(appsOutcomeName ? { SESSION_APP_NAME: appsOutcomeName } : {}),
+          ...(gitOutcome ? { SESSION_GIT_REPO: gitOutcome.git_info.repo } : {}),
+          ...(gitBranch ? { SESSION_GIT_BRANCH: gitBranch } : {}),
           ANTHROPIC_BASE_URL: fastify.config.ANTHROPIC_BASE_URL,
           ANTHROPIC_DEFAULT_OPUS_MODEL: modelSettings.opusModel,
           ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES:
@@ -490,13 +719,21 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
     sessionAbortControllers.set(sessionId.toString(), abortController);
 
     // バックグラウンド処理開始（await しない）
-    processAllEvents(response, fastify, ctx, sessionId, initialUserEvent).catch(error => {
+    processAllEvents(
+      response,
+      fastify,
+      ctx,
+      sessionId,
+      initialUserEvent,
+      cleanupGitCredential
+    ).catch(error => {
       fastify.log.error(
         { sessionId: sessionId.toString(), error },
         'Background event processing failed'
       );
     });
   } catch (error) {
+    cleanupGitCredential?.();
     fastify.log.error({ sessionId: sessionId.toString(), error }, 'SDK query failed');
     await fastify.withUserContext(userId, async tx => {
       await tx.update(sessions).set({ status: 'error' }).where(eq(sessions.id, sessionId.toUUID()));
@@ -544,6 +781,62 @@ async function resolveAppsOutcomeName(
   return { ...outcome, name: fallbackName };
 }
 
+async function cloneGitRepositorySource(
+  source: GitRepositorySource,
+  outcome: GitRepositoryOutcome,
+  cwd: string,
+  fastify?: FastifyInstance
+): Promise<void> {
+  validateGitRepositoryUrl(source.url);
+  const sourceBranch = getGitBranchFromRevision(source.revision);
+  const targetBranch = outcome.git_info.branches[0];
+  validateGitBranchName(targetBranch);
+
+  for (const sparsePath of source.sparse_checkout_paths) {
+    validateSparseCheckoutPath(sparsePath);
+  }
+
+  const gitAuth = fastify
+    ? await createGitHubGitAuthEnvironment(fastify, source.url, 'read')
+    : null;
+  try {
+    await spawnAsync(
+      'git',
+      [
+        'clone',
+        '--filter=blob:none',
+        '--no-checkout',
+        '--depth',
+        '1',
+        '--branch',
+        sourceBranch,
+        source.url,
+        cwd,
+      ],
+      { timeout: GIT_COMMAND_TIMEOUT_MS, env: gitAuth?.env }
+    );
+  } finally {
+    await gitAuth?.cleanup();
+  }
+
+  if (source.sparse_checkout_paths.length > 0) {
+    await spawnAsync('git', ['sparse-checkout', 'init', '--cone'], {
+      cwd,
+      timeout: GIT_COMMAND_TIMEOUT_MS,
+    });
+    await spawnAsync('git', ['sparse-checkout', 'set', ...source.sparse_checkout_paths], {
+      cwd,
+      timeout: GIT_COMMAND_TIMEOUT_MS,
+    });
+  }
+
+  await spawnAsync('git', ['checkout'], { cwd, timeout: GIT_COMMAND_TIMEOUT_MS });
+  await spawnAsync('git', ['checkout', '-B', targetBranch], {
+    cwd,
+    timeout: GIT_COMMAND_TIMEOUT_MS,
+  });
+}
+
 /**
  * 新規セッションを作成する
  *
@@ -569,6 +862,15 @@ export async function createSession(
   ctx: UserContext
 ): Promise<SessionCreateResponse> {
   const { events, session_context, title } = request;
+  if (!session_context) {
+    throw new SessionValidationError('session_context is required');
+  }
+  if (!Array.isArray(session_context.sources)) {
+    throw new SessionValidationError('session_context.sources must be an array');
+  }
+  if (!Array.isArray(session_context.outcomes)) {
+    throw new SessionValidationError('session_context.outcomes must be an array');
+  }
 
   // 1. SessionId を生成（UUIDv7）
   const sessionId = new SessionId();
@@ -580,6 +882,8 @@ export async function createSession(
   // 3. cwd の生成（CCBRICKS_BASE_DIR/sessions/sessionId）
   /** Claude Code Working Directory  (e.g. /home/app/sessions/session_xxx) */
   const cwd = path.join(fastify.config.CCBRICKS_BASE_DIR, 'sessions', sessionId.toString());
+
+  validateGitSessionContext(session_context.sources, session_context.outcomes);
 
   await ensureDirectory(cwd);
 
@@ -596,6 +900,9 @@ export async function createSession(
       }
       return true;
     });
+  const gitSources = session_context.sources.filter(
+    (s): s is GitRepositorySource => s.type === 'git_repository'
+  );
 
   // 5. outcomes の変数を解決（{session_id} → 実際のセッションID、apps にはアプリ名を割当）
   const resolvedOutcomes = await Promise.all(
@@ -623,6 +930,9 @@ export async function createSession(
     outcomes: resolvedOutcomes,
     mcp_config: session_context.mcp_config,
   };
+  const gitOutcome = sessionContext.outcomes.find(
+    (o): o is GitRepositoryOutcome => o.type === 'git_repository'
+  );
 
   // 7. タイムスタンプを設定（レスポンス用）
   const now = new Date();
@@ -682,6 +992,24 @@ export async function createSession(
       }
     }
 
+    if (gitSources.length > 0) {
+      if (!gitOutcome) {
+        throw new Error('Git repository source requires a git_repository outcome');
+      }
+
+      for (const source of gitSources) {
+        await cloneGitRepositorySource(source, gitOutcome, cwd, fastify);
+        fastify.log.info(
+          {
+            sessionId: sessionId.toString(),
+            repoUrl: source.url,
+            branch: gitOutcome.git_info.branches[0],
+          },
+          'Cloned git repository source to session cwd'
+        );
+      }
+    }
+
     // SDK query パイプラインを開始（export 完了後）
     await startQueryPipeline({
       fastify,
@@ -697,6 +1025,19 @@ export async function createSession(
       { sessionId: sessionId.toString(), error },
       'Background session setup failed'
     );
+    fastify
+      .withUserContext(userId, async tx => {
+        await tx
+          .update(sessions)
+          .set({ status: 'error', updatedAt: new Date() })
+          .where(eq(sessions.id, sessionId.toUUID()));
+      })
+      .catch(updateError => {
+        fastify.log.error(
+          { sessionId: sessionId.toString(), updateError },
+          'Failed to update session status to error after setup failure'
+        );
+      });
   });
 
   // 11. 即座にレスポンス返却
@@ -1100,3 +1441,12 @@ export async function executeAbort(
     await tx.update(sessions).set({ status: 'idle' }).where(eq(sessions.id, sessionId.toUUID()));
   });
 }
+
+export const __testing = {
+  cloneGitRepositorySource,
+  getGitBranchFromRevision,
+  validateGitBranchName,
+  validateGitSessionContext,
+  validateGitRepositoryUrl,
+  validateSparseCheckoutPath,
+};

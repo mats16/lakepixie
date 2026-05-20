@@ -7,6 +7,12 @@ import { SessionId } from '../models/session.model.js';
 
 // Mock session service
 vi.mock('../services/session.service.js', () => ({
+  SessionValidationError: class SessionValidationError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'SessionValidationError';
+    }
+  },
   createSession: vi.fn(),
   listSessions: vi.fn(),
   getSession: vi.fn(),
@@ -167,6 +173,50 @@ describe('session route - invalid session ID handling', () => {
       expect(response.statusCode).toBe(401);
       const body = response.json();
       expect(body.error).toBe('Unauthorized');
+    });
+  });
+
+  describe('POST /sessions', () => {
+    it('should return 400 for session validation errors', async () => {
+      const { createSession, SessionValidationError } =
+        await import('../services/session.service.js');
+      vi.mocked(createSession).mockRejectedValue(
+        new SessionValidationError('Only one git repository source is supported')
+      );
+
+      await registerPlugins();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/sessions',
+        headers: TEST_USER_HEADERS,
+        payload: {
+          events: [
+            {
+              type: 'event',
+              data: {
+                uuid: crypto.randomUUID(),
+                session_id: 'pending',
+                type: 'user',
+                parent_tool_use_id: null,
+                message: { role: 'user', content: 'hello' },
+              },
+            },
+          ],
+          session_context: {
+            model: 'sonnet',
+            sources: [],
+            outcomes: [],
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({
+        error: 'BadRequest',
+        message: 'Only one git repository source is supported',
+        statusCode: 400,
+      });
     });
   });
 

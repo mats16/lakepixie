@@ -4,6 +4,7 @@ import {
   buildSystemPromptConfig,
   createWorkspacePushInstruction,
   createDatabricksAppsInstruction,
+  createGitRepositoryInstruction,
   type SystemPromptConfig,
 } from './system-prompt.helper.js';
 
@@ -107,6 +108,29 @@ describe('buildSystemPromptConfig', () => {
     expect(result.append).toContain('Databricks Apps Deployment');
     expect(result.append).toContain('app-xyz789');
   });
+
+  it('should return config with Git repository instruction for git outcome', () => {
+    const outcomes: ResolvedSessionOutcome[] = [
+      {
+        type: 'git_repository',
+        git_info: {
+          type: 'github',
+          repo: 'aws-startup-community/aws-startup-case-studies-jp',
+          branches: ['ccbricks/hobe-piyp-fuga'],
+        },
+      },
+    ];
+
+    const result = buildSystemPromptConfig(outcomes);
+
+    expect(result.append).toBeDefined();
+    expect(result.append).toContain('Git Development Branch Requirements');
+    expect(result.append).toContain(
+      'aws-startup-community/aws-startup-case-studies-jp: Develop on branch `ccbricks/hobe-piyp-fuga`'
+    );
+    expect(result.append).toContain('git push -u origin <branch-name>');
+    expect(result.append).toContain('Do NOT create a pull request');
+  });
 });
 
 describe('createDatabricksAppsInstruction', () => {
@@ -132,6 +156,27 @@ describe('createDatabricksAppsInstruction', () => {
     expect(result).toContain('DEVELOP');
     expect(result).toContain('DEPLOY');
     expect(result).toContain('VERIFY');
+  });
+});
+
+describe('createGitRepositoryInstruction', () => {
+  it('should generate Git branch requirements from outcome', () => {
+    const result = createGitRepositoryInstruction({
+      type: 'git_repository',
+      git_info: {
+        type: 'github',
+        repo: 'mats16/ccbricks',
+        branches: ['claude/review-git-instructions-CsqDV'],
+      },
+    });
+
+    expect(result).toContain('Git Development Branch Requirements');
+    expect(result).toContain(
+      'mats16/ccbricks: Develop on branch `claude/review-git-instructions-CsqDV`'
+    );
+    expect(result).toContain('NEVER');
+    expect(result).toContain('git fetch origin <branch-name>');
+    expect(result).toContain('git pull origin <branch-name>');
   });
 });
 
