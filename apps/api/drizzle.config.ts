@@ -25,7 +25,6 @@ function getPostgresUrl(): string {
 }
 
 const lakebaseEndpoint = process.env.LAKEBASE_ENDPOINT?.trim() ?? '';
-const pgUrl = getPostgresUrl();
 
 export default lakebaseEndpoint
   ? defineConfig({
@@ -33,7 +32,7 @@ export default lakebaseEndpoint
       out: './migrations',
       dialect: 'postgresql',
       dbCredentials: {
-        url: pgUrl,
+        url: getPostgresUrl(),
       },
       verbose: true,
       strict: true,
