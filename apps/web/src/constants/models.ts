@@ -9,20 +9,20 @@ export interface ClaudeModel {
 export const SESSION_MODELS: ClaudeModel[] = [
   {
     id: 'opus',
-    name: 'Opus 4.6',
-    shortName: 'Opus 4.6',
+    name: 'Opus',
+    shortName: 'Opus',
     descriptionKey: 'sidebar.model.opusDesc',
   },
   {
     id: 'sonnet',
-    name: 'Sonnet 4.6',
-    shortName: 'Sonnet 4.6',
+    name: 'Sonnet',
+    shortName: 'Sonnet',
     descriptionKey: 'sidebar.model.sonnetDesc',
   },
   {
     id: 'haiku',
-    name: 'Haiku 4.5',
-    shortName: 'Haiku 4.5',
+    name: 'Haiku',
+    shortName: 'Haiku',
     descriptionKey: 'sidebar.model.haikuDesc',
   },
 ];
