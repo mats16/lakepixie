@@ -13,6 +13,19 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import * as schema from './schema.pg.js';
 
+function quoteIdent(identifier: string): string {
+  return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+function resolveLakebaseSchema(): string {
+  const appName = process.env.PGAPPNAME || process.env.DATABRICKS_APP_NAME;
+  const servicePrincipalId = process.env.PGUSER || process.env.DATABRICKS_CLIENT_ID;
+  if (!appName || !servicePrincipalId) {
+    throw new Error('PGAPPNAME and PGUSER are required for Lakebase integration tests.');
+  }
+  return `${appName}_schema_${servicePrincipalId.replaceAll('-', '')}`;
+}
+
 // .env をロード（ローカル開発用）
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +41,7 @@ const TEST_SESSION_2 = '22222222-2222-2222-2222-222222222222';
 describe.skipIf(!process.env.LAKEBASE_ENDPOINT)('Database Integration Tests', () => {
   let pool: ReturnType<typeof createLakebasePool>;
   let db: NodePgDatabase<typeof schema>;
+  let schemaName: string;
 
   /**
    * RLS 保護テーブルへのアクセス用ヘルパー
@@ -44,14 +58,16 @@ describe.skipIf(!process.env.LAKEBASE_ENDPOINT)('Database Integration Tests', ()
   }
 
   beforeAll(async () => {
-    pool = createLakebasePool({ max: 1 });
+    schemaName = resolveLakebaseSchema();
+    pool = createLakebasePool({ max: 1, options: `-c search_path=${schemaName}` });
     db = drizzle({ client: pool as unknown as NodePgClient, schema });
+    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(schemaName)}`);
 
     // マイグレーション実行
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = path.dirname(__filename);
     const migrationsFolder = path.join(__dirname, '../../migrations');
-    await migrate(db, { migrationsFolder });
+    await migrate(db, { migrationsFolder, migrationsSchema: schemaName });
 
     // 常に FORCE ROW LEVEL SECURITY を適用
     // 理由:

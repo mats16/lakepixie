@@ -40,6 +40,12 @@ PostgreSQL ロールを作成または再利用し、接続と作成の権限を
 ```bash
 # Lakebase モードを使用
 export LAKEBASE_ENDPOINT="projects/.../branches/.../endpoints/..."
+export PGAPPNAME="ccbricks"
+export PGDATABASE="databricks-postgres"
+export PGHOST="..."
+export PGPORT="5432"
+export PGSSLMODE="require"
+export PGUSER="service-principal-client-id"
 
 # api ディレクトリに移動
 cd apps/api
@@ -114,13 +120,13 @@ databricks apps get ccbricks-dev-<user-id>
 
 ### データベース接続の問題
 
-1. シークレットのデータベース URL が正しいことを確認
-2. Databricks Apps とデータベース間のネットワーク接続を確認
-3. データベースユーザーが適切な権限を持っていることを確認
+1. `lakebase` resource binding が `LAKEBASE_ENDPOINT` と `PG*` を注入していることを確認
+2. Databricks Apps と Lakebase 間のネットワーク接続を確認
+3. アプリのサービスプリンシパルが connect/create 権限を持っていることを確認
 
 ### マイグレーションの失敗
 
-1. データベースユーザーが owner 権限を持っていることを確認
+1. アプリのサービスプリンシパルが app schema にオブジェクトを作成できることを確認
 2. 競合する可能性のある既存のオブジェクトを確認
 3. マイグレーション SQL ファイルにエラーがないか確認
 
@@ -141,7 +147,7 @@ databricks apps get ccbricks-dev-<user-id>
 
 ## セキュリティに関する考慮事項
 
-1. **データベース認証情報:** 管理者アカウントではなく、必ず専用のアプリケーションユーザーを使用
+1. **Lakebase 権限:** アプリのサービスプリンシパルを使用し、環境ごとにリソースを分離
 2. **暗号化キー:** 各環境に固有のキーを生成
 3. **シークレットスコープ:** シークレットスコープへのアクセスを適切に制限
 4. **ネットワークセキュリティ:** 可能な限りプライベートエンドポイントを設定

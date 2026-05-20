@@ -15,7 +15,13 @@ type AppDatabase = PostgresJsDatabase<typeof pgSchema>;
 type LakebaseDatabase = NodePgDatabase<typeof pgSchema>;
 type LakebasePool = ReturnType<typeof createLakebasePool>;
 type LakebaseSslMode = 'require' | 'disable' | 'prefer';
-type ErrorCallback<T = unknown> = (err: Error | null, result?: T) => void;
+type ReleasableClient = { release: (error?: Error | boolean) => void };
+type ConnectCallback<T = unknown> = (
+  err: Error | undefined,
+  result?: T,
+  release?: (error?: Error | boolean) => void
+) => void;
+type QueryCallback<T = unknown> = (err: Error | null, result?: T) => void;
 
 /**
  * RLS対応トランザクションの型
@@ -83,6 +89,14 @@ function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
+function releaseWithError(client: ReleasableClient, error?: unknown): void {
+  if (error === undefined || typeof error === 'boolean' || error instanceof Error) {
+    client.release(error);
+    return;
+  }
+  client.release(toError(error));
+}
+
 function optionalEnv(value: string): string | undefined {
   return value.trim() || undefined;
 }
@@ -104,14 +118,20 @@ function installSearchPath(pool: LakebasePool, schemaName: string): void {
 
   async function connectWithSearchPath() {
     const client = await originalConnect();
-    await client.query(searchPathSql);
+    try {
+      await client.query(searchPathSql);
+    } catch (error) {
+      releaseWithError(client, error);
+      throw error;
+    }
     return client;
   }
 
-  pool.connect = ((callback?: ErrorCallback) => {
+  pool.connect = ((callback?: ConnectCallback) => {
     if (callback) {
       connectWithSearchPath().then(
-        client => callback(null, client),
+        client =>
+          callback(undefined, client, releaseError => releaseWithError(client, releaseError)),
         error => callback(toError(error))
       );
       return;
@@ -121,10 +141,7 @@ function installSearchPath(pool: LakebasePool, schemaName: string): void {
 
   pool.query = (async (...args: Parameters<LakebasePool['query']>) => {
     const lastArg = args.at(-1);
-    const callback =
-      typeof lastArg === 'function'
-        ? (lastArg as (err: Error | null, result?: unknown) => void)
-        : undefined;
+    const callback = typeof lastArg === 'function' ? (lastArg as QueryCallback) : undefined;
     const queryArgs = callback ? args.slice(0, -1) : args;
     const client = await connectWithSearchPath();
     try {
@@ -144,6 +161,58 @@ function installSearchPath(pool: LakebasePool, schemaName: string): void {
       client.release();
     }
   }) as LakebasePool['query'];
+}
+
+async function copyLegacyMigrationHistoryIfNeeded(
+  pool: LakebasePool,
+  schemaName: string
+): Promise<void> {
+  const { rows } = await pool.query<{
+    has_app_tables: boolean;
+    has_app_migration_history: boolean;
+    has_legacy_migration_history: boolean;
+  }>(
+    `
+      select
+        exists (
+          select 1
+          from information_schema.tables
+          where table_schema = $1
+            and table_type = 'BASE TABLE'
+            and table_name <> '__drizzle_migrations'
+        ) as has_app_tables,
+        exists (
+          select 1
+          from information_schema.tables
+          where table_schema = $1
+            and table_name = '__drizzle_migrations'
+        ) as has_app_migration_history,
+        exists (
+          select 1
+          from information_schema.tables
+          where table_schema = 'drizzle'
+            and table_name = '__drizzle_migrations'
+        ) as has_legacy_migration_history
+    `,
+    [schemaName]
+  );
+  const status = rows[0];
+  if (
+    !status?.has_app_tables ||
+    status.has_app_migration_history ||
+    !status.has_legacy_migration_history
+  ) {
+    return;
+  }
+
+  const appHistoryTable = `${quoteIdent(schemaName)}.${quoteIdent('__drizzle_migrations')}`;
+  const legacyHistoryTable = `${quoteIdent('drizzle')}.${quoteIdent('__drizzle_migrations')}`;
+  await pool.query(
+    `create table if not exists ${appHistoryTable} (like ${legacyHistoryTable} including all)`
+  );
+  await pool.query(
+    `insert into ${appHistoryTable} ("hash", "created_at") select "hash", "created_at" from ${legacyHistoryTable}`
+  );
 }
 
 /**
@@ -333,7 +402,8 @@ async function initLakebase(fastify: FastifyInstance) {
     const migrationsFolder = path.join(__dirname, '../../migrations');
     fastify.log.info({ migrationsFolder }, 'Running database migrations...');
 
-    await migrate(db, { migrationsFolder });
+    await copyLegacyMigrationHistoryIfNeeded(pool, schemaName);
+    await migrate(db, { migrationsFolder, migrationsSchema: schemaName });
 
     fastify.log.info('Database migrations completed');
   } else {

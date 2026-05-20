@@ -40,6 +40,12 @@ Automatic migrations are disabled in the following cases:
 ```bash
 # Use Lakebase mode
 export LAKEBASE_ENDPOINT="projects/.../branches/.../endpoints/..."
+export PGAPPNAME="ccbricks"
+export PGDATABASE="databricks-postgres"
+export PGHOST="..."
+export PGPORT="5432"
+export PGSSLMODE="require"
+export PGUSER="service-principal-client-id"
 
 # Navigate to api directory
 cd apps/api
@@ -114,13 +120,13 @@ databricks apps get ccbricks-dev-<user-id>
 
 ### Database Connection Issues
 
-1. Verify the database URL in secrets is correct
-2. Check network connectivity between Databricks Apps and the database
-3. Ensure the database user has appropriate permissions
+1. Verify the `lakebase` resource binding injects `LAKEBASE_ENDPOINT` and `PG*`
+2. Check network connectivity between Databricks Apps and Lakebase
+3. Ensure the app service principal has connect/create permissions
 
 ### Migration Failures
 
-1. Ensure the database user has owner privileges
+1. Ensure the app service principal can create objects in the app schema
 2. Check for existing objects that might conflict
 3. Review the migration SQL files for errors
 
@@ -141,7 +147,7 @@ databricks apps get ccbricks-dev-<user-id>
 
 ## Security Considerations
 
-1. **Database credentials:** Always use dedicated application users, not admin accounts
+1. **Lakebase permissions:** Use the app service principal and keep environment resources separated
 2. **Encryption keys:** Generate unique keys for each environment
 3. **Secret scopes:** Restrict access to secret scopes appropriately
 4. **Network security:** Configure private endpoints where possible

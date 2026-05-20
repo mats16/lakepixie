@@ -5,6 +5,7 @@ import configPlugin from './config.js';
 describe('config plugin', () => {
   let app: FastifyInstance;
   let originalEnv: NodeJS.ProcessEnv;
+  const lakebaseEndpoint = 'projects/test-project/branches/test-branch/endpoints/test-endpoint';
 
   beforeEach(() => {
     // Save original environment
@@ -28,17 +29,19 @@ describe('config plugin', () => {
     it('should load config with all required environment variables', async () => {
       // Set required environment variables
       process.env.DATABRICKS_HOST = 'test.databricks.com';
-      process.env.LAKEBASE_ENDPOINT =
-        'projects/test-project/branches/test-branch/endpoints/test-endpoint';
+      process.env.LAKEBASE_ENDPOINT = lakebaseEndpoint;
+      process.env.PGAPPNAME = 'ccbricks';
+      process.env.PGDATABASE = 'databricks-postgres';
+      process.env.PGHOST = 'lakebase.example.databricks.com';
+      process.env.PGUSER = 'service-principal-client-id';
 
       await app.register(configPlugin);
 
       // Verify config is available
       expect(app.config).toBeDefined();
       expect(app.config.DATABRICKS_HOST).toBe('test.databricks.com');
-      expect(app.config.LAKEBASE_ENDPOINT).toBe(
-        'projects/test-project/branches/test-branch/endpoints/test-endpoint'
-      );
+      expect(app.config.LAKEBASE_ENDPOINT).toBe(lakebaseEndpoint);
+      expect(app.config).not.toHaveProperty('DATABASE_URL');
     });
 
     it('should use default values for optional environment variables', async () => {
@@ -159,6 +162,24 @@ describe('config plugin', () => {
 
       await expect(app.register(configPlugin)).rejects.toThrow();
     });
+
+    it('should fail when Lakebase is enabled without required PostgreSQL variables', async () => {
+      process.env.DATABRICKS_HOST = 'test.databricks.com';
+      process.env.LAKEBASE_ENDPOINT = lakebaseEndpoint;
+      process.env.PGAPPNAME = 'ccbricks';
+      process.env.PGUSER = 'service-principal-client-id';
+
+      await expect(app.register(configPlugin)).rejects.toThrow(
+        'Missing required environment variable(s): PGHOST, PGDATABASE'
+      );
+    });
+
+    it('should fail when PGSSLMODE is invalid', async () => {
+      process.env.DATABRICKS_HOST = 'test.databricks.com';
+      process.env.PGSSLMODE = 'invalid';
+
+      await expect(app.register(configPlugin)).rejects.toThrow();
+    });
   });
 
   describe('directory configuration', () => {
@@ -201,8 +222,7 @@ describe('config plugin', () => {
 
     it('should accept Lakebase PostgreSQL environment variables injected by Databricks Apps', async () => {
       process.env.DATABRICKS_HOST = 'test.databricks.com';
-      process.env.LAKEBASE_ENDPOINT =
-        'projects/test-project/branches/test-branch/endpoints/test-endpoint';
+      process.env.LAKEBASE_ENDPOINT = lakebaseEndpoint;
       process.env.PGAPPNAME = 'ccbricks';
       process.env.PGDATABASE = 'databricks-postgres';
       process.env.PGHOST = 'lakebase.example.databricks.com';
@@ -212,9 +232,7 @@ describe('config plugin', () => {
 
       await app.register(configPlugin);
 
-      expect(app.config.LAKEBASE_ENDPOINT).toBe(
-        'projects/test-project/branches/test-branch/endpoints/test-endpoint'
-      );
+      expect(app.config.LAKEBASE_ENDPOINT).toBe(lakebaseEndpoint);
       expect(app.config.PGAPPNAME).toBe('ccbricks');
       expect(app.config.PGDATABASE).toBe('databricks-postgres');
       expect(app.config.PGHOST).toBe('lakebase.example.databricks.com');

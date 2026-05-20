@@ -55,35 +55,12 @@ Lakebase tables are created in an app-specific PostgreSQL schema named
 `{PGAPPNAME}_schema_{PGUSER-without-hyphens}`, and the API sets `search_path` to
 that schema before migrations and runtime queries.
 
-### 2.1 Optional Local PostgreSQL
+### 2.1 Optional Lakebase Development
 
-`DATABASE_URL` is no longer used to select the runtime database. The Docker setup
-below is only useful for legacy tooling or experiments.
-
-**Using Docker:**
-
-```bash
-docker run -d \
-  --name ccbricks-postgres \
-  -e POSTGRES_USER=ccbricks_user \
-  -e POSTGRES_PASSWORD=localdev \
-  -e POSTGRES_DB=ccbricks \
-  -p 5432:5432 \
-  postgres:16
-```
-
-**Using local PostgreSQL:**
-
-```sql
--- Create user
-CREATE ROLE ccbricks_user WITH LOGIN PASSWORD 'localdev' NOBYPASSRLS;
-
--- Grant role to current user
-GRANT ccbricks_user TO CURRENT_USER WITH SET TRUE;
-
--- Create database
-CREATE DATABASE ccbricks OWNER ccbricks_user;
-```
+To use Lakebase locally, set `LAKEBASE_ENDPOINT` plus the PostgreSQL variables
+for the target Lakebase branch/database (`PGAPPNAME`, `PGDATABASE`, `PGHOST`,
+`PGPORT`, `PGSSLMODE`, and `PGUSER`). When `LAKEBASE_ENDPOINT` is empty, the API
+uses SQLite and ignores PostgreSQL variables.
 
 ### 2.2 Database Migrations
 
@@ -96,7 +73,8 @@ cd apps/api
 # Generate migration files (if schema changed)
 npm run db:generate
 
-# Apply migrations manually for the selected Drizzle config
+# Apply migrations manually for the selected Drizzle config.
+# Lakebase mode requires LAKEBASE_ENDPOINT, PGHOST, and PGDATABASE.
 npm run db:migrate
 
 # Or push schema directly (development only)
@@ -294,18 +272,9 @@ kill -9 <PID>
 
 ### Database Connection Failed
 
-1. Verify PostgreSQL is running:
-   ```bash
-   docker ps  # If using Docker
-   pg_isready -h localhost -p 5432  # Check connection
-   ```
-
-2. If using Lakebase, check `LAKEBASE_ENDPOINT` and the injected `PG*` values
-
-3. Ensure database exists:
-   ```bash
-   psql -h localhost -U ccbricks_user -d ccbricks -c "SELECT 1"
-   ```
+1. If using SQLite, check that `${CCBRICKS_BASE_DIR}/db` is writable
+2. If using Lakebase, check `LAKEBASE_ENDPOINT`, `PGHOST`, `PGDATABASE`, `PGUSER`, and `PGAPPNAME`
+3. Review application logs for Lakebase authentication or schema permission errors
 
 ### Turborepo Cache Issues
 

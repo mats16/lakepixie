@@ -1,6 +1,8 @@
 import fp from 'fastify-plugin';
 import fastifyEnv from '@fastify/env';
+import type { FastifyInstance } from 'fastify';
 import path from 'path';
+import { loadRootEnv } from '../lib/load-env.js';
 
 const __dirname = import.meta.dirname;
 
@@ -51,19 +53,13 @@ const schema = {
     PGSSLMODE: {
       type: 'string',
       default: '',
+      enum: ['', 'require', 'prefer', 'disable'],
       description: 'PostgreSQL SSL mode injected by Databricks Apps for Lakebase.',
     },
     PGUSER: {
       type: 'string',
       default: '',
       description: 'PostgreSQL user injected by Databricks Apps for Lakebase.',
-    },
-    // Legacy database URL. Kept for tooling/backward compatibility, but runtime
-    // backend selection is based only on LAKEBASE_ENDPOINT.
-    DATABASE_URL: {
-      type: 'string',
-      default: '',
-      description: 'Legacy PostgreSQL connection string; not used for runtime DB selection.',
     },
     DISABLE_AUTO_MIGRATION: {
       type: 'boolean',
@@ -157,8 +153,6 @@ declare module 'fastify' {
       PGSSLMODE: string;
       /** PostgreSQL user injected by Databricks Apps for Lakebase. */
       PGUSER: string;
-      /** Legacy PostgreSQL connection string. Not used for runtime DB selection. */
-      DATABASE_URL: string;
       /** Disable automatic database migration on startup. */
       DISABLE_AUTO_MIGRATION: boolean;
       /** The base directory for ccbricks data (e.g. /home/app). */
@@ -190,19 +184,13 @@ declare module 'fastify' {
 export default fp(
   async fastify => {
     try {
+      loadRootEnv();
       await fastify.register(fastifyEnv, {
         confKey: 'config',
         schema,
-        dotenv:
-          process.env.NODE_ENV == 'test'
-            ? false
-            : {
-                path: [
-                  path.join(__dirname, '../../../../.env.local'), // -> project root .env.local (優先)
-                  path.join(__dirname, '../../../../.env'), // -> project root .env
-                ],
-              },
+        dotenv: false,
       });
+      validateLakebaseConfig(fastify.config);
       // Add bin directory to PATH (for databricks-cli and jq)
       fastify.config.PATH = `${fastify.config.HOME}/bin:${fastify.config.PATH}`;
       // Set Anthropic base URL (AI Gateway)
@@ -221,3 +209,19 @@ export default fp(
     // No dependencies - must load first
   }
 );
+
+function validateLakebaseConfig(config: FastifyInstance['config']): void {
+  if (config.LAKEBASE_ENDPOINT.trim() === '') {
+    return;
+  }
+
+  const missing = ['PGAPPNAME', 'PGUSER', 'PGHOST', 'PGDATABASE'].filter(
+    key => config[key as keyof FastifyInstance['config']].toString().trim() === ''
+  );
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Lakebase configuration is incomplete. Missing required environment variable(s): ${missing.join(', ')}`
+    );
+  }
+}

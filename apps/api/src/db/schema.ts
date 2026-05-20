@@ -6,6 +6,10 @@
 //
 // サービスからの import パス（'../db/schema.js'）は変更不要。
 
+import { loadRootEnv } from '../lib/load-env.js';
+
+loadRootEnv();
+
 const useSqlite = !process.env.LAKEBASE_ENDPOINT?.trim();
 
 // any は意図的: PgTable と SQLiteTable は型互換性がないため union 型にできない。

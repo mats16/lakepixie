@@ -56,35 +56,12 @@ Lakebase のテーブルは `{PGAPPNAME}_schema_{ハイフンを除いたPGUSER}
 アプリ専用 PostgreSQL schema に作成され、API は migration と通常クエリの前に
 `search_path` をその schema に設定します。
 
-### 2.1 任意: ローカル PostgreSQL
+### 2.1 任意: Lakebase でのローカル開発
 
-`DATABASE_URL` はランタイムのデータベース選択には使用されません。以下の
-Docker 設定は、レガシーなツールや検証目的でのみ使用してください。
-
-**Docker を使用する場合:**
-
-```bash
-docker run -d \
-  --name ccbricks-postgres \
-  -e POSTGRES_USER=ccbricks_user \
-  -e POSTGRES_PASSWORD=localdev \
-  -e POSTGRES_DB=ccbricks \
-  -p 5432:5432 \
-  postgres:16
-```
-
-**ローカルの PostgreSQL を使用する場合:**
-
-```sql
--- ユーザーの作成
-CREATE ROLE ccbricks_user WITH LOGIN PASSWORD 'localdev' NOBYPASSRLS;
-
--- 現在のユーザーにロールを付与
-GRANT ccbricks_user TO CURRENT_USER WITH SET TRUE;
-
--- データベースの作成
-CREATE DATABASE ccbricks OWNER ccbricks_user;
-```
+ローカルで Lakebase を使用する場合は、`LAKEBASE_ENDPOINT` と対象の
+Lakebase branch/database 用 PostgreSQL 変数（`PGAPPNAME`, `PGDATABASE`,
+`PGHOST`, `PGPORT`, `PGSSLMODE`, `PGUSER`）を設定します。
+`LAKEBASE_ENDPOINT` が空の場合、API は SQLite を使用し PostgreSQL 変数は無視します。
 
 ### 2.2 データベースマイグレーション
 
@@ -98,6 +75,7 @@ cd apps/api
 npm run db:generate
 
 # 選択された Drizzle 設定に対して手動でマイグレーションを適用
+# Lakebase モードでは LAKEBASE_ENDPOINT, PGHOST, PGDATABASE が必要
 npm run db:migrate
 
 # またはスキーマを直接プッシュ（開発時のみ）
@@ -295,18 +273,9 @@ kill -9 <PID>
 
 ### データベース接続エラー
 
-1. PostgreSQL が起動していることを確認:
-   ```bash
-   docker ps  # Docker を使用している場合
-   pg_isready -h localhost -p 5432  # 接続を確認
-   ```
-
-2. Lakebase を使用している場合は、`LAKEBASE_ENDPOINT` と注入された `PG*` の値を確認
-
-3. データベースが存在することを確認:
-   ```bash
-   psql -h localhost -U ccbricks_user -d ccbricks -c "SELECT 1"
-   ```
+1. SQLite を使用している場合は、`${CCBRICKS_BASE_DIR}/db` に書き込めることを確認
+2. Lakebase を使用している場合は、`LAKEBASE_ENDPOINT`, `PGHOST`, `PGDATABASE`, `PGUSER`, `PGAPPNAME` を確認
+3. Lakebase 認証または schema 権限エラーがないかアプリケーションログを確認
 
 ### Turborepo キャッシュの問題
 

@@ -1,31 +1,27 @@
 // apps/api/drizzle.config.ts
 import { defineConfig } from 'drizzle-kit';
-import { config } from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { loadRootEnv } from './src/lib/load-env.js';
 
 // 現在のファイルのディレクトリパスを取得
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// プロジェクトルートの .env ファイルを読み込む
-config({ path: path.join(__dirname, '../../.env') });
+loadRootEnv();
 
 function getPostgresUrl(): string {
-  if (process.env.DATABASE_URL) {
-    return process.env.DATABASE_URL;
+  const host = process.env.PGHOST?.trim();
+  const databaseName = process.env.PGDATABASE?.trim();
+  if (!host || !databaseName) {
+    throw new Error('PGHOST and PGDATABASE are required when LAKEBASE_ENDPOINT is set.');
   }
 
-  if (process.env.PGHOST && process.env.PGDATABASE) {
-    const user = encodeURIComponent(process.env.PGUSER || 'postgres');
-    const host = process.env.PGHOST;
-    const port = process.env.PGPORT || '5432';
-    const database = encodeURIComponent(process.env.PGDATABASE);
-    const sslMode = encodeURIComponent(process.env.PGSSLMODE || 'require');
-    return `postgresql://${user}@${host}:${port}/${database}?sslmode=${sslMode}`;
-  }
-
-  return 'postgresql://localhost:5432/ccbricks';
+  const user = encodeURIComponent(process.env.PGUSER?.trim() || 'postgres');
+  const port = process.env.PGPORT?.trim() || '5432';
+  const database = encodeURIComponent(databaseName);
+  const sslMode = encodeURIComponent(process.env.PGSSLMODE?.trim() || 'require');
+  return `postgresql://${user}@${host}:${port}/${database}?sslmode=${sslMode}`;
 }
 
 const lakebaseEndpoint = process.env.LAKEBASE_ENDPOINT?.trim() ?? '';
