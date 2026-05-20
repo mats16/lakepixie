@@ -35,3 +35,27 @@ export interface ReposCreateResponse {
     patterns: string[];
   };
 }
+
+export interface GitRepositoryCandidate {
+  /** owner/repo */
+  full_name: string;
+  /** HTTPS clone/browser URL */
+  url: string;
+  /** Default branch reported by GitHub */
+  default_branch?: string;
+  /** MCP server ID that returned this repository */
+  mcp_server_id?: string;
+}
+
+export interface GitRepositoryListResponse {
+  repositories: GitRepositoryCandidate[];
+}
+
+export interface GitRepositoryBranchCandidate {
+  name: string;
+  protected?: boolean;
+}
+
+export interface GitRepositoryBranchListResponse {
+  branches: GitRepositoryBranchCandidate[];
+}

@@ -1,8 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { EventEmitter } from 'node:events';
 import { SessionId } from '../models/session.model.js';
 
+const mockSpawn = vi.hoisted(() => vi.fn());
+
 // Mock external modules
+vi.mock('node:child_process', () => ({
+  spawn: mockSpawn,
+}));
+
 vi.mock('./websocket-manager.service.js', () => ({
   wsManager: {
     broadcast: vi.fn(),
@@ -34,7 +41,7 @@ vi.mock('../lib/databricks-auth.js', () => ({
 // Import after mocking
 import { wsManager } from './websocket-manager.service.js';
 import { enqueueSessionEvent } from './event-queue.service.js';
-import { canAbortSession, executeAbort } from './session.service.js';
+import { __testing, canAbortSession, executeAbort } from './session.service.js';
 
 describe('session.service', () => {
   // Mock FastifyInstance
@@ -85,6 +92,90 @@ describe('session.service', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSpawn.mockImplementation(() => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        kill: ReturnType<typeof vi.fn>;
+      };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      queueMicrotask(() => child.emit('close', 0));
+      return child;
+    });
+  });
+
+  describe('git repository source helpers', () => {
+    it('should parse refs/heads revision into a branch name', () => {
+      expect(__testing.getGitBranchFromRevision('refs/heads/main')).toBe('main');
+      expect(__testing.getGitBranchFromRevision('refs/heads/feature/test')).toBe('feature/test');
+    });
+
+    it('should reject unsafe git branch names and revisions', () => {
+      expect(() => __testing.validateGitBranchName('ccbricks/hobe-piyp-fuga')).not.toThrow();
+      expect(() => __testing.validateGitBranchName('feature..test')).toThrow('forbidden pattern');
+      expect(() => __testing.getGitBranchFromRevision('main')).toThrow('refs/heads');
+    });
+
+    it('should clone a git source and create the outcome branch', async () => {
+      await __testing.cloneGitRepositorySource(
+        {
+          allow_unrestricted_git_push: true,
+          revision: 'refs/heads/main',
+          sparse_checkout_paths: [],
+          type: 'git_repository',
+          url: 'https://github.com/aws-startup-community/aws-startup-case-studies-jp',
+        },
+        {
+          type: 'git_repository',
+          git_info: {
+            type: 'github',
+            repo: 'aws-startup-community/aws-startup-case-studies-jp',
+            branches: ['ccbricks/hobe-piyp-fuga'],
+          },
+        },
+        '/tmp/session-cwd'
+      );
+
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        1,
+        'git',
+        [
+          'clone',
+          '--filter=blob:none',
+          '--no-checkout',
+          '--depth',
+          '1',
+          '--branch',
+          'main',
+          'https://github.com/aws-startup-community/aws-startup-case-studies-jp',
+          '/tmp/session-cwd',
+        ],
+        expect.objectContaining({ shell: false })
+      );
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        2,
+        'git',
+        ['checkout'],
+        expect.objectContaining({ cwd: '/tmp/session-cwd', shell: false })
+      );
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        3,
+        'git',
+        ['checkout', '-B', 'ccbricks/hobe-piyp-fuga'],
+        expect.objectContaining({ cwd: '/tmp/session-cwd', shell: false })
+      );
+    });
+
+    it('should reject unsupported git repository URLs', () => {
+      expect(() => __testing.validateGitRepositoryUrl('git@github.com:user/repo.git')).toThrow(
+        'Invalid git repository URL'
+      );
+      expect(() => __testing.validateGitRepositoryUrl('https://gitlab.com/user/repo')).toThrow(
+        'Only HTTPS GitHub repository URLs are supported'
+      );
+    });
   });
 
   describe('canAbortSession', () => {

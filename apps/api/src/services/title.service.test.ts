@@ -62,6 +62,7 @@ describe('TitleService', () => {
       expect(result).toEqual({
         title: 'React Component Development',
         app_name: 'react-component-dev',
+        branch_name: 'ccbricks/hobe-piyp-fuga',
       });
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -97,6 +98,7 @@ describe('TitleService', () => {
 
       expect(result.title).toBe('General coding session');
       expect(result.app_name).toMatch(/^[a-z0-9]{26}$/);
+      expect(result.branch_name).toBe('ccbricks/hobe-piyp-fuga');
     });
 
     it('should return fallback title when choices array is empty', async () => {
@@ -112,6 +114,7 @@ describe('TitleService', () => {
 
       expect(result.title).toBe('General coding session');
       expect(result.app_name).toMatch(/^[a-z0-9]{26}$/);
+      expect(result.branch_name).toBe('ccbricks/hobe-piyp-fuga');
     });
 
     it('should return fallback title when message content is null', async () => {
@@ -133,6 +136,7 @@ describe('TitleService', () => {
 
       expect(result.title).toBe('General coding session');
       expect(result.app_name).toMatch(/^[a-z0-9]{26}$/);
+      expect(result.branch_name).toBe('ccbricks/hobe-piyp-fuga');
     });
 
     it('should throw error when API fails', async () => {

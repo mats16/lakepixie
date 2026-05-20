@@ -16,6 +16,7 @@ Message: `;
 
 const MAX_TOKENS = 150;
 const FALLBACK_TITLE = 'General coding session';
+const DEFAULT_BRANCH_NAME = 'ccbricks/hobe-piyp-fuga';
 const REQUEST_TIMEOUT_MS = 30000; // 30 seconds
 
 const APP_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -129,7 +130,11 @@ export class TitleService {
     const rawContent = response.choices[0]?.message?.content;
 
     if (!rawContent) {
-      return { title: FALLBACK_TITLE, app_name: generateFallbackAppName() };
+      return {
+        title: FALLBACK_TITLE,
+        app_name: generateFallbackAppName(),
+        branch_name: DEFAULT_BRANCH_NAME,
+      };
     }
 
     try {
@@ -141,9 +146,14 @@ export class TitleService {
       return {
         title: title || FALLBACK_TITLE,
         app_name: isValidAppName(appName) ? appName : generateFallbackAppName(),
+        branch_name: DEFAULT_BRANCH_NAME,
       };
     } catch {
-      return { title: FALLBACK_TITLE, app_name: generateFallbackAppName() };
+      return {
+        title: FALLBACK_TITLE,
+        app_name: generateFallbackAppName(),
+        branch_name: DEFAULT_BRANCH_NAME,
+      };
     }
   }
 }

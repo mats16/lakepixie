@@ -127,6 +127,7 @@ describe('title route', () => {
       const body = response.json();
       expect(body.title).toBe('React Component Development');
       expect(body.app_name).toBe('react-component-dev');
+      expect(body.branch_name).toBe('ccbricks/hobe-piyp-fuga');
 
       // Verify OpenAI was called with response_format
       expect(mockCreate).toHaveBeenCalledWith(
@@ -251,6 +252,7 @@ describe('title route', () => {
       const body = response.json();
       expect(body.title).toBe('SP Token Test');
       expect(body.app_name).toBe('sp-token-test');
+      expect(body.branch_name).toBe('ccbricks/hobe-piyp-fuga');
     });
 
     it('should use PAT auth provider when available', async () => {
@@ -283,6 +285,7 @@ describe('title route', () => {
       const body = response.json();
       expect(body.title).toBe('PAT Priority Test');
       expect(body.app_name).toBe('pat-priority-test');
+      expect(body.branch_name).toBe('ccbricks/hobe-piyp-fuga');
 
       // Verify that getToken was called
       expect(mockAccessToken).toHaveBeenCalled();
@@ -334,6 +337,7 @@ describe('title route', () => {
       expect(body.title).toBe('General coding session');
       // Fallback uses typeid mock
       expect(body.app_name).toBe('01abc2def3ghi4jkl5mno6pqrs');
+      expect(body.branch_name).toBe('ccbricks/hobe-piyp-fuga');
     });
 
     it('should return fallback when LLM returns null choices', async () => {

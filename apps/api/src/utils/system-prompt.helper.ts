@@ -1,5 +1,6 @@
 import type {
   DatabricksWorkspaceSource,
+  GitRepositoryOutcome,
   ResolvedDatabricksAppsOutcome,
   ResolvedSessionOutcome,
 } from '@repo/types';
@@ -32,6 +33,7 @@ export function buildSystemPromptConfig(
   const appsOutcome = outcomes.find(
     (o): o is ResolvedDatabricksAppsOutcome => o.type === 'databricks_apps'
   );
+  const gitOutcome = outcomes.find((o): o is GitRepositoryOutcome => o.type === 'git_repository');
 
   const instructions: string[] = [];
 
@@ -40,6 +42,9 @@ export function buildSystemPromptConfig(
   }
   if (appsOutcome?.name) {
     instructions.push(createDatabricksAppsInstruction(appsOutcome.name));
+  }
+  if (gitOutcome?.git_info.branches.length) {
+    instructions.push(createGitRepositoryInstruction(gitOutcome));
   }
 
   if (instructions.length > 0) {
@@ -121,5 +126,49 @@ The app name is also available via the \`SESSION_APP_NAME\` environment variable
 - Ensure your app has a valid \`app.yaml\` configuration file before deploying.
 - After deploying, verify the app status shows \`RUNNING\` before reporting success.
 - Do not consider the work done until the app is successfully deployed and verified.
+`.trim();
+}
+
+/**
+ * Git repository での開発ブランチ要件を systemPrompt に追加する。
+ */
+export function createGitRepositoryInstruction(outcome: GitRepositoryOutcome): string {
+  const repo = outcome.git_info.repo;
+  const branches = outcome.git_info.branches;
+  const branchLines = branches.map(branch => `${repo}: Develop on branch \`${branch}\``).join('\n');
+
+  return `
+## Git Development Branch Requirements
+
+You are working on the following feature branches:
+
+${branchLines}
+
+### Important Instructions:
+
+1. **DEVELOP** all your changes on the designated branch above
+2. **COMMIT** your work with clear, descriptive commit messages
+3. **PUSH** to the specified branch when your changes are complete
+4. **CREATE** the branch locally if it doesn't exist yet
+5. **NEVER** push to a different branch without explicit permission
+
+Remember: All development and final pushes should go to the branches specified above.
+
+## Git Operations
+
+Follow these practices for git:
+
+### For git push:
+
+- Always use \`git push -u origin <branch-name>\`
+- Only if push fails due to network errors retry up to 4 times with exponential backoff (2s, 4s, 8s, 16s)
+- Example retry logic: try push, wait 2s if failed, try again, wait 4s if failed, try again, etc.
+- IMPORTANT: Do NOT create a pull request unless the user explicitly asks for one.
+
+### For git fetch/pull:
+
+- Prefer fetching specific branches: \`git fetch origin <branch-name>\`
+- If network failures occur, retry up to 4 times with exponential backoff (2s, 4s, 8s, 16s)
+- For pulls use: \`git pull origin <branch-name>\`
 `.trim();
 }

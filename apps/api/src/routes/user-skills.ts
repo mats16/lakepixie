@@ -259,11 +259,15 @@ const userSkillsRoute: FastifyPluginAsync = async fastify => {
 
     try {
       const ctx = createUserContext(fastify, request);
-      const importedSkills = await importSkillsFromGit(ctx, {
-        repository_url,
-        paths,
-        branch: branch ?? 'main',
-      });
+      const importedSkills = await importSkillsFromGit(
+        ctx,
+        {
+          repository_url,
+          paths,
+          branch: branch ?? 'main',
+        },
+        fastify
+      );
 
       return reply.status(201).send({
         success: true,

@@ -22,6 +22,8 @@ import adminRoute from './routes/admin.js';
 import modelsRoute from './routes/models.js';
 import mcpServersRoute from './routes/mcp-servers.js';
 import externalMcpServersRoute from './routes/external-mcp-servers.js';
+import gitRepositoriesRoute from './routes/git-repositories.js';
+import gitCredentialRoute from './routes/git-credential.js';
 import { startEventBatcher } from './services/event-queue.service.js';
 
 export async function build() {
@@ -65,12 +67,14 @@ export async function build() {
   await app.register(genieRoute, { prefix: '/api/databricks' });
   await app.register(adminRoute, { prefix: '/api' });
   await app.register(modelsRoute, { prefix: '/api' });
+  await app.register(gitRepositoriesRoute, { prefix: '/api' });
+  await app.register(gitCredentialRoute, { prefix: '/api' });
   await app.register(externalMcpServersRoute, { prefix: '/api' });
   await app.register(mcpServersRoute, { prefix: '/api/user' });
 
   // APIルートのキャッシュ制御
   app.addHook('onSend', async (request, reply) => {
-    if (request.url.startsWith('/api/')) {
+    if (request.url.startsWith('/api/') && !reply.hasHeader('Cache-Control')) {
       reply.header('Cache-Control', 'no-cache, no-store, must-revalidate');
     }
   });

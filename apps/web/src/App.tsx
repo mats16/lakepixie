@@ -40,6 +40,7 @@ function AppContent() {
       <Route path="/mcp" element={<AppLayout />} />
       <Route path="/admin" element={<Navigate to="/admin/settings" replace />} />
       <Route path="/admin/branding" element={<AppLayout />} />
+      <Route path="/admin/git" element={<AppLayout />} />
       <Route path="/admin/settings" element={<AppLayout />} />
       <Route path="/admin/users" element={<AppLayout />} />
       <Route path="/sessions/:sessionId" element={<AppLayout />} />
