@@ -6,42 +6,28 @@ This guide explains how to deploy ccbricks to Databricks Apps.
 
 - Databricks CLI installed and configured
 - Access to a Databricks workspace with Apps enabled
-- PostgreSQL-compatible database (Lakebase recommended)
+- Databricks Lakebase resource for persistent database storage
 
 ## 1. Database Setup
 
-### 1.1 Create Database Instance
+### 1.1 Create Lakebase Resource
 
-Prepare a Databricks Lakebase or external PostgreSQL instance.
+The bundle defines a Lakebase Postgres project and binds it to the app as the
+`lakebase` resource. Databricks Apps injects the PostgreSQL connection variables
+(`PGAPPNAME`, `PGDATABASE`, `PGHOST`, `PGPORT`, `PGSSLMODE`, and `PGUSER`) for the
+bound resource.
+On startup, the API creates an app-specific PostgreSQL schema named
+`{PGAPPNAME}_schema_{PGUSER-without-hyphens}` and runs migrations with
+`search_path` set to that schema.
 
-- **Databricks Lakebase (recommended):** Create a Lakebase instance from the Databricks console
-- **External PostgreSQL:** Ensure it is accessible from Databricks Apps via network configuration
+### 1.2 Application User
 
-> **Note:** This application has been tested with [Neon](https://neon.tech/) as an external PostgreSQL provider.
+When the Lakebase resource is attached, Databricks creates or reuses a PostgreSQL
+role for the app service principal and grants it connect/create privileges.
 
-### 1.2 Create Application User
+**Important:** The application uses Row-Level Security (RLS) with `current_setting('app.user_id', true)`. The application sets this session variable for each request to enforce user isolation.
 
-Create a dedicated database user for the application.
-
-```sql
--- Create application user with RLS bypass explicitly disabled
-CREATE ROLE ccbricks_user WITH LOGIN PASSWORD 'your-secure-password' NOBYPASSRLS;
-
--- Grant role privileges to current user (required for database creation)
-GRANT ccbricks_user TO CURRENT_USER WITH SET TRUE;
-```
-
-**Important:** The application uses Row-Level Security (RLS) with `current_setting('app.user_id', true)`. The application sets this session variable for each request to enforce user isolation. The `NOBYPASSRLS` option ensures the application user cannot bypass RLS policies, providing an additional layer of security.
-
-### 1.3 Create Database
-
-Create the application database and set the owner.
-
-```sql
-CREATE DATABASE ccbricks OWNER ccbricks_user;
-```
-
-### 1.4 Database Migrations
+### 1.3 Database Migrations
 
 Database migrations are automatically applied when the server starts. No manual migration steps are required for deployment.
 
@@ -52,8 +38,8 @@ Automatic migrations are disabled in the following cases:
 **For local development or manual migration:**
 
 ```bash
-# Set database URL
-export DATABASE_URL="postgresql://ccbricks_user:password@host:5432/ccbricks"
+# Use Lakebase mode
+export LAKEBASE_ENDPOINT="projects/.../branches/.../endpoints/..."
 
 # Navigate to api directory
 cd apps/api
@@ -81,12 +67,6 @@ databricks secrets create-scope ccbricks-prod
 
 ### 2.2 Add Required Secrets
 
-**Database URL:**
-
-```bash
-databricks secrets put-secret ccbricks-[dev|prod] database-url --string-value "postgresql://ccbricks_user:password@host:5432/ccbricks"
-```
-
 **Encryption Key:**
 
 Generate a secure encryption key for encrypting sensitive data (OAuth tokens, etc.). A 32-byte key (64 hexadecimal characters) is required.
@@ -97,8 +77,6 @@ databricks secrets put-secret ccbricks-[dev|prod] encryption-key --string-value 
 ```
 
 ## 3. Deploy with Asset Bundles
-
-> **Note:** This deployment method using Databricks Asset Bundles is a temporary solution until Lakebase support is available in the bundle configuration. Once Lakebase integration is supported, the database and user creation steps may be automated through bundle resources, enabling full infrastructure-as-code deployment including the database.
 
 > **Default Target:** The `databricks.yaml` is configured to use `dev` as the default target. You can omit `--target` for development deployments.
 

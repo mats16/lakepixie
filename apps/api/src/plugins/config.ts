@@ -22,11 +22,48 @@ const schema = {
       description:
         'Server port (used in development, overridden by DATABRICKS_APP_PORT in production)',
     },
-    // Database (optional — empty string triggers SQLite fallback)
+    // Database
+    LAKEBASE_ENDPOINT: {
+      type: 'string',
+      default: '',
+      description: 'Lakebase endpoint resource path (empty = SQLite fallback)',
+    },
+    PGAPPNAME: {
+      type: 'string',
+      default: '',
+      description: 'PostgreSQL application name injected by Databricks Apps for Lakebase.',
+    },
+    PGDATABASE: {
+      type: 'string',
+      default: '',
+      description: 'PostgreSQL database name injected by Databricks Apps for Lakebase.',
+    },
+    PGHOST: {
+      type: 'string',
+      default: '',
+      description: 'PostgreSQL host injected by Databricks Apps for Lakebase.',
+    },
+    PGPORT: {
+      type: 'string',
+      default: '',
+      description: 'PostgreSQL port injected by Databricks Apps for Lakebase.',
+    },
+    PGSSLMODE: {
+      type: 'string',
+      default: '',
+      description: 'PostgreSQL SSL mode injected by Databricks Apps for Lakebase.',
+    },
+    PGUSER: {
+      type: 'string',
+      default: '',
+      description: 'PostgreSQL user injected by Databricks Apps for Lakebase.',
+    },
+    // Legacy database URL. Kept for tooling/backward compatibility, but runtime
+    // backend selection is based only on LAKEBASE_ENDPOINT.
     DATABASE_URL: {
       type: 'string',
       default: '',
-      description: 'PostgreSQL connection string (empty = SQLite fallback)',
+      description: 'Legacy PostgreSQL connection string; not used for runtime DB selection.',
     },
     DISABLE_AUTO_MIGRATION: {
       type: 'boolean',
@@ -106,7 +143,21 @@ declare module 'fastify' {
       NODE_ENV: 'development' | 'production' | 'test';
       /** The network port the app should listen on. (only used in development) */
       PORT: number;
-      /** The PostgreSQL connection string. */
+      /** Lakebase endpoint resource path. Empty string selects SQLite. */
+      LAKEBASE_ENDPOINT: string;
+      /** PostgreSQL application name injected by Databricks Apps for Lakebase. */
+      PGAPPNAME: string;
+      /** PostgreSQL database name injected by Databricks Apps for Lakebase. */
+      PGDATABASE: string;
+      /** PostgreSQL host injected by Databricks Apps for Lakebase. */
+      PGHOST: string;
+      /** PostgreSQL port injected by Databricks Apps for Lakebase. */
+      PGPORT: string;
+      /** PostgreSQL SSL mode injected by Databricks Apps for Lakebase. */
+      PGSSLMODE: string;
+      /** PostgreSQL user injected by Databricks Apps for Lakebase. */
+      PGUSER: string;
+      /** Legacy PostgreSQL connection string. Not used for runtime DB selection. */
       DATABASE_URL: string;
       /** Disable automatic database migration on startup. */
       DISABLE_AUTO_MIGRATION: boolean;

@@ -4,13 +4,12 @@ resources:
       name: ${var.app_name}
       description: Claude Code on Databricks
       source_code_path: ../
-      #resources:
-      #  - name: database-url-secret
-      #    description: Database connection string
-      #    secret:
-      #      scope: ccbricks-${bundle.target}
-      #      key: database-url
-      #      permission: READ
+      resources:
+        - name: lakebase
+          postgres:
+            branch: ${resources.postgres_projects.ccbricks_db.id}/branches/production
+            database: ${resources.postgres_projects.ccbricks_db.id}/branches/production/databases/databricks-postgres
+            permission: CAN_CONNECT_AND_CREATE
       user_api_scopes:
         - sql
         - genie
@@ -31,3 +30,19 @@ resources:
       permissions:
         - level: CAN_USE
           group_name: users
+
+  postgres_projects:
+    ccbricks_db:
+      project_id: ccbricks-${bundle.target}
+      display_name: 'ccbricks Database ${bundle.target}'
+      pg_version: 17
+      default_branch: projects/ccbricks-${bundle.target}/branches/production
+      default_endpoint_settings:
+        autoscaling_limit_min_cu: 0.5
+        autoscaling_limit_max_cu: 4
+        suspend_timeout_duration: '300s'
+      custom_tags:
+        - key: Project
+          value: ccbricks
+        - key: Environment
+          value: ${bundle.target}

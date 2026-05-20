@@ -1,21 +1,27 @@
 // apps/api/src/plugins/database.ts
 import fp from 'fastify-plugin';
-import { drizzle as drizzlePg } from 'drizzle-orm/postgres-js';
+import type { FastifyInstance } from 'fastify';
+import { createLakebasePool } from '@databricks/appkit';
+import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
+import type { NodePgClient, NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { sql } from 'drizzle-orm';
-import postgres from 'postgres';
 import * as pgSchema from '../db/schema.pg.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+type AppDatabase = PostgresJsDatabase<typeof pgSchema>;
+type LakebaseDatabase = NodePgDatabase<typeof pgSchema>;
+type LakebasePool = ReturnType<typeof createLakebasePool>;
+type LakebaseSslMode = 'require' | 'disable' | 'prefer';
+type ErrorCallback<T = unknown> = (err: Error | null, result?: T) => void;
 
 /**
  * RLS対応トランザクションの型
  * Drizzle ORM のトランザクション内で使用可能なDB操作
  */
-export type RLSTransaction = Parameters<
-  Parameters<PostgresJsDatabase<typeof pgSchema>['transaction']>[0]
->[0];
+export type RLSTransaction = Parameters<Parameters<AppDatabase['transaction']>[0]>[0];
 
 /**
  * withUserContext のコールバック型
@@ -40,7 +46,7 @@ export class RLSContextError extends Error {
 // Fastify型拡張
 declare module 'fastify' {
   interface FastifyInstance {
-    db: PostgresJsDatabase<typeof pgSchema>;
+    db: AppDatabase;
     /** true の場合、SQLite フォールバックモードで動作中 */
     isSqlite: boolean;
     /**
@@ -69,10 +75,81 @@ function validateUserId(userId: string): void {
   }
 }
 
+function quoteIdent(identifier: string): string {
+  return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function optionalEnv(value: string): string | undefined {
+  return value.trim() || undefined;
+}
+
+function resolveLakebaseSchema(config: FastifyInstance['config']): string {
+  const appName = config.PGAPPNAME || config.DATABRICKS_APP_NAME;
+  const servicePrincipalId = config.PGUSER || config.DATABRICKS_CLIENT_ID;
+  if (!appName || !servicePrincipalId) {
+    throw new Error(
+      'PGAPPNAME and PGUSER are required to resolve the Databricks Apps Lakebase schema.'
+    );
+  }
+  return `${appName}_schema_${servicePrincipalId.replaceAll('-', '')}`;
+}
+
+function installSearchPath(pool: LakebasePool, schemaName: string): void {
+  const searchPathSql = `set search_path to ${quoteIdent(schemaName)}`;
+  const originalConnect = pool.connect.bind(pool);
+
+  async function connectWithSearchPath() {
+    const client = await originalConnect();
+    await client.query(searchPathSql);
+    return client;
+  }
+
+  pool.connect = ((callback?: ErrorCallback) => {
+    if (callback) {
+      connectWithSearchPath().then(
+        client => callback(null, client),
+        error => callback(toError(error))
+      );
+      return;
+    }
+    return connectWithSearchPath();
+  }) as LakebasePool['connect'];
+
+  pool.query = (async (...args: Parameters<LakebasePool['query']>) => {
+    const lastArg = args.at(-1);
+    const callback =
+      typeof lastArg === 'function'
+        ? (lastArg as (err: Error | null, result?: unknown) => void)
+        : undefined;
+    const queryArgs = callback ? args.slice(0, -1) : args;
+    const client = await connectWithSearchPath();
+    try {
+      const result = await client.query(...(queryArgs as Parameters<typeof client.query>));
+      if (callback) {
+        callback(null, result);
+        return;
+      }
+      return result;
+    } catch (error) {
+      if (callback) {
+        callback(toError(error));
+        return;
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }) as LakebasePool['query'];
+}
+
 /**
  * SQLite データベースを初期化する
  */
-async function initSqlite(fastify: ReturnType<typeof import('fastify').default>) {
+async function initSqlite(fastify: FastifyInstance) {
   const { default: Database } = await import('better-sqlite3');
   const { drizzle: drizzleSqlite } = await import('drizzle-orm/better-sqlite3');
   const sqliteSchema = await import('../db/schema.sqlite.js');
@@ -83,7 +160,7 @@ async function initSqlite(fastify: ReturnType<typeof import('fastify').default>)
   mkdirSync(dataDir, { recursive: true });
 
   const dbPath = path.join(dataDir, 'ccbricks.sqlite');
-  fastify.log.info({ dbPath }, 'Using SQLite database (DATABASE_URL not set)');
+  fastify.log.info({ dbPath }, 'Using SQLite database (LAKEBASE_ENDPOINT not set)');
 
   // SQLite クライアント作成
   const client = new Database(dbPath);
@@ -220,18 +297,31 @@ async function initSqlite(fastify: ReturnType<typeof import('fastify').default>)
 }
 
 /**
- * PostgreSQL データベースを初期化する
+ * Lakebase PostgreSQL データベースを初期化する
  */
-async function initPostgres(fastify: ReturnType<typeof import('fastify').default>) {
-  // PostgreSQLクライアント作成
-  const client = postgres(fastify.config.DATABASE_URL, {
+async function initLakebase(fastify: FastifyInstance) {
+  const schemaName = resolveLakebaseSchema(fastify.config);
+  const pgPort = optionalEnv(fastify.config.PGPORT);
+  // AppKit の Lakebase pool は Databricks Apps が注入する PG* 環境変数を読む。
+  const pool = createLakebasePool({
+    endpoint: fastify.config.LAKEBASE_ENDPOINT,
+    host: optionalEnv(fastify.config.PGHOST),
+    database: optionalEnv(fastify.config.PGDATABASE),
+    user: optionalEnv(fastify.config.PGUSER),
+    port: pgPort ? Number(pgPort) : undefined,
+    sslMode: optionalEnv(fastify.config.PGSSLMODE) as LakebaseSslMode | undefined,
     max: 10,
-    idle_timeout: 20,
-    connect_timeout: 10,
+    idleTimeoutMillis: 20_000,
+    connectionTimeoutMillis: 10_000,
   });
+  await pool.query(`create schema if not exists ${quoteIdent(schemaName)}`);
+  installSearchPath(pool, schemaName);
 
   // Drizzle ORM初期化
-  const db = drizzlePg({ client, schema: pgSchema });
+  const db: LakebaseDatabase = drizzlePg({
+    client: pool as unknown as NodePgClient,
+    schema: pgSchema,
+  });
 
   // マイグレーション実行（テスト環境または DISABLE_AUTO_MIGRATION=true ではスキップ）
   const shouldSkipMigration =
@@ -254,7 +344,7 @@ async function initPostgres(fastify: ReturnType<typeof import('fastify').default
   }
 
   // Fastifyインスタンスにデコレート
-  fastify.decorate('db', db);
+  fastify.decorate('db', db as unknown as AppDatabase);
   fastify.decorate('isSqlite', false);
 
   // RLS対応のユーザーコンテキスト付きトランザクションヘルパー
@@ -274,42 +364,37 @@ async function initPostgres(fastify: ReturnType<typeof import('fastify').default
           );
         }
 
-        return callback(tx);
+        return callback(tx as unknown as RLSTransaction);
       });
     }
   );
 
-  fastify.log.info('PostgreSQL database connection established');
+  fastify.log.info({ schemaName }, 'Lakebase database connection established');
 
   // Graceful shutdown
   fastify.addHook('onClose', async () => {
-    fastify.log.info('Closing PostgreSQL database connection...');
-    await client.end();
-    fastify.log.info('PostgreSQL database connection closed');
+    fastify.log.info('Closing Lakebase database connection...');
+    await pool.end();
+    fastify.log.info('Lakebase database connection closed');
   });
 }
 
 /**
  * Database Plugin
  *
- * DATABASE_URL が設定されている場合は PostgreSQL、
+ * LAKEBASE_ENDPOINT が設定されている場合は Lakebase PostgreSQL、
  * 未設定の場合は SQLite にフォールバックします。
  *
  * 依存関係:
- * - config: DATABASE_URLを取得するため
+ * - config: LAKEBASE_ENDPOINTを取得するため
  */
 export default fp(
   async fastify => {
     try {
-      if (fastify.config.DATABASE_URL) {
-        await initPostgres(fastify);
+      if (fastify.config.LAKEBASE_ENDPOINT.trim() !== '') {
+        await initLakebase(fastify);
       } else {
-        if (fastify.config.NODE_ENV === 'production') {
-          throw new Error(
-            'DATABASE_URL is required in production environment. SQLite fallback is only available in development.'
-          );
-        }
-        fastify.log.warn('DATABASE_URL is not set — using SQLite fallback (development only)');
+        fastify.log.warn('LAKEBASE_ENDPOINT is not set — using SQLite fallback');
         await initSqlite(fastify);
       }
     } catch (error) {

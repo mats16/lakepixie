@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.110",
+    "@databricks/appkit": "^0.36.0",
     "@fastify/compress": "^8.3.1",
     "@fastify/env": "^5.0.3",
     "@fastify/static": "^9.0.0",
@@ -34,7 +35,7 @@
     "fastify-plugin": "^5.1.0",
     "js-yaml": "^4.1.1",
     "openai": "^6.15.0",
-    "postgres": "^3.4.5",
+    "pg": "^8.20.0",
     "typeid-js": "^1.2.0",
     "uuidv7": "^1.2.1"
   },

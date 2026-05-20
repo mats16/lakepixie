@@ -47,9 +47,21 @@ npm install
 
 ## 2. データベースのセットアップ
 
-### 2.1 PostgreSQL の起動
+ローカル開発では、デフォルトで `${CCBRICKS_BASE_DIR}/db/ccbricks.sqlite`
+の SQLite を使用します。Lakebase を使用する場合は `LAKEBASE_ENDPOINT`
+を設定します。Databricks Apps では、バインドした Lakebase リソースに対して
+`PGAPPNAME`, `PGDATABASE`, `PGHOST`, `PGPORT`, `PGSSLMODE`, `PGUSER`
+が自動的に注入されます。
+Lakebase のテーブルは `{PGAPPNAME}_schema_{ハイフンを除いたPGUSER}` という
+アプリ専用 PostgreSQL schema に作成され、API は migration と通常クエリの前に
+`search_path` をその schema に設定します。
 
-**Docker を使用する場合（推奨）:**
+### 2.1 任意: ローカル PostgreSQL
+
+`DATABASE_URL` はランタイムのデータベース選択には使用されません。以下の
+Docker 設定は、レガシーなツールや検証目的でのみ使用してください。
+
+**Docker を使用する場合:**
 
 ```bash
 docker run -d \
@@ -76,7 +88,8 @@ CREATE DATABASE ccbricks OWNER ccbricks_user;
 
 ### 2.2 データベースマイグレーション
 
-マイグレーションはサーバー起動時に自動的に適用されます。手動でマイグレーションを実行する場合:
+Lakebase のマイグレーションはサーバー起動時に自動的に適用されます。
+SQLite は起動時にローカルテーブルを作成します。手動でマイグレーションを実行する場合:
 
 ```bash
 cd apps/api
@@ -84,7 +97,7 @@ cd apps/api
 # マイグレーションファイルを生成（スキーマ変更時）
 npm run db:generate
 
-# 手動でマイグレーションを適用
+# 選択された Drizzle 設定に対して手動でマイグレーションを適用
 npm run db:migrate
 
 # またはスキーマを直接プッシュ（開発時のみ）
@@ -110,8 +123,10 @@ cp .env.example .env
 PORT=8003
 NODE_ENV=development
 
-# データベース（必須）
-DATABASE_URL=postgresql://ccbricks_user:localdev@localhost:5432/ccbricks
+# データベース
+# LAKEBASE_ENDPOINT が空の場合は SQLite フォールバックを使用
+# Lakebase を使用する場合は LAKEBASE_ENDPOINT を設定（デプロイ時の PG* は自動注入）
+LAKEBASE_ENDPOINT=
 
 # 暗号化（必須 - 生成コマンド: openssl rand -hex 32）
 ENCRYPTION_KEY=your-64-character-hex-key
@@ -286,7 +301,7 @@ kill -9 <PID>
    pg_isready -h localhost -p 5432  # 接続を確認
    ```
 
-2. `.env` の `DATABASE_URL` が正しいことを確認
+2. Lakebase を使用している場合は、`LAKEBASE_ENDPOINT` と注入された `PG*` の値を確認
 
 3. データベースが存在することを確認:
    ```bash

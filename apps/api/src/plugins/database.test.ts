@@ -1,8 +1,28 @@
 // apps/api/src/plugins/database.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
 import configPlugin from './config.js';
 import databasePlugin, { RLSContextError } from './database.js';
+
+const { mockCreateLakebasePool, mockPoolEnd, mockPoolQuery } = vi.hoisted(() => {
+  const mockPoolEnd = vi.fn();
+  const mockPoolQuery = vi.fn().mockResolvedValue({ rows: [] });
+  const mockCreateLakebasePool = vi.fn(() => ({
+    end: mockPoolEnd,
+    query: mockPoolQuery,
+    connect: vi.fn(),
+  }));
+
+  return { mockCreateLakebasePool, mockPoolEnd, mockPoolQuery };
+});
+
+vi.mock('@databricks/appkit', () => ({
+  createLakebasePool: mockCreateLakebasePool,
+}));
+
+const TEST_LAKEBASE_ENDPOINT = 'projects/test-project/branches/test-branch/endpoints/test-endpoint';
+const TEST_PGAPPNAME = 'ccbricks';
+const TEST_PGUSER = 'service-principal-client-id';
 
 describe('database plugin', () => {
   let app: FastifyInstance;
@@ -13,8 +33,14 @@ describe('database plugin', () => {
     originalEnv = { ...process.env };
 
     // Set required environment variables for config plugin
-    process.env.DATABASE_URL = 'postgresql://localhost:5432/test_db';
     process.env.DATABRICKS_HOST = 'test.databricks.com';
+    process.env.CCBRICKS_BASE_DIR = '/private/tmp/ccbricks-database-test';
+    delete process.env.LAKEBASE_ENDPOINT;
+    delete process.env.PGAPPNAME;
+    delete process.env.PGUSER;
+    mockCreateLakebasePool.mockClear();
+    mockPoolEnd.mockClear();
+    mockPoolQuery.mockClear();
 
     // Create a fresh Fastify instance for each test
     app = Fastify({
@@ -43,6 +69,33 @@ describe('database plugin', () => {
       expect(typeof app.db).toBe('object');
     });
 
+    it('should use Lakebase when LAKEBASE_ENDPOINT is set', async () => {
+      process.env.LAKEBASE_ENDPOINT = TEST_LAKEBASE_ENDPOINT;
+      process.env.PGAPPNAME = TEST_PGAPPNAME;
+      process.env.PGUSER = TEST_PGUSER;
+
+      await app.register(configPlugin);
+      await app.register(databasePlugin);
+
+      expect(app.db).toBeDefined();
+      expect(app.isSqlite).toBe(false);
+      expect(mockCreateLakebasePool).toHaveBeenCalledTimes(1);
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        'create schema if not exists "ccbricks_schema_serviceprincipalclientid"'
+      );
+    });
+
+    it('should use SQLite when LAKEBASE_ENDPOINT is missing even if DATABASE_URL is set', async () => {
+      process.env.DATABASE_URL = 'postgresql://localhost:5432/test_db';
+
+      await app.register(configPlugin);
+      await app.register(databasePlugin);
+
+      expect(app.db).toBeDefined();
+      expect(app.isSqlite).toBe(true);
+      expect(mockCreateLakebasePool).not.toHaveBeenCalled();
+    });
+
     it('should have access to schema through fastify.db', async () => {
       await app.register(configPlugin);
       await app.register(databasePlugin);
@@ -55,7 +108,11 @@ describe('database plugin', () => {
       expect(typeof app.db.query).toBe('object');
     });
 
-    it('should close database connection on app close', async () => {
+    it('should close Lakebase database connection on app close', async () => {
+      process.env.LAKEBASE_ENDPOINT = TEST_LAKEBASE_ENDPOINT;
+      process.env.PGAPPNAME = TEST_PGAPPNAME;
+      process.env.PGUSER = TEST_PGUSER;
+
       await app.register(configPlugin);
       await app.register(databasePlugin);
 
@@ -65,14 +122,7 @@ describe('database plugin', () => {
       // Close app (should trigger onClose hook)
       await app.close();
 
-      // After close, creating a new instance should still work
-      const app2 = Fastify({ logger: false });
-      await app2.register(configPlugin);
-      await app2.register(databasePlugin);
-
-      expect(app2.db).toBeDefined();
-
-      await app2.close();
+      expect(mockPoolEnd).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -82,13 +132,14 @@ describe('database plugin', () => {
       await expect(app.register(databasePlugin)).rejects.toThrow();
     });
 
-    it('should fail when DATABASE_URL is invalid', async () => {
+    it('should ignore invalid DATABASE_URL when LAKEBASE_ENDPOINT is unset', async () => {
       process.env.DATABASE_URL = 'invalid-url';
 
       await app.register(configPlugin);
+      await app.register(databasePlugin);
 
-      // database plugin should fail with invalid connection string
-      await expect(app.register(databasePlugin)).rejects.toThrow();
+      expect(app.isSqlite).toBe(true);
+      expect(mockCreateLakebasePool).not.toHaveBeenCalled();
     });
   });
 

@@ -1,12 +1,12 @@
 // apps/api/src/db/schema.ts
 // 環境に応じて PostgreSQL or SQLite のスキーマを re-export するバレルモジュール
 //
-// DATABASE_URL が設定されている場合は PostgreSQL スキーマ、
+// LAKEBASE_ENDPOINT が設定されている場合は PostgreSQL スキーマ、
 // 未設定の場合は SQLite スキーマを使用する。
 //
 // サービスからの import パス（'../db/schema.js'）は変更不要。
 
-const useSqlite = !process.env.DATABASE_URL;
+const useSqlite = !process.env.LAKEBASE_ENDPOINT?.trim();
 
 // any は意図的: PgTable と SQLiteTable は型互換性がないため union 型にできない。
 // 行レベルの型（InsertUser, Session 等）は下の re-export で正しく型付けされている。

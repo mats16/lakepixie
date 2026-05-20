@@ -152,7 +152,7 @@ const mcpServersRoute: FastifyPluginAsync = async fastify => {
         generatedUrl = `https://${databricksHost}/api/2.0/mcp/genie/${trimmedSpaceId}`;
       }
 
-      const rows = await fastify.db
+      const rows = (await fastify.db
         .insert(mcpServers)
         .values({
           userId: user.id,
@@ -163,7 +163,7 @@ const mcpServersRoute: FastifyPluginAsync = async fastify => {
           managedType: managed_type,
         })
         .onConflictDoNothing({ target: [mcpServers.userId, mcpServers.id] })
-        .returning();
+        .returning()) as Array<typeof mcpServers.$inferSelect>;
 
       if (rows.length === 0) {
         return reply.status(409).send({
@@ -229,7 +229,7 @@ const mcpServersRoute: FastifyPluginAsync = async fastify => {
     }
 
     const trimmedId = id.trim();
-    const rows = await fastify.db
+    const rows = (await fastify.db
       .insert(mcpServers)
       .values({
         userId: user.id,
@@ -243,7 +243,7 @@ const mcpServersRoute: FastifyPluginAsync = async fastify => {
         env: env ?? null,
       })
       .onConflictDoNothing({ target: [mcpServers.userId, mcpServers.id] })
-      .returning();
+      .returning()) as Array<typeof mcpServers.$inferSelect>;
 
     if (rows.length === 0) {
       return reply.status(409).send({

@@ -47,9 +47,20 @@ This installs dependencies for all workspaces (apps and packages).
 
 ## 2. Database Setup
 
-### 2.1 Start PostgreSQL
+By default, local development uses SQLite under `${CCBRICKS_BASE_DIR}/db/ccbricks.sqlite`.
+To develop against Lakebase, set `LAKEBASE_ENDPOINT`; Databricks Apps injects the
+`PGAPPNAME`, `PGDATABASE`, `PGHOST`, `PGPORT`, `PGSSLMODE`, and `PGUSER` variables
+for the bound Lakebase resource.
+Lakebase tables are created in an app-specific PostgreSQL schema named
+`{PGAPPNAME}_schema_{PGUSER-without-hyphens}`, and the API sets `search_path` to
+that schema before migrations and runtime queries.
 
-**Using Docker (recommended):**
+### 2.1 Optional Local PostgreSQL
+
+`DATABASE_URL` is no longer used to select the runtime database. The Docker setup
+below is only useful for legacy tooling or experiments.
+
+**Using Docker:**
 
 ```bash
 docker run -d \
@@ -76,7 +87,8 @@ CREATE DATABASE ccbricks OWNER ccbricks_user;
 
 ### 2.2 Database Migrations
 
-Migrations are automatically applied when the server starts. For manual migration:
+Lakebase migrations are automatically applied when the server starts. SQLite
+creates its local tables on startup. For manual migration:
 
 ```bash
 cd apps/api
@@ -84,7 +96,7 @@ cd apps/api
 # Generate migration files (if schema changed)
 npm run db:generate
 
-# Apply migrations manually
+# Apply migrations manually for the selected Drizzle config
 npm run db:migrate
 
 # Or push schema directly (development only)
@@ -110,8 +122,10 @@ Edit `.env` with your configuration:
 PORT=8003
 NODE_ENV=development
 
-# Database (required)
-DATABASE_URL=postgresql://ccbricks_user:localdev@localhost:5432/ccbricks
+# Database
+# Empty LAKEBASE_ENDPOINT selects SQLite fallback.
+# Set LAKEBASE_ENDPOINT for Lakebase; Databricks Apps injects PG* for deployments.
+LAKEBASE_ENDPOINT=
 
 # Encryption (required - generate with: openssl rand -hex 32)
 ENCRYPTION_KEY=your-64-character-hex-key
@@ -286,7 +300,7 @@ kill -9 <PID>
    pg_isready -h localhost -p 5432  # Check connection
    ```
 
-2. Check `DATABASE_URL` in `.env` is correct
+2. If using Lakebase, check `LAKEBASE_ENDPOINT` and the injected `PG*` values
 
 3. Ensure database exists:
    ```bash
