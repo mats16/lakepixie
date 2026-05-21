@@ -17,6 +17,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { gitRepositoryService } from '@/services/git-repository.service';
@@ -89,6 +97,7 @@ export function GitRepositoryStatusBar({
   const [localDiff, setLocalDiff] = useState<GitRepositoryDiffResponse | null>(null);
   const [pull, setPull] = useState<GitRepositoryPullRequest | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [pendingPullRequestDraft, setPendingPullRequestDraft] = useState<boolean | null>(null);
 
   useEffect(() => {
     let isCurrent = true;
@@ -97,6 +106,7 @@ export function GitRepositoryStatusBar({
     setLocalDiff(null);
     setPull(null);
     setIsCreating(false);
+    setPendingPullRequestDraft(null);
 
     void Promise.allSettled([
       gitRepositoryService.getBranch(fullName, headBranch, baseBranch),
@@ -127,7 +137,7 @@ export function GitRepositoryStatusBar({
     return () => {
       isCurrent = false;
     };
-  }, [baseBranch, fullName, headBranch, owner, sessionId]);
+  }, [baseBranch, fullName, headBranch, owner]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -180,7 +190,13 @@ export function GitRepositoryStatusBar({
       toast.error(t('gitStatus.createPullRequestError'));
     } finally {
       setIsCreating(false);
+      setPendingPullRequestDraft(null);
     }
+  };
+
+  const handleConfirmPullRequest = () => {
+    if (pendingPullRequestDraft === null) return;
+    void handleCreatePullRequest(pendingPullRequestDraft);
   };
 
   const diff = localDiff ?? branchDetail?.compare;
@@ -195,112 +211,142 @@ export function GitRepositoryStatusBar({
   const statusTooltip = t(`gitStatus.status.${statusKey}`);
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 pb-[7.5rem] px-4 pointer-events-none z-10">
-      <div className="w-full max-w-[735px] mx-auto pointer-events-auto">
-        <div className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border bg-background px-3 shadow-lg">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex shrink-0 items-center gap-3">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <StatusIcon className={cn('h-4 w-4', PULL_STATUS_CLASS[statusKey])} />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{statusTooltip}</p>
-                </TooltipContent>
-              </Tooltip>
-              {pull && (
+    <>
+      <div className="absolute bottom-0 left-0 right-0 pb-[7.5rem] px-4 pointer-events-none z-10">
+        <div className="w-full max-w-[735px] mx-auto pointer-events-auto">
+          <div className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border bg-background px-3 shadow-lg">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex shrink-0 items-center gap-3">
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="text-sm font-medium hover:underline"
-                      onClick={() => openUrl(pull.html_url)}
-                    >
-                      #{pull.number}
-                    </button>
+                    <span className="inline-flex">
+                      <StatusIcon className={cn('h-4 w-4', PULL_STATUS_CLASS[statusKey])} />
+                    </span>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>{t('gitStatus.openPullRequest')}</p>
+                    <p>{statusTooltip}</p>
                   </TooltipContent>
                 </Tooltip>
-              )}
+                {pull && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="text-sm font-medium hover:underline"
+                        onClick={() => openUrl(pull.html_url)}
+                      >
+                        #{pull.number}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{t('gitStatus.openPullRequest')}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="truncate text-sm text-muted-foreground hover:text-foreground"
+                    onClick={() => openUrl(repositoryUrl(owner, repo))}
+                  >
+                    {repo}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{t('gitStatus.openRepository')}</p>
+                </TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="min-w-0 truncate text-sm font-medium hover:underline"
+                    onClick={handleCopyBranch}
+                  >
+                    {headBranch}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{t('gitStatus.copyBranch')}</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="truncate text-sm text-muted-foreground hover:text-foreground"
-                  onClick={() => openUrl(repositoryUrl(owner, repo))}
-                >
-                  {repo}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('gitStatus.openRepository')}</p>
-              </TooltipContent>
-            </Tooltip>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="min-w-0 truncate text-sm font-medium hover:underline"
-                  onClick={handleCopyBranch}
-                >
-                  {headBranch}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('gitStatus.copyBranch')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-2">
-            {diffBadge}
-            {!pull && (
-              <div className="flex overflow-hidden rounded-md border shadow-sm">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="h-6 rounded-none px-2 text-xs"
-                  onClick={() => handleCreatePullRequest(false)}
-                  disabled={isCreating}
-                >
-                  {t('gitStatus.createPullRequest')}
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 rounded-none border-l"
-                      disabled={isCreating}
-                    >
-                      <ChevronDown className="h-3 w-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => handleCreatePullRequest(false)}>
-                      <GitPullRequestArrow className="h-4 w-4" />
-                      {t('gitStatus.createPullRequest')}
-                      <Check className="ml-auto h-4 w-4" />
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleCreatePullRequest(true)}>
-                      <GitPullRequestDraft className="h-4 w-4" />
-                      {t('gitStatus.createDraftPullRequest')}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            )}
+            <div className="flex shrink-0 items-center gap-2">
+              {diffBadge}
+              {!pull && (
+                <div className="flex overflow-hidden rounded-md border shadow-sm">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-6 rounded-none px-2 text-xs"
+                    onClick={() => setPendingPullRequestDraft(false)}
+                    disabled={isCreating}
+                  >
+                    {t('gitStatus.createPullRequest')}
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 rounded-none border-l"
+                        disabled={isCreating}
+                      >
+                        <ChevronDown className="h-3 w-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => setPendingPullRequestDraft(false)}>
+                        <GitPullRequestArrow className="h-4 w-4" />
+                        {t('gitStatus.createPullRequest')}
+                        <Check className="ml-auto h-4 w-4" />
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setPendingPullRequestDraft(true)}>
+                        <GitPullRequestDraft className="h-4 w-4" />
+                        {t('gitStatus.createDraftPullRequest')}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+      <Dialog
+        open={pendingPullRequestDraft !== null}
+        onOpenChange={open => {
+          if (!open) setPendingPullRequestDraft(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('gitStatus.metadataDialog.title')}</DialogTitle>
+            <DialogDescription>{t('gitStatus.metadataDialog.description')}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPendingPullRequestDraft(null)}
+              disabled={isCreating}
+            >
+              {t('gitStatus.metadataDialog.cancel')}
+            </Button>
+            <Button type="button" onClick={handleConfirmPullRequest} disabled={isCreating}>
+              {pendingPullRequestDraft
+                ? t('gitStatus.createDraftPullRequest')
+                : t('gitStatus.createPullRequest')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

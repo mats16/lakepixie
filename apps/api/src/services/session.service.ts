@@ -14,24 +14,25 @@ import {
   type SDKUserMessageReplay,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
-import type {
-  SessionCreateRequest,
-  SessionCreateResponse,
-  SessionContextResponse,
-  SessionListQuery,
-  SessionListResponse,
-  SessionResponse,
-  SessionStatus,
-  SessionCreateEventData,
-  SessionUpdateRequest,
-  DatabricksWorkspaceSource,
-  DatabricksAppsOutcome,
-  GitRepositoryOutcome,
-  GitRepositorySource,
-  ResolvedDatabricksAppsOutcome,
-  SessionOutcome,
-  SessionSource,
-  WsServerMessage,
+import {
+  parseGitBranchRevision,
+  type DatabricksAppsOutcome,
+  type DatabricksWorkspaceSource,
+  type GitRepositoryOutcome,
+  type GitRepositorySource,
+  type ResolvedDatabricksAppsOutcome,
+  type SessionContextResponse,
+  type SessionCreateRequest,
+  type SessionCreateResponse,
+  type SessionCreateEventData,
+  type SessionListQuery,
+  type SessionListResponse,
+  type SessionOutcome,
+  type SessionResponse,
+  type SessionSource,
+  type SessionStatus,
+  type SessionUpdateRequest,
+  type WsServerMessage,
 } from '@repo/types';
 import { buildSystemPromptConfig } from '../utils/system-prompt.helper.js';
 import { sessionEvents, sessions } from '../db/schema.js';
@@ -258,11 +259,10 @@ function validateGitBranchName(branch: string): void {
 }
 
 function getGitBranchFromRevision(revision: string): string {
-  const prefix = 'refs/heads/';
-  if (!revision.startsWith(prefix)) {
+  const branch = parseGitBranchRevision(revision);
+  if (!branch) {
     throw new Error('Git repository revision must start with refs/heads/');
   }
-  const branch = revision.slice(prefix.length);
   validateGitBranchName(branch);
   return branch;
 }

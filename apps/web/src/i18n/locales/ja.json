@@ -318,6 +318,11 @@
     "createPullRequest": "PRを作成",
     "createDraftPullRequest": "下書きPRを作成",
     "createPullRequestError": "PRの作成に失敗しました",
+    "metadataDialog": {
+      "title": "PRメタデータを生成",
+      "description": "PRのタイトルと本文はLLMで生成されます。PRを作成する前に、ローカルのgit差分、コミット、変更ファイル名、PRテンプレートがDatabricks Serving Endpointに送信されます。",
+      "cancel": "キャンセル"
+    },
     "status": {
       "open": "Open",
       "draft": "Draft",

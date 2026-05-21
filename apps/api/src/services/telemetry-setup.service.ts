@@ -83,6 +83,12 @@ export class TelemetrySetupAuthorizationError extends Error {
 const MAX_PAGES = 100;
 const UC_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const EXPERIMENT_NAME_PATTERN = /^[^/\s][^/]{0,79}$/;
+const NON_WRITABLE_TELEMETRY_CATALOG_TYPES = new Set([
+  'DELTASHARING_CATALOG',
+  'FOREIGN_CATALOG',
+  'INTERNAL_CATALOG',
+  'SYSTEM_CATALOG',
+]);
 
 function assertUcName(value: string, fieldName: string): string {
   const trimmed = value.trim();
@@ -113,7 +119,11 @@ function resolveExperimentPath(fastify: FastifyInstance, experimentName: string)
 function isWritableTelemetryCatalog(
   catalog: NonNullable<CatalogsResponse['catalogs']>[number]
 ): boolean {
-  return catalog.name?.trim() !== '' && catalog.catalog_type === 'MANAGED_CATALOG';
+  const catalogType = catalog.catalog_type?.trim().toUpperCase();
+  return (
+    catalog.name?.trim() !== '' &&
+    (!catalogType || !NON_WRITABLE_TELEMETRY_CATALOG_TYPES.has(catalogType))
+  );
 }
 
 async function getToken(fastify: FastifyInstance): Promise<string> {

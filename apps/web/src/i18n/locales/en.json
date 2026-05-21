@@ -318,6 +318,11 @@
     "createPullRequest": "Create PR",
     "createDraftPullRequest": "Create draft PR",
     "createPullRequestError": "Failed to create pull request",
+    "metadataDialog": {
+      "title": "Generate PR metadata",
+      "description": "The pull request title and description are generated with an LLM. Local git diff, commits, changed file names, and pull request templates are sent to the Databricks Serving Endpoint before the PR is created.",
+      "cancel": "Cancel"
+    },
     "status": {
       "open": "Open",
       "draft": "Draft",

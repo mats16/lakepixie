@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import i18n from 'i18next';
 import type { ComponentProps } from 'react';
@@ -50,6 +50,12 @@ beforeEach(async () => {
             createPullRequest: 'Create PR',
             createDraftPullRequest: 'Create draft PR',
             createPullRequestError: 'Failed to create pull request',
+            metadataDialog: {
+              title: 'Generate PR metadata',
+              description:
+                'The pull request title and description are generated with an LLM. Local git diff, commits, changed file names, and pull request templates are sent to the Databricks Serving Endpoint before the PR is created.',
+              cancel: 'Cancel',
+            },
             status: {
               open: 'Open',
               draft: 'Draft',
@@ -276,6 +282,52 @@ describe('GitRepositoryStatusBar', () => {
     expect((await screen.findAllByText('Closed')).length).toBeGreaterThan(0);
   });
 
+  it('requires confirmation before creating a pull request with generated metadata', async () => {
+    mockGitRepositoryService.getBranch.mockResolvedValue({
+      name: 'ccbricks/test',
+      html_url: 'https://github.com/acme/widgets/tree/ccbricks%2Ftest',
+      compare: null,
+    });
+    mockGitRepositoryService.listPullRequests.mockResolvedValue({ pulls: [] });
+    mockGitRepositoryService.createPullRequest.mockResolvedValue({
+      number: 6,
+      title: 'Update widgets',
+      state: 'open',
+      draft: false,
+      merged: false,
+      html_url: 'https://github.com/acme/widgets/pull/6',
+      head: { ref: 'ccbricks/test', label: 'acme:ccbricks/test' },
+      base: { ref: 'main', label: 'acme:main' },
+    });
+
+    renderStatusBar();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create PR' }));
+    let dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Generate PR metadata')).toBeTruthy();
+    expect(within(dialog).getByText(/Databricks Serving Endpoint/)).toBeTruthy();
+    expect(mockGitRepositoryService.createPullRequest).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(mockGitRepositoryService.createPullRequest).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create PR' }));
+    dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create PR' }));
+
+    await waitFor(() => {
+      expect(mockGitRepositoryService.createPullRequest).toHaveBeenCalledWith('acme/widgets', {
+        title: 'Update widgets',
+        head: 'acme:ccbricks/test',
+        base: 'main',
+        draft: false,
+        session_id: '019729a8-0000-7000-8000-000000000000',
+        language: 'en',
+      });
+    });
+  });
+
   it('creates a draft pull request from the split button menu', async () => {
     mockGitRepositoryService.getBranch.mockResolvedValue({
       name: 'ccbricks/test',
@@ -316,6 +368,10 @@ describe('GitRepositoryStatusBar', () => {
     expect(document.body.querySelector('.lucide-git-pull-request-arrow')).toBeTruthy();
     expect(document.body.querySelector('.lucide-git-pull-request-draft')).toBeTruthy();
     fireEvent.click(screen.getByText('Create draft PR'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Generate PR metadata')).toBeTruthy();
+    expect(mockGitRepositoryService.createPullRequest).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create draft PR' }));
 
     await waitFor(() => {
       expect(mockGitRepositoryService.createPullRequest).toHaveBeenCalledWith('acme/widgets', {

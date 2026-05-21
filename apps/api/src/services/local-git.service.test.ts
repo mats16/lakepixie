@@ -94,4 +94,28 @@ describe('local-git.service', () => {
       await fs.rm(cwd, { recursive: true, force: true });
     }
   });
+
+  it('throws when merge-base does not find a common ancestor', async () => {
+    mockSpawnAsync.mockImplementation(async (_command: string, args: string[]) => {
+      if (args[0] === 'merge-base') {
+        return { stdout: '\n', stderr: '' };
+      }
+      if (args[0] === 'rev-list') {
+        return { stdout: '0\t0\n', stderr: '' };
+      }
+      if (args[0] === 'ls-files') {
+        return { stdout: '', stderr: '' };
+      }
+      throw new Error('unexpected command');
+    });
+
+    await expect(getLocalGitDiffSummary('/tmp/repo', 'main', 'ccbricks/test')).rejects.toThrow(
+      'No common ancestor between main and ccbricks/test'
+    );
+    expect(mockSpawnAsync).not.toHaveBeenCalledWith(
+      'git',
+      ['diff', '--numstat', '--ignore-submodules=all', expect.any(String)],
+      expect.anything()
+    );
+  });
 });

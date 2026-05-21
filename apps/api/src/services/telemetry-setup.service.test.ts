@@ -61,7 +61,7 @@ describe('telemetry setup service', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(listTelemetryCatalogs(createFastify())).resolves.toEqual({
-      catalogs: ['main'],
+      catalogs: ['legacy_catalog_without_type', 'main', 'samples'],
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);

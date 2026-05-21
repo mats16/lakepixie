@@ -149,6 +149,8 @@ describe('session.service', () => {
       expect(() => __testing.validateGitBranchName('ccbricks/hobe-piyp-fuga')).not.toThrow();
       expect(() => __testing.validateGitBranchName('feature..test')).toThrow('forbidden pattern');
       expect(() => __testing.getGitBranchFromRevision('main')).toThrow('refs/heads');
+      expect(() => __testing.getGitBranchFromRevision('refs/tags/v1.0.0')).toThrow('refs/heads');
+      expect(() => __testing.getGitBranchFromRevision('abc1234')).toThrow('refs/heads');
     });
 
     it('should clone a git source and create the outcome branch', async () => {

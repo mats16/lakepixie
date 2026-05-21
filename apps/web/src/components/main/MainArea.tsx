@@ -1,18 +1,19 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { isNewSessionNavigationState } from '@/types/navigation';
-import type {
-  SessionCreateRequest,
-  SessionResponse,
-  UserMessageContentBlock,
-  WsAskUserQuestionRequest,
-  DatabricksWorkspaceSource,
-  GitRepositoryOutcome,
-  GitRepositorySource,
-  SessionOutcome,
-  SessionSource,
-  ResolvedDatabricksAppsOutcome,
+import {
+  parseGitBranchRevision,
+  type DatabricksWorkspaceSource,
+  type GitRepositoryOutcome,
+  type GitRepositorySource,
+  type ResolvedDatabricksAppsOutcome,
+  type SessionCreateRequest,
+  type SessionOutcome,
+  type SessionResponse,
+  type SessionSource,
+  type UserMessageContentBlock,
+  type WsAskUserQuestionRequest,
 } from '@repo/types';
 import { MainHeader } from './MainHeader';
 import { MessageArea } from './MessageArea';
@@ -46,13 +47,6 @@ function createFallbackBranchName(message?: string): string {
   return `ccbricks/${safeSlug}-${shortId}`;
 }
 
-function getBranchFromRevision(revision: string): string | null {
-  const prefix = 'refs/heads/';
-  if (!revision.startsWith(prefix)) return null;
-  const branch = revision.slice(prefix.length);
-  return branch || null;
-}
-
 function parseRepositoryFullName(fullName: string): { owner: string; repo: string } | null {
   const [owner, repo] = fullName.split('/');
   if (!owner || !repo) return null;
@@ -65,6 +59,8 @@ interface MainAreaProps {
   onSessionArchived?: (sessionId: string) => void;
   onSessionCreated?: (session: SessionResponse) => void;
 }
+
+const GIT_DIFF_REFRESH_DEBOUNCE_MS = 750;
 
 export function MainArea({
   branchName,
@@ -79,6 +75,7 @@ export function MainArea({
   const { githubAppId } = useUser();
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
   const [gitDiffRefreshKey, setGitDiffRefreshKey] = useState(0);
+  const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // navigate state から初期メッセージを取得
   const initialMessage = useMemo(() => {
@@ -110,8 +107,23 @@ export function MainArea({
     });
   }, []);
   const handleGitDiffRefreshNeeded = useCallback(() => {
-    setGitDiffRefreshKey(current => current + 1);
+    if (gitDiffRefreshTimerRef.current) {
+      clearTimeout(gitDiffRefreshTimerRef.current);
+    }
+    gitDiffRefreshTimerRef.current = setTimeout(() => {
+      gitDiffRefreshTimerRef.current = null;
+      setGitDiffRefreshKey(current => current + 1);
+    }, GIT_DIFF_REFRESH_DEBOUNCE_MS);
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (gitDiffRefreshTimerRef.current) {
+        clearTimeout(gitDiffRefreshTimerRef.current);
+        gitDiffRefreshTimerRef.current = null;
+      }
+    };
+  }, [sessionId]);
 
   const { events, isLoading, error, sessionStatus, sendMessage, answerQuestion, abort } =
     useSessionEvents({
@@ -196,7 +208,7 @@ export function MainArea({
       ? parseRepositoryFullName(gitRepositoryOutcome.git_info.repo)
       : null;
     const headBranch = gitRepositoryOutcome?.git_info.branches[0];
-    const baseBranch = gitSource ? getBranchFromRevision(gitSource.revision) : null;
+    const baseBranch = gitSource ? parseGitBranchRevision(gitSource.revision) : null;
     if (!repoInfo || !headBranch || !baseBranch) return null;
     return {
       ...repoInfo,

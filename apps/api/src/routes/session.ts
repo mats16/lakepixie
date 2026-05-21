@@ -31,7 +31,7 @@ import type {
   GitRepositoryOutcome,
   GitRepositorySource,
 } from '@repo/types';
-import { isAuthError } from '@repo/types';
+import { isAuthError, parseGitBranchRevision } from '@repo/types';
 import { resolveUserAnswer } from '../services/ask-user-question.service.js';
 import {
   createSession,
@@ -98,13 +98,6 @@ function parseSessionId(sessionIdStr: string, logger?: FastifyBaseLogger): Sessi
 function getLastEventIdHeader(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];
   return value;
-}
-
-function getBranchFromRevision(revision: string): string | null {
-  const prefix = 'refs/heads/';
-  if (!revision.startsWith(prefix)) return null;
-  const branch = revision.slice(prefix.length);
-  return branch || null;
 }
 
 function parseRepositoryFullName(fullName: string): { owner: string; repo: string } | null {
@@ -328,7 +321,7 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
       );
       const repo = gitOutcome ? parseRepositoryFullName(gitOutcome.git_info.repo) : null;
       const headBranch = gitOutcome?.git_info.branches[0];
-      const baseBranch = gitSource ? getBranchFromRevision(gitSource.revision) : null;
+      const baseBranch = gitSource ? parseGitBranchRevision(gitSource.revision) : null;
       if (!repo || !headBranch || !baseBranch) {
         return sendError(reply, 404, 'NotFound', 'Git repository context not found');
       }
