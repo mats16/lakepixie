@@ -6,6 +6,10 @@ import type {
   UpdateAppSettingsRequest,
   GitHubAppAuthResponse,
   UpdateGitHubAppAuthRequest,
+  TelemetryCatalogListResponse,
+  TelemetrySchemaListResponse,
+  TelemetrySetupRequest,
+  TelemetrySetupResponse,
   ApiError,
 } from '@repo/types';
 import { adminGuard } from '../hooks/admin-guard.js';
@@ -21,6 +25,46 @@ import {
   updateGitHubAppAuth,
 } from '../services/github-app-auth.service.js';
 import { DatabricksSecretsPermissionError } from '../services/databricks-secrets.service.js';
+import {
+  listTelemetryCatalogs,
+  listTelemetrySchemas,
+  setupTelemetry,
+  TelemetrySetupAuthorizationError,
+  TelemetrySetupDatabricksError,
+  TelemetrySetupValidationError,
+} from '../services/telemetry-setup.service.js';
+
+function toTelemetryApiError(error: unknown): ApiError {
+  if (error instanceof TelemetrySetupValidationError) {
+    return {
+      error: 'BadRequest',
+      message: error.message,
+      statusCode: 400,
+    };
+  }
+
+  if (error instanceof TelemetrySetupDatabricksError) {
+    return {
+      error: 'DatabricksApiError',
+      message: error.message,
+      statusCode: error.statusCode,
+    };
+  }
+
+  if (error instanceof TelemetrySetupAuthorizationError) {
+    return {
+      error: 'Unauthorized',
+      message: error.message,
+      statusCode: 401,
+    };
+  }
+
+  return {
+    error: 'InternalServerError',
+    message: error instanceof Error ? error.message : 'Unknown error',
+    statusCode: 500,
+  };
+}
 
 const adminRoute: FastifyPluginAsync = async fastify => {
   const guard = adminGuard(fastify);
@@ -162,6 +206,70 @@ const adminRoute: FastifyPluginAsync = async fastify => {
     await updateAppSettings(fastify, settings);
     const updated = await getAppSettings(fastify);
     return reply.send(updated);
+  });
+
+  fastify.get<{ Reply: TelemetryCatalogListResponse | ApiError }>(
+    '/admin/telemetry/catalogs',
+    { preHandler: guard },
+    async (_request, reply) => {
+      try {
+        const result = await listTelemetryCatalogs(fastify);
+        return reply.send(result);
+      } catch (error) {
+        const apiError = toTelemetryApiError(error);
+        return reply.status(apiError.statusCode).send(apiError);
+      }
+    }
+  );
+
+  fastify.get<{
+    Querystring: { catalog_name?: string };
+    Reply: TelemetrySchemaListResponse | ApiError;
+  }>('/admin/telemetry/schemas', { preHandler: guard }, async (request, reply) => {
+    const catalogName = request.query.catalog_name;
+    if (!catalogName) {
+      return reply.status(400).send({
+        error: 'BadRequest',
+        message: 'catalog_name is required',
+        statusCode: 400,
+      });
+    }
+
+    try {
+      const result = await listTelemetrySchemas(fastify, catalogName);
+      return reply.send(result);
+    } catch (error) {
+      const apiError = toTelemetryApiError(error);
+      return reply.status(apiError.statusCode).send(apiError);
+    }
+  });
+
+  fastify.post<{
+    Body: TelemetrySetupRequest;
+    Reply: TelemetrySetupResponse | ApiError;
+  }>('/admin/telemetry/setup', { preHandler: guard }, async (request, reply) => {
+    const body = request.body;
+    if (
+      !body ||
+      typeof body.catalog_name !== 'string' ||
+      typeof body.schema_name !== 'string' ||
+      typeof body.table_prefix !== 'string' ||
+      typeof body.experiment_name !== 'string'
+    ) {
+      return reply.status(400).send({
+        error: 'BadRequest',
+        message: 'catalog_name, schema_name, table_prefix, and experiment_name are required',
+        statusCode: 400,
+      });
+    }
+
+    try {
+      const result = await setupTelemetry(fastify, body, request.ctx?.user.oboAccessToken);
+      return reply.send(result);
+    } catch (error) {
+      const apiError = toTelemetryApiError(error);
+      return reply.status(apiError.statusCode).send(apiError);
+    }
   });
 
   // GitHub App 認証設定取得（private key は返さない）

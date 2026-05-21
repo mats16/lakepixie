@@ -23,6 +23,7 @@ import { useSession } from '@/hooks/useSession';
 import { AskUserQuestionProvider } from '@/contexts/AskUserQuestionContext';
 import { sessionService } from '@/services/session.service';
 import { extractTextFromContent } from '@/lib/content-builder';
+import { useUser } from '@/hooks/useUser';
 
 function createFallbackBranchName(appName?: string): string {
   const safeAppName = appName && /^[a-z0-9][a-z0-9-]{0,25}$/.test(appName) ? appName : 'session';
@@ -47,6 +48,7 @@ export function MainArea({
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
+  const { githubAppId } = useUser();
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
 
   // navigate state から初期メッセージを取得
@@ -176,6 +178,10 @@ export function MainArea({
     try {
       setCreateSessionError(null);
       const gitRepositoryForSession = sourceType === 'git_repository' ? gitRepository : null;
+      if (sourceType === 'git_repository' && !githubAppId) {
+        setCreateSessionError(t('welcome.sourceType.repositoryRequired'));
+        return;
+      }
       if (sourceType === 'git_repository' && !gitRepositoryForSession) {
         setCreateSessionError(t('welcome.sourceType.repositoryRequired'));
         return;

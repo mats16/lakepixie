@@ -7,6 +7,7 @@ import { getAppSettings, resolveModelSettings } from './admin.service.js';
 const baseSettings = {
   app_title: 'ccbricks',
   welcome_heading: 'Claude Code on Databricks',
+  databricks_app_name: 'ccbricks',
   default_new_user_role: 'admin',
   default_opus_model: DEFAULT_MODEL_SETTINGS.default_opus_model,
   default_sonnet_model: DEFAULT_MODEL_SETTINGS.default_sonnet_model,

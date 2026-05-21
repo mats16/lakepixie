@@ -9,6 +9,7 @@ export interface UserContextValue {
   claudeCodeVersion: string | null;
   appTitle: string;
   welcomeHeading: string;
+  githubAppId: string | null;
   isLoading: boolean;
   isAdmin: boolean;
   error: Error | null;
@@ -29,6 +30,7 @@ export function UserProvider({ children }: UserProviderProps) {
   const [claudeCodeVersion, setClaudeCodeVersion] = useState<string | null>(null);
   const [appTitle, setAppTitle] = useState('');
   const [welcomeHeading, setWelcomeHeading] = useState('');
+  const [githubAppId, setGithubAppId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -37,6 +39,7 @@ export function UserProvider({ children }: UserProviderProps) {
       const data = await appSettingsService.getPublicSettings();
       setAppTitle(data.app_title);
       setWelcomeHeading(data.welcome_heading);
+      setGithubAppId(data.github_app_id);
       document.title = data.app_title;
     } catch (err) {
       console.error('Failed to fetch app settings:', err);
@@ -81,6 +84,7 @@ export function UserProvider({ children }: UserProviderProps) {
         claudeCodeVersion,
         appTitle,
         welcomeHeading,
+        githubAppId,
         isLoading,
         isAdmin: user?.is_admin ?? false,
         error,

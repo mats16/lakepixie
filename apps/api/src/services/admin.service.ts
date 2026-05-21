@@ -103,6 +103,7 @@ export async function getAppSettings(fastify: FastifyInstance): Promise<AppSetti
   const settings = {
     app_title: map.get('app_title') ?? APP_TITLE_DEFAULT,
     welcome_heading: map.get('welcome_heading') ?? WELCOME_HEADING_DEFAULT,
+    databricks_app_name: fastify.config?.DATABRICKS_APP_NAME ?? '',
     default_new_user_role: roleValue === 'admin' || roleValue === 'member' ? roleValue : 'admin',
     default_opus_model: getModelSetting(map, 'default_opus_model'),
     default_sonnet_model: getModelSetting(map, 'default_sonnet_model'),
@@ -123,9 +124,11 @@ export async function getPublicAppSettings(
   fastify: FastifyInstance
 ): Promise<AppPublicSettingsResponse> {
   const settings = await getAppSettings(fastify);
+  const githubAppId = await getGitHubAppIdSetting(fastify);
   return {
     app_title: settings.app_title,
     welcome_heading: settings.welcome_heading,
+    github_app_id: githubAppId,
   };
 }
 

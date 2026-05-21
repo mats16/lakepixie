@@ -3,6 +3,10 @@ import type {
   AppSettingsResponse,
   GitHubAppAuthResponse,
   ServingEndpointsByTier,
+  TelemetryCatalogListResponse,
+  TelemetrySchemaListResponse,
+  TelemetrySetupRequest,
+  TelemetrySetupResponse,
   UpdateAppSettingsRequest,
   UpdateGitHubAppAuthRequest,
 } from '@repo/types';
@@ -22,6 +26,20 @@ export const adminService = {
   updateSettings: (settings: UpdateAppSettingsRequest) =>
     apiClient<AppSettingsResponse>('/api/admin/settings', {
       method: 'PATCH',
+      body: JSON.stringify(settings),
+    }),
+
+  getTelemetryCatalogs: () =>
+    apiClient<TelemetryCatalogListResponse>('/api/admin/telemetry/catalogs'),
+
+  getTelemetrySchemas: (catalogName: string) => {
+    const query = new URLSearchParams({ catalog_name: catalogName });
+    return apiClient<TelemetrySchemaListResponse>(`/api/admin/telemetry/schemas?${query}`);
+  },
+
+  setupTelemetry: (settings: TelemetrySetupRequest) =>
+    apiClient<TelemetrySetupResponse>('/api/admin/telemetry/setup', {
+      method: 'POST',
       body: JSON.stringify(settings),
     }),
 

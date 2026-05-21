@@ -3,8 +3,12 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
+  Check,
+  ChevronsUpDown,
+  Database,
   ExternalLink,
   HelpCircle,
+  Info,
   Loader2,
   Save,
   ShieldCheck,
@@ -36,9 +40,13 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const GITHUB_APPS_SETTINGS_URL = 'https://github.com/settings/apps';
@@ -90,7 +98,7 @@ function useAdminSettings() {
     [t]
   );
 
-  return { settings, isLoadingSettings, savingKey, saveSetting };
+  return { settings, isLoadingSettings, savingKey, saveSetting, refreshSettings: fetchSettings };
 }
 
 function useGitHubAppAuth() {
@@ -206,15 +214,352 @@ function GitHubAppGuideDialog({ open, onOpenChange }: GitHubAppGuideDialogProps)
   );
 }
 
+const DEFAULT_TELEMETRY_TABLE_PREFIX = 'ccbricks';
+
+interface SearchableSelectProps {
+  disabled?: boolean;
+  emptyText: string;
+  options: string[];
+  placeholder: string;
+  searchPlaceholder: string;
+  triggerRef?: React.Ref<HTMLButtonElement>;
+  value: string;
+  onValueChange: (value: string) => void;
+}
+
+function SearchableSelect({
+  disabled = false,
+  emptyText,
+  options,
+  placeholder,
+  searchPlaceholder,
+  triggerRef,
+  value,
+  onValueChange,
+}: SearchableSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const filteredOptions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return options;
+
+    return options.filter(option => option.toLowerCase().includes(normalizedQuery));
+  }, [options, query]);
+
+  useEffect(() => {
+    if (!open) setQuery('');
+  }, [open]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          ref={triggerRef}
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="h-10 w-full justify-between px-3 font-normal"
+          disabled={disabled}
+        >
+          <span className={cn('truncate', !value && 'text-muted-foreground')}>
+            {value || placeholder}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="z-[60] w-[--radix-popover-trigger-width] overflow-hidden p-0"
+        align="start"
+      >
+        <div className="border-b p-2">
+          <Input
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder={searchPlaceholder}
+            className="h-9"
+          />
+        </div>
+        <div
+          className="max-h-80 overflow-y-auto overscroll-contain p-1"
+          onWheelCapture={event => event.stopPropagation()}
+        >
+          {filteredOptions.length === 0 ? (
+            <p className="px-2 py-6 text-center text-sm text-muted-foreground">{emptyText}</p>
+          ) : (
+            filteredOptions.map(option => (
+              <button
+                key={option}
+                type="button"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                onClick={() => {
+                  onValueChange(option);
+                  setOpen(false);
+                }}
+              >
+                <Check
+                  className={cn('h-4 w-4', option === value ? 'opacity-100' : 'opacity-0')}
+                />
+                <span className="truncate">{option}</span>
+              </button>
+            ))
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+interface FieldHelpLabelProps {
+  label: string;
+  help: string;
+}
+
+function FieldHelpLabel({ label, help }: FieldHelpLabelProps) {
+  return (
+    <div className="flex items-center gap-2">
+      <p className="text-sm font-medium">{label}</p>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              aria-label={help}
+            >
+              <Info className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">
+            <p>{help}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </div>
+  );
+}
+
+interface TelemetrySetupDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  appName: string;
+  onSetupComplete: () => Promise<void>;
+}
+
+function TelemetrySetupDialog({
+  open,
+  onOpenChange,
+  appName,
+  onSetupComplete,
+}: TelemetrySetupDialogProps) {
+  const { t } = useTranslation();
+  const [catalogs, setCatalogs] = useState<string[]>([]);
+  const [schemas, setSchemas] = useState<string[]>([]);
+  const [selectedCatalog, setSelectedCatalog] = useState('');
+  const [selectedSchema, setSelectedSchema] = useState('');
+  const [tablePrefixInput, setTablePrefixInput] = useState(DEFAULT_TELEMETRY_TABLE_PREFIX);
+  const [experimentNameInput, setExperimentNameInput] = useState('ccbricks-otel');
+  const [isLoadingCatalogs, setIsLoadingCatalogs] = useState(false);
+  const [isLoadingSchemas, setIsLoadingSchemas] = useState(false);
+  const [isSettingUp, setIsSettingUp] = useState(false);
+  const catalogTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const catalogName = selectedCatalog.trim();
+  const schemaName = selectedSchema.trim();
+  const tablePrefix = tablePrefixInput.trim();
+  const experimentName = experimentNameInput.trim();
+  const experimentPath = appName
+    ? `/Shared/${appName}/experiments/${experimentName || t('admin.telemetryExperimentNamePreview')}`
+    : t('admin.telemetryAppNameUnavailable');
+  const canSubmit =
+    catalogName.length > 0 &&
+    schemaName.length > 0 &&
+    tablePrefix.length > 0 &&
+    experimentName.length > 0 &&
+    !isSettingUp;
+
+  const loadCatalogs = useCallback(async () => {
+    setIsLoadingCatalogs(true);
+    try {
+      const response = await adminService.getTelemetryCatalogs();
+      setCatalogs(response.catalogs);
+    } catch {
+      toast.error(t('admin.telemetryCatalogsFetchError'));
+    } finally {
+      setIsLoadingCatalogs(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    setSelectedCatalog('');
+    setSelectedSchema('');
+    setSchemas([]);
+    setTablePrefixInput(DEFAULT_TELEMETRY_TABLE_PREFIX);
+    setExperimentNameInput('ccbricks-otel');
+  }, [open]);
+
+  const loadSchemas = useCallback(
+    async (catalog: string) => {
+      setIsLoadingSchemas(true);
+      try {
+        const response = await adminService.getTelemetrySchemas(catalog);
+        setSchemas(response.schemas);
+      } catch {
+        toast.error(t('admin.telemetrySchemasFetchError'));
+      } finally {
+        setIsLoadingSchemas(false);
+      }
+    },
+    [t]
+  );
+
+  useEffect(() => {
+    if (open) {
+      void loadCatalogs();
+    }
+  }, [loadCatalogs, open]);
+
+  useEffect(() => {
+    if (open && selectedCatalog) {
+      void loadSchemas(selectedCatalog);
+    }
+  }, [loadSchemas, open, selectedCatalog]);
+
+  const handleCatalogChange = (value: string) => {
+    setSelectedCatalog(value);
+    setSelectedSchema('');
+  };
+
+  const handleSchemaChange = (value: string) => {
+    setSelectedSchema(value);
+  };
+
+  const handleSetup = async () => {
+    if (!canSubmit) return;
+    setIsSettingUp(true);
+    try {
+      await adminService.setupTelemetry({
+        catalog_name: catalogName,
+        schema_name: schemaName,
+        table_prefix: tablePrefix,
+        experiment_name: experimentName,
+      });
+      toast.success(t('admin.telemetrySetupSuccess'));
+      await onSetupComplete();
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('admin.telemetrySetupError'));
+    } finally {
+      setIsSettingUp(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={nextOpen => {
+        if (!isSettingUp) onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent
+        className="max-w-2xl"
+        onOpenAutoFocus={event => {
+          event.preventDefault();
+          catalogTriggerRef.current?.focus();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>{t('admin.telemetrySetupTitle')}</DialogTitle>
+          <DialogDescription>{t('admin.telemetrySetupDescription')}</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-2">
+              <p className="text-sm font-medium">{t('admin.telemetryCatalog')}</p>
+              <SearchableSelect
+                value={selectedCatalog}
+                onValueChange={handleCatalogChange}
+                disabled={isLoadingCatalogs || isSettingUp}
+                triggerRef={catalogTriggerRef}
+                options={catalogs}
+                placeholder={t('admin.telemetryCatalogPlaceholder')}
+                searchPlaceholder={t('admin.telemetryCatalogSearchPlaceholder')}
+                emptyText={t('admin.telemetryCatalogEmpty')}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <p className="text-sm font-medium">{t('admin.telemetrySchema')}</p>
+              <SearchableSelect
+                value={selectedSchema}
+                onValueChange={handleSchemaChange}
+                disabled={!selectedCatalog || isLoadingSchemas || isSettingUp}
+                options={schemas}
+                placeholder={t('admin.telemetrySchemaPlaceholder')}
+                searchPlaceholder={t('admin.telemetrySchemaSearchPlaceholder')}
+                emptyText={t('admin.telemetrySchemaEmpty')}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <FieldHelpLabel
+              label={t('admin.telemetryTablePrefix')}
+              help={t('admin.telemetryTablePrefixHelp')}
+            />
+            <Input
+              value={tablePrefixInput}
+              onChange={event => setTablePrefixInput(event.target.value)}
+              placeholder={DEFAULT_TELEMETRY_TABLE_PREFIX}
+              disabled={isSettingUp}
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <FieldHelpLabel
+              label={t('admin.telemetryExperimentName')}
+              help={t('admin.telemetryExperimentNameHelp')}
+            />
+            <Input
+              value={experimentNameInput}
+              onChange={event => setExperimentNameInput(event.target.value)}
+              placeholder={t('admin.telemetryExperimentNamePlaceholder')}
+              disabled={isSettingUp}
+            />
+            <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+              {experimentPath}
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSettingUp}>
+            {t('common.cancel')}
+          </Button>
+          <Button onClick={handleSetup} disabled={!canSubmit}>
+            {isSettingUp && <Loader2 className="h-4 w-4 animate-spin" />}
+            {t('admin.telemetrySetupRun')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function AdminSettingsContent() {
   const { t } = useTranslation();
-  const { settings, isLoadingSettings, savingKey, saveSetting } = useAdminSettings();
+  const { settings, isLoadingSettings, savingKey, saveSetting, refreshSettings } =
+    useAdminSettings();
 
   const [servingEndpoints, setServingEndpoints] = useState<ServingEndpointsByTier | null>(null);
   const [isLoadingEndpoints, setIsLoadingEndpoints] = useState(true);
   const [otelMetricsTableInput, setOtelMetricsTableInput] = useState('');
   const [otelLogsTableInput, setOtelLogsTableInput] = useState('');
   const [otelTracesTableInput, setOtelTracesTableInput] = useState('');
+  const [isTelemetrySetupOpen, setIsTelemetrySetupOpen] = useState(false);
 
   const fetchServingEndpoints = useCallback(async () => {
     try {
@@ -351,7 +696,15 @@ function AdminSettingsContent() {
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold mb-4">{t('admin.telemetryConfiguration')}</h2>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">{t('admin.telemetryConfiguration')}</h2>
+          {!isLoadingSettings && (
+            <Button variant="outline" size="sm" onClick={() => setIsTelemetrySetupOpen(true)}>
+              <Database className="h-4 w-4" />
+              {t('admin.telemetrySetupButton')}
+            </Button>
+          )}
+        </div>
         {isLoadingSettings ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -415,6 +768,12 @@ function AdminSettingsContent() {
             </div>
           </div>
         )}
+        <TelemetrySetupDialog
+          open={isTelemetrySetupOpen}
+          onOpenChange={setIsTelemetrySetupOpen}
+          appName={settings?.databricks_app_name ?? ''}
+          onSetupComplete={refreshSettings}
+        />
       </section>
     </div>
   );
