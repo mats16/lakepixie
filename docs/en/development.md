@@ -6,8 +6,8 @@ This guide explains how to set up and run ccbricks locally for development.
 
 - **Node.js**: 22.x (LTS)
 - **npm**: 10.0.0 or higher
-- **PostgreSQL**: 14 or higher (local or remote)
 - **Git**: For version control
+- **PostgreSQL**: 14 or higher — only required when using Lakebase (optional; SQLite is used by default)
 
 ## Architecture Overview
 
@@ -130,6 +130,23 @@ ANTHROPIC_BASE_URL=https://your-workspace.cloud.databricks.com/ai-gateway/anthro
 
 # ccbricks base directory
 CCBRICKS_BASE_DIR=/path/to/base/directory
+
+# Databricks Apps metadata (automatically set in Databricks Apps environment)
+DATABRICKS_APP_NAME=
+DATABRICKS_WORKSPACE_ID=
+DATABRICKS_APP_PORT=8000
+
+# Service principal credentials (required when Claude Code telemetry tables are configured)
+DATABRICKS_CLIENT_ID=
+DATABRICKS_CLIENT_SECRET=
+
+# Lakebase / PostgreSQL connection (automatically injected in Databricks Apps)
+PGAPPNAME=
+PGDATABASE=
+PGHOST=
+PGPORT=
+PGSSLMODE=
+PGUSER=
 ```
 
 ### 3.4 Generate Encryption Key
@@ -230,17 +247,27 @@ ccbricks/
 │   ├── web/               # React 19 + Vite 7 + shadcn/ui
 │   │   ├── src/
 │   │   │   ├── components/  # React components
+│   │   │   ├── constants/   # Frontend constants
 │   │   │   ├── contexts/    # React contexts
 │   │   │   ├── hooks/       # Custom hooks
 │   │   │   ├── i18n/        # Internationalization
-│   │   │   └── services/    # API clients
+│   │   │   ├── lib/         # Utility library
+│   │   │   ├── pages/       # Page-level components
+│   │   │   ├── services/    # API clients
+│   │   │   ├── test/        # Test helpers
+│   │   │   └── types/       # Frontend type definitions
 │   │   └── CLAUDE.md        # Frontend guidelines
 │   └── api/               # Fastify 5 + Drizzle ORM
 │       ├── src/
-│       │   ├── db/          # Database schema
+│       │   ├── cli/         # CLI entry points
+│       │   ├── db/          # Database schema and migrations
+│       │   ├── hooks/       # Fastify lifecycle hooks
+│       │   ├── lib/         # Shared library utilities
+│       │   ├── models/      # Data models
 │       │   ├── plugins/     # Fastify plugins
 │       │   ├── routes/      # API routes
 │       │   ├── services/    # Business logic
+│       │   ├── types/       # Backend type definitions
 │       │   └── utils/       # Utilities
 │       └── CLAUDE.md        # Backend guidelines
 └── packages/

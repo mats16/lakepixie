@@ -6,8 +6,8 @@
 
 - **Node.js**: 22.x（LTS）
 - **npm**: 10.0.0 以上
-- **PostgreSQL**: 14 以上（ローカルまたはリモート）
 - **Git**: バージョン管理用
+- **PostgreSQL**: 14 以上 — Lakebase を使用する場合のみ必要（デフォルトは SQLite のため任意）
 
 ## アーキテクチャ概要
 
@@ -131,6 +131,23 @@ ANTHROPIC_BASE_URL=https://your-workspace.cloud.databricks.com/ai-gateway/anthro
 
 # ccbricks ベースディレクトリ
 CCBRICKS_BASE_DIR=/path/to/base/directory
+
+# Databricks Apps メタデータ（Databricks Apps 環境では自動設定）
+DATABRICKS_APP_NAME=
+DATABRICKS_WORKSPACE_ID=
+DATABRICKS_APP_PORT=8000
+
+# サービスプリンシパル認証情報（Claude Code テレメトリテーブルを使用する場合に必要）
+DATABRICKS_CLIENT_ID=
+DATABRICKS_CLIENT_SECRET=
+
+# Lakebase / PostgreSQL 接続情報（Databricks Apps では自動注入）
+PGAPPNAME=
+PGDATABASE=
+PGHOST=
+PGPORT=
+PGSSLMODE=
+PGUSER=
 ```
 
 ### 3.4 暗号化キーの生成
@@ -231,17 +248,27 @@ ccbricks/
 │   ├── web/               # React 19 + Vite 7 + shadcn/ui
 │   │   ├── src/
 │   │   │   ├── components/  # React コンポーネント
+│   │   │   ├── constants/   # フロントエンド定数
 │   │   │   ├── contexts/    # React コンテキスト
 │   │   │   ├── hooks/       # カスタムフック
 │   │   │   ├── i18n/        # 国際化
-│   │   │   └── services/    # API クライアント
+│   │   │   ├── lib/         # ユーティリティライブラリ
+│   │   │   ├── pages/       # ページレベルコンポーネント
+│   │   │   ├── services/    # API クライアント
+│   │   │   ├── test/        # テストヘルパー
+│   │   │   └── types/       # フロントエンド型定義
 │   │   └── CLAUDE.md        # フロントエンドガイドライン
 │   └── api/               # Fastify 5 + Drizzle ORM
 │       ├── src/
-│       │   ├── db/          # データベーススキーマ
+│       │   ├── cli/         # CLI エントリーポイント
+│       │   ├── db/          # データベーススキーマとマイグレーション
+│       │   ├── hooks/       # Fastify ライフサイクルフック
+│       │   ├── lib/         # 共有ライブラリユーティリティ
+│       │   ├── models/      # データモデル
 │       │   ├── plugins/     # Fastify プラグイン
 │       │   ├── routes/      # API ルート
 │       │   ├── services/    # ビジネスロジック
+│       │   ├── types/       # バックエンド型定義
 │       │   └── utils/       # ユーティリティ
 │       └── CLAUDE.md        # バックエンドガイドライン
 └── packages/
