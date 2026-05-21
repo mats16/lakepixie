@@ -9,6 +9,7 @@ import {
   Save,
   ShieldCheck,
   ShieldOff,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import type {
@@ -19,10 +20,10 @@ import type {
 } from '@repo/types';
 import { useUser } from '@/hooks/useUser';
 import { adminService } from '@/services';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ClearableInput } from '@/components/ui/clearable-input';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -425,10 +426,6 @@ function AdminGitContent() {
     useGitHubAppAuth();
 
   const [githubAppIdInput, setGitHubAppIdInput] = useState('');
-  const [githubAppPrivateKeyInput, setGitHubAppPrivateKeyInput] = useState('');
-  const [githubAppPrivateKeyFileName, setGitHubAppPrivateKeyFileName] = useState<string | null>(
-    null
-  );
   const [isGitHubAppGuideOpen, setIsGitHubAppGuideOpen] = useState(false);
   const githubAppPrivateKeyFileInputRef = useRef<HTMLInputElement>(null);
   const lastSyncedGitHubAppIdRef = useRef('');
@@ -441,35 +438,29 @@ function AdminGitContent() {
         current === previousPersistedAppId ? persistedAppId : current
       );
       lastSyncedGitHubAppIdRef.current = persistedAppId;
-      setGitHubAppPrivateKeyInput('');
     }
   }, [githubAppAuth]);
 
-  const githubAppAuthDirty =
-    githubAppIdInput.trim() !== (githubAppAuth?.github_app_id ?? '') ||
-    githubAppPrivateKeyInput.trim().length > 0;
+  const trimmedGitHubAppId = githubAppIdInput.trim();
+  const githubAppIdDirty = trimmedGitHubAppId !== (githubAppAuth?.github_app_id ?? '');
+  const isGitHubAppPrivateKeyConfigured = githubAppAuth?.private_key_configured ?? false;
+  const githubAppPrivateKeyHelpText = isGitHubAppPrivateKeyConfigured
+    ? t('admin.githubAppPrivateKeyConfiguredDescription')
+    : t('admin.githubAppPrivateKeyNotConfigured');
 
-  const handleGitHubAppAuthSave = async () => {
-    const patch: Parameters<typeof adminService.updateGitHubAppAuth>[0] = {};
-    if (githubAppIdInput.trim() !== (githubAppAuth?.github_app_id ?? '')) {
-      patch.github_app_id = githubAppIdInput.trim() || null;
-    }
-    if (githubAppPrivateKeyInput.trim()) {
-      patch.github_app_private_key = githubAppPrivateKeyInput.trim();
-    }
+  const openGitHubAppPrivateKeyFilePicker = () => {
+    githubAppPrivateKeyFileInputRef.current?.click();
+  };
 
-    const saved = await saveGitHubAppAuth(patch);
-    if (saved) {
-      setGitHubAppPrivateKeyInput('');
-      setGitHubAppPrivateKeyFileName(null);
-    }
+  const handleGitHubAppIdSave = async () => {
+    if (!githubAppIdDirty) return;
+    await saveGitHubAppAuth({ github_app_id: trimmedGitHubAppId || null });
   };
 
   const handleGitHubAppPrivateKeyFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
     const file = input.files?.[0];
     if (!file) return;
-    setGitHubAppPrivateKeyFileName(null);
 
     try {
       const text = await file.text();
@@ -478,16 +469,18 @@ function AdminGitContent() {
         return;
       }
 
-      const saved = await saveGitHubAppAuth({ github_app_private_key: text });
-      if (saved) {
-        setGitHubAppPrivateKeyInput('');
-        setGitHubAppPrivateKeyFileName(file.name);
-      }
+      await saveGitHubAppAuth({ github_app_private_key: text });
     } catch {
       toast.error(t('admin.githubAppPrivateKeyFileError'));
     } finally {
       input.value = '';
     }
+  };
+
+  const handleGitHubAppPrivateKeyDelete = async () => {
+    if (!window.confirm(t('admin.githubAppPrivateKeyDeleteConfirm'))) return;
+
+    await saveGitHubAppAuth({ github_app_private_key: null });
   };
 
   return (
@@ -514,17 +507,43 @@ function AdminGitContent() {
               <p className="text-sm font-medium">{t('admin.githubAppId')}</p>
               <p className="text-xs text-muted-foreground">{t('admin.githubAppIdDescription')}</p>
             </div>
-            <Input
-              className="w-[320px]"
-              placeholder={t('admin.githubAppIdPlaceholder')}
-              value={githubAppIdInput}
-              onChange={e => setGitHubAppIdInput(e.target.value)}
-              disabled={isSavingGitHubAppAuth}
-            />
+            <div className="flex w-[320px] items-center gap-2">
+              <Input
+                className="min-w-0 flex-1"
+                placeholder={t('admin.githubAppIdPlaceholder')}
+                value={githubAppIdInput}
+                onChange={e => setGitHubAppIdInput(e.target.value)}
+                disabled={isSavingGitHubAppAuth}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleGitHubAppIdSave}
+                disabled={isSavingGitHubAppAuth || !githubAppIdDirty}
+              >
+                {isSavingGitHubAppAuth ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <Save className="h-4 w-4 mr-2" />
+                )}
+                {t('common.save')}
+              </Button>
+            </div>
           </div>
           <div className="flex items-start justify-between gap-4">
             <div className="shrink-0">
-              <p className="text-sm font-medium">{t('admin.githubAppPrivateKey')}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium">{t('admin.githubAppPrivateKey')}</p>
+                {isGitHubAppPrivateKeyConfigured && (
+                  <Badge
+                    variant="secondary"
+                    className="gap-1 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+                  >
+                    <ShieldCheck className="h-3 w-3" />
+                    {t('admin.githubAppPrivateKeyConfigured')}
+                  </Badge>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">
                 {t('admin.githubAppPrivateKeyDescription')}
               </p>
@@ -538,54 +557,47 @@ function AdminGitContent() {
                 onChange={handleGitHubAppPrivateKeyFileChange}
                 disabled={isSavingGitHubAppAuth}
               />
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full justify-start"
-                onClick={() => githubAppPrivateKeyFileInputRef.current?.click()}
-                disabled={isSavingGitHubAppAuth}
-              >
-                <Upload className="h-4 w-4" />
-                {t('admin.githubAppPrivateKeySelectFile')}
-              </Button>
-              <p className="text-xs text-muted-foreground">
-                {githubAppAuth?.private_key_configured
-                  ? t('admin.githubAppPrivateKeyConfigured')
-                  : t('admin.githubAppPrivateKeyNotConfigured')}
-              </p>
-              {githubAppPrivateKeyFileName && (
-                <p className="truncate text-xs text-muted-foreground">
-                  {t('admin.githubAppPrivateKeySelectedFile', {
-                    fileName: githubAppPrivateKeyFileName,
-                  })}
-                </p>
-              )}
-              <Textarea
-                className="min-h-[140px] font-mono text-xs"
-                placeholder={t('admin.githubAppPrivateKeyPlaceholder')}
-                value={githubAppPrivateKeyInput}
-                onChange={e => {
-                  setGitHubAppPrivateKeyInput(e.target.value);
-                  setGitHubAppPrivateKeyFileName(null);
-                }}
-                disabled={isSavingGitHubAppAuth}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleGitHubAppAuthSave}
-              disabled={isSavingGitHubAppAuth || !githubAppAuthDirty}
-            >
-              {isSavingGitHubAppAuth ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              {isGitHubAppPrivateKeyConfigured ? (
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1 justify-center"
+                    onClick={openGitHubAppPrivateKeyFilePicker}
+                    disabled={isSavingGitHubAppAuth}
+                  >
+                    <Upload className="h-4 w-4" />
+                    {t('admin.githubAppPrivateKeyChangeFile')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1 justify-center text-destructive hover:text-destructive"
+                    onClick={handleGitHubAppPrivateKeyDelete}
+                    disabled={isSavingGitHubAppAuth}
+                  >
+                    {isSavingGitHubAppAuth ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                    {t('admin.githubAppPrivateKeyDelete')}
+                  </Button>
+                </div>
               ) : (
-                <Save className="h-4 w-4 mr-2" />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={openGitHubAppPrivateKeyFilePicker}
+                  disabled={isSavingGitHubAppAuth}
+                >
+                  <Upload className="h-4 w-4" />
+                  {t('admin.githubAppPrivateKeySelectFile')}
+                </Button>
               )}
-              {t('common.save')}
-            </Button>
+              <p className="text-xs text-muted-foreground">{githubAppPrivateKeyHelpText}</p>
+            </div>
           </div>
         </div>
       )}
