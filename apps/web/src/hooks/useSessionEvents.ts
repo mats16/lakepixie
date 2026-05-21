@@ -6,7 +6,12 @@ import type {
   UserMessageContentBlock,
   SessionStatus,
 } from '@repo/types';
-import { isSDKResultMessageEvent, isSDKSystemMessageEvent } from '@repo/types';
+import {
+  isSDKResultMessageEvent,
+  isSDKSystemMessageEvent,
+  isSDKUserMessageEvent,
+  isToolResultContentBlock,
+} from '@repo/types';
 import { sessionService } from '@/services/session.service';
 import { useSessionStream } from './useSessionStream';
 
@@ -18,6 +23,8 @@ interface UseSessionEventsOptions {
   initialMessage?: SDKUserMessage;
   /** AskUserQuestion リクエスト受信時のコールバック */
   onAskUserQuestion?: (request: WsAskUserQuestionRequest) => void;
+  /** Agent の tool_result / result 受信時に git diff を再取得するためのコールバック */
+  onGitDiffRefreshNeeded?: () => void;
 }
 
 interface UseSessionEventsReturn {
@@ -35,11 +42,21 @@ interface UseSessionEventsReturn {
   abort: () => Promise<boolean>;
 }
 
+export function shouldRefreshGitDiffForEvent(event: SDKMessage): boolean {
+  if (isSDKResultMessageEvent(event)) return true;
+  if (!isSDKUserMessageEvent(event)) return false;
+  return (
+    Array.isArray(event.message.content) &&
+    event.message.content.some(block => isToolResultContentBlock(block))
+  );
+}
+
 export function useSessionEvents({
   sessionId,
   initialSessionStatus,
   initialMessage,
   onAskUserQuestion,
+  onGitDiffRefreshNeeded,
 }: UseSessionEventsOptions): UseSessionEventsReturn {
   const [events, setEvents] = useState<SDKMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -115,25 +132,32 @@ export function useSessionEvents({
   );
 
   // stream イベントハンドラ
-  const handleEvent = useCallback((event: SDKMessage) => {
-    // 重複チェック（uuid ベース、uuid がない場合はスキップ）
-    if ('uuid' in event && event.uuid) {
-      const uuid = event.uuid as string;
-      if (seenUuidsRef.current.has(uuid)) return;
-      seenUuidsRef.current.add(uuid);
-    }
+  const handleEvent = useCallback(
+    (event: SDKMessage) => {
+      // 重複チェック（uuid ベース、uuid がない場合はスキップ）
+      if ('uuid' in event && event.uuid) {
+        const uuid = event.uuid as string;
+        if (seenUuidsRef.current.has(uuid)) return;
+        seenUuidsRef.current.add(uuid);
+      }
 
-    setEvents(prev => [...prev, event]);
+      if (shouldRefreshGitDiffForEvent(event)) {
+        onGitDiffRefreshNeeded?.();
+      }
 
-    // result イベント受信時に sessionStatus を idle に更新
-    if (isSDKResultMessageEvent(event)) {
-      setSessionStatus('idle');
-    }
-    // init イベント受信時に sessionStatus を running に更新
-    if (isSDKSystemMessageEvent(event) && event.subtype === 'init') {
-      setSessionStatus('running');
-    }
-  }, []);
+      setEvents(prev => [...prev, event]);
+
+      // result イベント受信時に sessionStatus を idle に更新
+      if (isSDKResultMessageEvent(event)) {
+        setSessionStatus('idle');
+      }
+      // init イベント受信時に sessionStatus を running に更新
+      if (isSDKSystemMessageEvent(event) && event.subtype === 'init') {
+        setSessionStatus('running');
+      }
+    },
+    [onGitDiffRefreshNeeded]
+  );
 
   // SSE 接続（shouldAutoConnect に基づいて自動接続を制御）
   const {

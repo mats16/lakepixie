@@ -309,6 +309,24 @@
     "enableApps": "Databricks Apps にデプロイ",
     "workspaceOpenError": "ワークスペースを開けませんでした"
   },
+  "gitStatus": {
+    "openRepository": "GitHubでリポジトリを開く",
+    "copyBranch": "ブランチ名をコピー",
+    "branchCopied": "ブランチ名をコピーしました",
+    "branchCopyError": "ブランチ名をコピーできませんでした",
+    "openPullRequest": "PRを開く",
+    "createPullRequest": "PRを作成",
+    "createDraftPullRequest": "下書きPRを作成",
+    "createPullRequestManually": "PRを手動で作成",
+    "createPullRequestError": "PRの作成に失敗しました",
+    "status": {
+      "open": "Open",
+      "draft": "Draft",
+      "closed": "Closed",
+      "merged": "マージ済み",
+      "none": "PRなし"
+    }
+  },
   "mcp": {
     "title": "MCP サーバー管理",
     "description": "AI セッションで利用する MCP サーバーを管理",
@@ -442,7 +460,7 @@
     "telemetryCatalogsFetchError": "Catalog の取得に失敗しました",
     "telemetrySchemasFetchError": "Schema の取得に失敗しました",
     "githubAppAuthConfiguration": "GitHub 認証",
-    "githubAppAuthDescription": "GitHub App にインストールしたリポジトリを ccbricks ユーザーが参照し、clone、pull、push できるように接続情報を設定します。",
+    "githubAppAuthDescription": "GitHub App にインストールしたリポジトリを ccbricks ユーザーが参照し、clone、pull、push、PR 作成できるように接続情報を設定します。",
     "githubAppId": "App ID",
     "githubAppIdDescription": "GitHub App の General 画面に表示される App ID を入力します。",
     "githubAppIdPlaceholder": "123456",
@@ -460,12 +478,12 @@
     "githubAppPrivateKeyFileError": "秘密鍵ファイルの読み込みに失敗しました",
     "githubAppGuideButton": "設定ガイド",
     "githubAppGuideTitle": "GitHub App 設定ガイド",
-    "githubAppGuideDescription": "ccbricks で private repository を clone、pull、push するための GitHub App を作成します。",
+    "githubAppGuideDescription": "ccbricks で private repository を clone、pull、push、PR 作成するための GitHub App を作成します。",
     "githubAppGuideOpenSettings": "GitHub Apps 設定を開く",
     "githubAppGuideStepsTitle": "操作手順",
     "githubAppGuideStepCreate": "GitHub Apps 設定で New GitHub App を選択し、アプリ名を入力します。",
     "githubAppGuideStepUrls": "Homepage URL はこの ccbricks アプリの URL など任意の管理用 URL を設定します。Callback URL は使いません。Webhook も不要です。",
-    "githubAppGuideStepPermissions": "Repository permissions で Contents を Read and write にします。Metadata は GitHub の既定の Read-only のままで構いません。",
+    "githubAppGuideStepPermissions": "Repository permissions で Contents と Pull requests を Read and write にします。Metadata は GitHub の既定の Read-only のままで構いません。",
     "githubAppGuideStepInstall": "GitHub App を作成した後、対象のアカウントまたは organization にインストールし、利用するリポジトリを選択します。",
     "githubAppGuideStepPrivateKey": "GitHub App の General 画面で Generate a private key を実行し、ダウンロードされた .pem ファイルを保存します。",
     "githubAppGuideStepSave": "この画面に戻り、App ID を入力して保存します。ダウンロードした private key ファイルは選択すると保存されます。",
@@ -476,6 +494,8 @@
     "githubAppGuideWebhookValue": "不要です。Active を off にできます。",
     "githubAppGuideContentsPermission": "Contents",
     "githubAppGuideContentsPermissionValue": "clone / pull / push のため Read and write を設定します。",
+    "githubAppGuidePullRequestsPermission": "Pull requests",
+    "githubAppGuidePullRequestsPermissionValue": "PR の検索・表示・作成のため Read and write を設定します。",
     "fetchGitHubAppAuthError": "GitHub App 認証設定の読み込みに失敗しました",
     "updateGitHubAppAuthError": "GitHub App 認証設定の保存に失敗しました"
   },

@@ -1,15 +1,15 @@
 import OpenAI from 'openai';
-import { typeid } from 'typeid-js';
 import { randomUUID } from 'node:crypto';
 import type { GenerateTitleResponse } from '@repo/types';
+import { cleanLlmTitle } from '../utils/llm-text.js';
 
-// Constants for title generation
-const TITLE_GENERATION_PROMPT = `Generate a short, concise title (3-6 words) and a Databricks Apps app_name for a coding session based on the following first message.
+const TITLE_GENERATION_PROMPT = `Generate a short, concise title (3-6 words) and a branch name slug for a coding session based on the following first message.
 
-Rules for app_name:
-- Lowercase alphanumeric characters and hyphens only (regex: /^[a-z0-9][a-z0-9-]*$/)
-- Maximum 26 characters
-- Descriptive and derived from the title
+Rules for branch_name:
+- Lowercase English words, numbers, and hyphens only (regex: /^[a-z0-9][a-z0-9-]*$/)
+- Maximum 48 characters
+- Descriptive and derived from the message content
+- Do not include a "ccbricks/" prefix, "refs/heads/" prefix, or a random suffix
 
 Respond in the specified JSON format.
 
@@ -17,10 +17,11 @@ Message: `;
 
 const MAX_TOKENS = 150;
 const FALLBACK_TITLE = 'General coding session';
-const REQUEST_TIMEOUT_MS = 30000; // 30 seconds
+const FALLBACK_BRANCH_SLUG = 'general-coding-session';
+const REQUEST_TIMEOUT_MS = 30_000;
 
-const APP_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-const APP_NAME_MAX_LENGTH = 26;
+const BRANCH_PREFIX = 'ccbricks';
+const BRANCH_SLUG_MAX_LENGTH = 48;
 
 const RESPONSE_FORMAT: OpenAI.ChatCompletionCreateParams['response_format'] = {
   type: 'json_schema',
@@ -31,62 +32,42 @@ const RESPONSE_FORMAT: OpenAI.ChatCompletionCreateParams['response_format'] = {
       type: 'object',
       properties: {
         title: { type: 'string' },
-        app_name: { type: 'string' },
+        branch_name: { type: 'string' },
       },
-      required: ['title', 'app_name'],
+      required: ['title', 'branch_name'],
       additionalProperties: false,
     },
   },
 };
 
-/**
- * Cleans up the generated title by removing common LLM artifacts.
- * - Removes surrounding quotes (single, double, backticks)
- * - Removes markdown formatting
- * - Trims whitespace
- */
-function cleanTitle(rawTitle: string): string {
-  let cleaned = rawTitle.trim();
+function toBranchSlug(value: string): string | null {
+  const slug = value
+    .trim()
+    .replace(/^refs\/heads\//i, '')
+    .replace(new RegExp(`^${BRANCH_PREFIX}/`, 'i'), '')
+    .replace(/-[a-f0-9]{8}$/i, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, BRANCH_SLUG_MAX_LENGTH)
+    .replace(/-$/g, '');
 
-  // Remove surrounding quotes (", ', `)
-  if (
-    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
-    (cleaned.startsWith("'") && cleaned.endsWith("'")) ||
-    (cleaned.startsWith('`') && cleaned.endsWith('`'))
-  ) {
-    cleaned = cleaned.slice(1, -1);
+  return slug || null;
+}
+
+function resolveBranchSlug(...candidates: string[]): string {
+  for (const candidate of candidates) {
+    const slug = toBranchSlug(candidate);
+    if (slug) return slug;
   }
-
-  // Remove markdown bold/italic
-  cleaned = cleaned.replace(/\*\*/g, '').replace(/\*/g, '');
-
-  // Remove markdown code formatting
-  cleaned = cleaned.replace(/`/g, '');
-
-  return cleaned.trim();
+  return FALLBACK_BRANCH_SLUG;
 }
 
-/**
- * Validates that app_name matches the required pattern and length.
- */
-function isValidAppName(appName: string): boolean {
-  return (
-    appName.length > 0 && appName.length <= APP_NAME_MAX_LENGTH && APP_NAME_PATTERN.test(appName)
-  );
-}
-
-/**
- * Generates a fallback app_name using typeid (no prefix).
- * Format: {base32_uuidv7} (exactly 26 characters)
- */
-function generateFallbackAppName(): string {
-  return typeid().toString().replaceAll('_', '-');
-}
-
-function generateBranchName(appName: string): string {
-  const safeAppName = isValidAppName(appName) ? appName : 'session';
+function generateBranchName(...slugCandidates: string[]): string {
+  const safeSlug = resolveBranchSlug(...slugCandidates);
   const shortId = randomUUID().replaceAll('-', '').slice(0, 8);
-  return `ccbricks/${safeAppName}-${shortId}`;
+  return `${BRANCH_PREFIX}/${safeSlug}-${shortId}`;
 }
 
 export interface TitleServiceConfig {
@@ -106,7 +87,7 @@ export class TitleService {
   }
 
   /**
-   * Generates a title and app_name for a coding session based on the first message.
+   * Generates a title and branch name for a coding session based on the first message.
    * Uses structured output (JSON schema) for reliable parsing.
    * @throws Error if the LLM call fails
    */
@@ -136,32 +117,26 @@ export class TitleService {
     const rawContent = response.choices[0]?.message?.content;
 
     if (!rawContent) {
-      const appName = generateFallbackAppName();
       return {
         title: FALLBACK_TITLE,
-        app_name: appName,
-        branch_name: generateBranchName(appName),
+        branch_name: generateBranchName(firstSessionMessage),
       };
     }
 
     try {
-      const parsed = JSON.parse(rawContent) as { title?: string; app_name?: string };
+      const parsed = JSON.parse(rawContent) as { title?: string; branch_name?: string };
 
-      const title = parsed.title ? cleanTitle(parsed.title) : '';
-      const appName = parsed.app_name ?? '';
-      const safeAppName = isValidAppName(appName) ? appName : generateFallbackAppName();
+      const title = parsed.title ? cleanLlmTitle(parsed.title) : '';
+      const safeTitle = title || FALLBACK_TITLE;
 
       return {
-        title: title || FALLBACK_TITLE,
-        app_name: safeAppName,
-        branch_name: generateBranchName(safeAppName),
+        title: safeTitle,
+        branch_name: generateBranchName(parsed.branch_name ?? '', safeTitle, firstSessionMessage),
       };
     } catch {
-      const appName = generateFallbackAppName();
       return {
         title: FALLBACK_TITLE,
-        app_name: appName,
-        branch_name: generateBranchName(appName),
+        branch_name: generateBranchName(firstSessionMessage),
       };
     }
   }

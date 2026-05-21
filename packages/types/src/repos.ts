@@ -59,3 +59,56 @@ export interface GitRepositoryBranchCandidate {
 export interface GitRepositoryBranchListResponse {
   branches: GitRepositoryBranchCandidate[];
 }
+
+export interface GitRepositoryCompareSummary {
+  html_url: string;
+  ahead_by: number;
+  behind_by: number;
+  total_commits: number;
+  additions: number;
+  deletions: number;
+}
+
+export type GitRepositoryDiffResponse = GitRepositoryCompareSummary;
+
+export interface GitRepositoryBranchDetailResponse extends GitRepositoryBranchCandidate {
+  html_url: string;
+  compare: GitRepositoryCompareSummary | null;
+}
+
+export type GitRepositoryPullRequestState = 'open' | 'closed';
+
+export type GitRepositoryPullRequestStateFilter = GitRepositoryPullRequestState | 'all';
+
+export interface GitRepositoryPullRequest {
+  number: number;
+  title: string;
+  state: GitRepositoryPullRequestState;
+  draft: boolean;
+  merged: boolean;
+  html_url: string;
+  additions?: number;
+  deletions?: number;
+  head: {
+    ref: string;
+    label: string;
+  };
+  base: {
+    ref: string;
+    label: string;
+  };
+}
+
+export interface GitRepositoryPullRequestListResponse {
+  pulls: GitRepositoryPullRequest[];
+}
+
+export interface GitRepositoryPullRequestCreateRequest {
+  title: string;
+  body?: string;
+  head: string;
+  base: string;
+  draft?: boolean;
+  session_id?: string;
+  language?: string;
+}

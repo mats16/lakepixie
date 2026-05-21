@@ -1094,15 +1094,9 @@ export async function createSession(
     (s): s is GitRepositorySource => s.type === 'git_repository'
   );
 
-  // 5. outcomes の変数を解決（{session_id} → 実際のセッションID、apps にはアプリ名を割当）
+  // 5. Apps outcome にアプリ名を割当
   const resolvedOutcomes = await Promise.all(
     session_context.outcomes.map(async outcome => {
-      if (outcome.type === 'databricks_workspace') {
-        return {
-          ...outcome,
-          path: outcome.path.replace('{session_id}', sessionId.toString()),
-        };
-      }
       if (outcome.type === 'databricks_apps') {
         return resolveAppsOutcomeName(outcome, sessionId, fastify);
       }

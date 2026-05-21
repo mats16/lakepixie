@@ -1,0 +1,326 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import {
+  Check,
+  ChevronDown,
+  ExternalLink,
+  GitCommitVertical,
+  GitMerge,
+  GitPullRequestArrow,
+  GitPullRequestClosed,
+  GitPullRequestDraft,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
+import { gitRepositoryService } from '@/services/git-repository.service';
+import { sessionService } from '@/services/session.service';
+import type {
+  GitRepositoryBranchDetailResponse,
+  GitRepositoryCompareSummary,
+  GitRepositoryPullRequest,
+} from '@repo/types';
+
+interface GitRepositoryStatusBarProps {
+  sessionId?: string;
+  owner: string;
+  repo: string;
+  headBranch: string;
+  baseBranch: string;
+  sessionTitle?: string;
+  diffRefreshKey?: number;
+}
+
+function repositoryFullName(owner: string, repo: string): string {
+  return `${owner}/${repo}`;
+}
+
+function repositoryUrl(owner: string, repo: string): string {
+  return `https://github.com/${owner}/${repo}`;
+}
+
+function compareUrl(owner: string, repo: string, base: string, head: string): string {
+  return `${repositoryUrl(owner, repo)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
+}
+
+function openUrl(url: string): void {
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+type PullStatusKey = 'open' | 'closed' | 'merged' | 'draft' | 'none';
+
+const PULL_STATUS_ICON: Record<PullStatusKey, typeof GitCommitVertical> = {
+  none: GitCommitVertical,
+  merged: GitMerge,
+  draft: GitPullRequestDraft,
+  closed: GitPullRequestClosed,
+  open: GitPullRequestArrow,
+};
+
+const PULL_STATUS_CLASS: Record<PullStatusKey, string> = {
+  none: 'text-foreground',
+  merged: 'text-purple-600',
+  draft: 'text-muted-foreground',
+  closed: 'text-red-600',
+  open: 'text-green-600',
+};
+
+function getPullStatusKey(pull: GitRepositoryPullRequest | null): PullStatusKey {
+  if (!pull) return 'none';
+  if (pull.merged) return 'merged';
+  if (pull.draft) return 'draft';
+  return pull.state;
+}
+
+export function GitRepositoryStatusBar({
+  sessionId,
+  owner,
+  repo,
+  headBranch,
+  baseBranch,
+  sessionTitle,
+  diffRefreshKey = 0,
+}: GitRepositoryStatusBarProps) {
+  const { t, i18n } = useTranslation();
+  const fullName = repositoryFullName(owner, repo);
+  const [branchDetail, setBranchDetail] = useState<GitRepositoryBranchDetailResponse | null>(null);
+  const [localDiff, setLocalDiff] = useState<GitRepositoryCompareSummary | null>(null);
+  const [pull, setPull] = useState<GitRepositoryPullRequest | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+
+  const fallbackCompareUrl = useMemo(
+    () => compareUrl(owner, repo, baseBranch, headBranch),
+    [baseBranch, headBranch, owner, repo]
+  );
+  const effectiveCompareUrl =
+    localDiff?.html_url ?? branchDetail?.compare?.html_url ?? fallbackCompareUrl;
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    setBranchDetail(null);
+    setLocalDiff(null);
+    setPull(null);
+    setIsCreating(false);
+
+    void Promise.allSettled([
+      gitRepositoryService.getBranch(fullName, headBranch, baseBranch),
+      gitRepositoryService.listPullRequests(fullName, {
+        head: `${owner}:${headBranch}`,
+        base: baseBranch,
+        state: 'all',
+      }),
+    ]).then(([branchResult, pullsResult]) => {
+      if (!isCurrent) return;
+
+      if (branchResult.status === 'fulfilled') {
+        setBranchDetail(branchResult.value);
+      } else {
+        console.warn(
+          '[GitRepositoryStatusBar] Failed to load branch details:',
+          branchResult.reason
+        );
+      }
+
+      if (pullsResult.status === 'fulfilled') {
+        setPull(pullsResult.value.pulls[0] ?? null);
+      } else {
+        console.warn('[GitRepositoryStatusBar] Failed to load pull requests:', pullsResult.reason);
+      }
+    });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [baseBranch, fullName, headBranch, owner, sessionId]);
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    if (!sessionId) {
+      setLocalDiff(null);
+      return;
+    }
+
+    void sessionService
+      .getGitDiff(sessionId)
+      .then(diff => {
+        if (isCurrent) setLocalDiff(diff);
+      })
+      .catch(error => {
+        if (!isCurrent) return;
+        console.warn('[GitRepositoryStatusBar] Failed to load local git diff:', error);
+        setLocalDiff(null);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [diffRefreshKey, sessionId]);
+
+  const handleCopyBranch = async () => {
+    try {
+      await navigator.clipboard.writeText(headBranch);
+      toast.success(t('gitStatus.branchCopied'));
+    } catch {
+      toast.error(t('gitStatus.branchCopyError'));
+    }
+  };
+
+  const handleCreatePullRequest = async (draft: boolean) => {
+    setIsCreating(true);
+    try {
+      const createdPull = await gitRepositoryService.createPullRequest(fullName, {
+        title: sessionTitle?.trim() || headBranch,
+        head: `${owner}:${headBranch}`,
+        base: baseBranch,
+        draft,
+        ...(sessionId ? { session_id: sessionId } : {}),
+        language: i18n.resolvedLanguage ?? i18n.language,
+      });
+      setPull(createdPull);
+      openUrl(createdPull.html_url);
+    } catch (error) {
+      console.warn('[GitRepositoryStatusBar] Failed to create pull request:', error);
+      toast.error(t('gitStatus.createPullRequestError'));
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const diff = localDiff ?? branchDetail?.compare;
+  const diffBadge = diff ? (
+    <button
+      type="button"
+      className="h-6 rounded-md border bg-background px-2 text-xs font-medium shadow-sm"
+      onClick={() => openUrl(effectiveCompareUrl)}
+    >
+      <span className="text-green-600">+{diff.additions}</span>{' '}
+      <span className="text-red-600">-{diff.deletions}</span>
+    </button>
+  ) : null;
+  const statusKey = getPullStatusKey(pull);
+  const StatusIcon = PULL_STATUS_ICON[statusKey];
+  const statusTooltip = t(`gitStatus.status.${statusKey}`);
+
+  return (
+    <div className="absolute bottom-0 left-0 right-0 pb-[7.5rem] px-4 pointer-events-none z-10">
+      <div className="w-full max-w-[735px] mx-auto pointer-events-auto">
+        <div className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border bg-background px-3 shadow-lg">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex shrink-0 items-center gap-3">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <StatusIcon className={cn('h-4 w-4', PULL_STATUS_CLASS[statusKey])} />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{statusTooltip}</p>
+                </TooltipContent>
+              </Tooltip>
+              {pull && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="text-sm font-medium hover:underline"
+                      onClick={() => openUrl(pull.html_url)}
+                    >
+                      #{pull.number}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{t('gitStatus.openPullRequest')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="truncate text-sm text-muted-foreground hover:text-foreground"
+                  onClick={() => openUrl(repositoryUrl(owner, repo))}
+                >
+                  {repo}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{t('gitStatus.openRepository')}</p>
+              </TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="min-w-0 truncate text-sm font-medium hover:underline"
+                  onClick={handleCopyBranch}
+                >
+                  {headBranch}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{t('gitStatus.copyBranch')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2">
+            {diffBadge}
+            {!pull && (
+              <div className="flex overflow-hidden rounded-md border shadow-sm">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-6 rounded-none px-2 text-xs"
+                  onClick={() => handleCreatePullRequest(false)}
+                  disabled={isCreating}
+                >
+                  {t('gitStatus.createPullRequest')}
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 rounded-none border-l"
+                      disabled={isCreating}
+                    >
+                      <ChevronDown className="h-3 w-3" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => handleCreatePullRequest(false)}>
+                      <GitPullRequestArrow className="h-4 w-4" />
+                      {t('gitStatus.createPullRequest')}
+                      <Check className="ml-auto h-4 w-4" />
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleCreatePullRequest(true)}>
+                      <GitPullRequestDraft className="h-4 w-4" />
+                      {t('gitStatus.createDraftPullRequest')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => openUrl(effectiveCompareUrl)}>
+                      <ExternalLink className="h-4 w-4" />
+                      {t('gitStatus.createPullRequestManually')}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -206,6 +206,10 @@ function GitHubAppGuideDialog({ open, onOpenChange }: GitHubAppGuideDialogProps)
                 {t('admin.githubAppGuideContentsPermission')}
               </dt>
               <dd>{t('admin.githubAppGuideContentsPermissionValue')}</dd>
+              <dt className="text-muted-foreground">
+                {t('admin.githubAppGuidePullRequestsPermission')}
+              </dt>
+              <dd>{t('admin.githubAppGuidePullRequestsPermissionValue')}</dd>
             </dl>
           </div>
         </div>
@@ -297,9 +301,7 @@ function SearchableSelect({
                   setOpen(false);
                 }}
               >
-                <Check
-                  className={cn('h-4 w-4', option === value ? 'opacity-100' : 'opacity-0')}
-                />
+                <Check className={cn('h-4 w-4', option === value ? 'opacity-100' : 'opacity-0')} />
                 <span className="truncate">{option}</span>
               </button>
             ))
