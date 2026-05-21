@@ -4,7 +4,7 @@ import configPlugin from '../plugins/config.js';
 import requestDecoratorPlugin from '../plugins/request-decorator.js';
 import sessionRoute from './session.js';
 import { SessionId } from '../models/session.model.js';
-import { getLocalGitCompareSummary } from '../services/local-git.service.js';
+import { getLocalGitDiffSummary } from '../services/local-git.service.js';
 import { validatePathWithinBase } from '../utils/path-validation.js';
 
 // Mock session service
@@ -33,7 +33,7 @@ vi.mock('../services/session-events.service.js', () => ({
 }));
 
 vi.mock('../services/local-git.service.js', () => ({
-  getLocalGitCompareSummary: vi.fn(),
+  getLocalGitDiffSummary: vi.fn(),
 }));
 
 vi.mock('../utils/path-validation.js', () => ({
@@ -216,8 +216,7 @@ describe('session route - invalid session ID handling', () => {
           ],
         },
       });
-      vi.mocked(getLocalGitCompareSummary).mockResolvedValue({
-        html_url: 'https://github.com/acme/widgets/compare/main...ccbricks%2Ftest',
+      vi.mocked(getLocalGitDiffSummary).mockResolvedValue({
         ahead_by: 2,
         behind_by: 0,
         total_commits: 2,
@@ -238,10 +237,8 @@ describe('session route - invalid session ID handling', () => {
         '/tmp/ccbricks/sessions/test-session',
         expect.stringContaining('/sessions')
       );
-      expect(getLocalGitCompareSummary).toHaveBeenCalledWith(
+      expect(getLocalGitDiffSummary).toHaveBeenCalledWith(
         '/tmp/ccbricks/sessions/test-session',
-        'acme',
-        'widgets',
         'main',
         'ccbricks/test'
       );

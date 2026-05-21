@@ -1,10 +1,16 @@
-import type { GitRepositoryCompareSummary } from '@repo/types';
+import { createReadStream, promises as fs } from 'node:fs';
+import path from 'node:path';
+import type { GitRepositoryDiffResponse } from '@repo/types';
 import { spawnAsync } from '../utils/spawn.js';
 import { truncateForPrompt } from '../utils/llm-text.js';
+import { validatePathWithinBase } from '../utils/path-validation.js';
 
 const LOCAL_GIT_COMMAND_TIMEOUT_MS = 10_000;
 const LOCAL_GIT_PR_CONTEXT_TIMEOUT_MS = 20_000;
 const MAX_DIFF_CHARS = 60_000;
+const BINARY_SAMPLE_BYTES = 8192;
+const LF = 0x0a;
+const NUL = 0x00;
 
 export interface LocalGitPullRequestContext {
   commits: string;
@@ -13,17 +19,7 @@ export interface LocalGitPullRequestContext {
   diff: string;
 }
 
-function repositoryUrl(owner: string, repo: string): string {
-  return `https://github.com/${owner}/${repo}`;
-}
-
-function compareUrl(owner: string, repo: string, base: string, head: string): string {
-  return `${repositoryUrl(owner, repo)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
-}
-
-function parseNumstat(
-  stdout: string
-): Pick<GitRepositoryCompareSummary, 'additions' | 'deletions'> {
+function parseNumstat(stdout: string): Pick<GitRepositoryDiffResponse, 'additions' | 'deletions'> {
   return stdout
     .split('\n')
     .filter(Boolean)
@@ -41,7 +37,7 @@ function parseNumstat(
 
 function parseRevListCounts(
   stdout: string
-): Pick<GitRepositoryCompareSummary, 'ahead_by' | 'behind_by' | 'total_commits'> {
+): Pick<GitRepositoryDiffResponse, 'ahead_by' | 'behind_by' | 'total_commits'> {
   const [behind, ahead] = stdout.trim().split(/\s+/).map(Number);
   const aheadBy = Number.isFinite(ahead) ? ahead : 0;
   return {
@@ -51,29 +47,94 @@ function parseRevListCounts(
   };
 }
 
-export async function getLocalGitCompareSummary(
+function parseNullDelimitedPaths(stdout: string): string[] {
+  return stdout.split('\0').filter(Boolean);
+}
+
+async function isLikelyBinaryFile(filePath: string): Promise<boolean> {
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(BINARY_SAMPLE_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, BINARY_SAMPLE_BYTES, 0);
+    return buffer.subarray(0, bytesRead).includes(NUL);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function countTextFileLines(filePath: string, size: number): Promise<number> {
+  if (size === 0) return 0;
+
+  let lines = 0;
+  let lastByte: number | null = null;
+  for await (const chunk of createReadStream(filePath) as AsyncIterable<Buffer>) {
+    let index = chunk.indexOf(LF);
+    while (index !== -1) {
+      lines += 1;
+      index = chunk.indexOf(LF, index + 1);
+    }
+    if (chunk.length > 0) lastByte = chunk[chunk.length - 1];
+  }
+
+  return lastByte === LF ? lines : lines + 1;
+}
+
+async function countUntrackedFileAdditions(cwd: string, relativePath: string): Promise<number> {
+  try {
+    const filePath = await validatePathWithinBase(path.resolve(cwd, relativePath), cwd);
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile() || (await isLikelyBinaryFile(filePath))) return 0;
+    return countTextFileLines(filePath, stat.size);
+  } catch {
+    return 0;
+  }
+}
+
+async function getUntrackedAdditions(cwd: string): Promise<number> {
+  const { stdout } = await spawnAsync('git', ['ls-files', '--others', '--exclude-standard', '-z'], {
+    cwd,
+    timeout: LOCAL_GIT_COMMAND_TIMEOUT_MS,
+  });
+  const counts = await Promise.all(
+    parseNullDelimitedPaths(stdout).map(filePath => countUntrackedFileAdditions(cwd, filePath))
+  );
+  return counts.reduce((total, additions) => total + additions, 0);
+}
+
+export async function getLocalGitDiffSummary(
   cwd: string,
-  owner: string,
-  repo: string,
   base: string,
   head: string
-): Promise<GitRepositoryCompareSummary> {
+): Promise<GitRepositoryDiffResponse> {
   const range = `${base}...${head}`;
-  const [diff, counts] = await Promise.all([
-    spawnAsync('git', ['diff', '--numstat', '--ignore-submodules=all', range], {
+  const diffPromise = spawnAsync('git', ['merge-base', base, head], {
+    cwd,
+    timeout: LOCAL_GIT_COMMAND_TIMEOUT_MS,
+  }).then(mergeBase => {
+    const workingTreeRange = mergeBase.stdout.trim();
+    if (!workingTreeRange) {
+      throw new Error(`No common ancestor between ${base} and ${head}`);
+    }
+    return spawnAsync('git', ['diff', '--numstat', '--ignore-submodules=all', workingTreeRange], {
       cwd,
       timeout: LOCAL_GIT_COMMAND_TIMEOUT_MS,
-    }),
+    });
+  });
+
+  const [diff, counts, untrackedAdditions] = await Promise.all([
+    diffPromise,
     spawnAsync('git', ['rev-list', '--left-right', '--count', range], {
       cwd,
       timeout: LOCAL_GIT_COMMAND_TIMEOUT_MS,
     }),
+    getUntrackedAdditions(cwd),
   ]);
+  const trackedChanges = parseNumstat(diff.stdout);
 
   return {
-    html_url: compareUrl(owner, repo, base, head),
     ...parseRevListCounts(counts.stdout),
-    ...parseNumstat(diff.stdout),
+    additions: trackedChanges.additions + untrackedAdditions,
+    deletions: trackedChanges.deletions,
   };
 }
 

@@ -107,6 +107,38 @@ describe('session.service', () => {
     });
   });
 
+  describe('buildGitIdentityEnv', () => {
+    it('uses the Databricks user name and email for git author and committer', () => {
+      const env = __testing.buildGitIdentityEnv({
+        userId: 'user-123',
+        userName: 'Test User',
+        userEmail: 'test.user@example.com',
+      } as Parameters<typeof __testing.buildGitIdentityEnv>[0]);
+
+      expect(env).toEqual({
+        GIT_AUTHOR_NAME: 'Test User',
+        GIT_AUTHOR_EMAIL: 'test.user@example.com',
+        GIT_COMMITTER_NAME: 'Test User',
+        GIT_COMMITTER_EMAIL: 'test.user@example.com',
+      });
+    });
+
+    it('falls back to stable user fields when name or email is missing', () => {
+      const env = __testing.buildGitIdentityEnv({
+        userId: 'test-user-id',
+        userName: '  ',
+        userEmail: '',
+      } as Parameters<typeof __testing.buildGitIdentityEnv>[0]);
+
+      expect(env).toEqual({
+        GIT_AUTHOR_NAME: 'test-user-id',
+        GIT_AUTHOR_EMAIL: 'test-user-id',
+        GIT_COMMITTER_NAME: 'test-user-id',
+        GIT_COMMITTER_EMAIL: 'test-user-id',
+      });
+    });
+  });
+
   describe('git repository source helpers', () => {
     it('should parse refs/heads revision into a branch name', () => {
       expect(__testing.getGitBranchFromRevision('refs/heads/main')).toBe('main');

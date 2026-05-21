@@ -49,7 +49,6 @@ beforeEach(async () => {
             openPullRequest: 'Open pull request',
             createPullRequest: 'Create PR',
             createDraftPullRequest: 'Create draft PR',
-            createPullRequestManually: 'Create PR manually',
             createPullRequestError: 'Failed to create pull request',
             status: {
               open: 'Open',

@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Check,
   ChevronDown,
-  ExternalLink,
   GitCommitVertical,
   GitMerge,
   GitPullRequestArrow,
@@ -24,7 +23,7 @@ import { gitRepositoryService } from '@/services/git-repository.service';
 import { sessionService } from '@/services/session.service';
 import type {
   GitRepositoryBranchDetailResponse,
-  GitRepositoryCompareSummary,
+  GitRepositoryDiffResponse,
   GitRepositoryPullRequest,
 } from '@repo/types';
 
@@ -44,10 +43,6 @@ function repositoryFullName(owner: string, repo: string): string {
 
 function repositoryUrl(owner: string, repo: string): string {
   return `https://github.com/${owner}/${repo}`;
-}
-
-function compareUrl(owner: string, repo: string, base: string, head: string): string {
-  return `${repositoryUrl(owner, repo)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
 }
 
 function openUrl(url: string): void {
@@ -91,16 +86,9 @@ export function GitRepositoryStatusBar({
   const { t, i18n } = useTranslation();
   const fullName = repositoryFullName(owner, repo);
   const [branchDetail, setBranchDetail] = useState<GitRepositoryBranchDetailResponse | null>(null);
-  const [localDiff, setLocalDiff] = useState<GitRepositoryCompareSummary | null>(null);
+  const [localDiff, setLocalDiff] = useState<GitRepositoryDiffResponse | null>(null);
   const [pull, setPull] = useState<GitRepositoryPullRequest | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-
-  const fallbackCompareUrl = useMemo(
-    () => compareUrl(owner, repo, baseBranch, headBranch),
-    [baseBranch, headBranch, owner, repo]
-  );
-  const effectiveCompareUrl =
-    localDiff?.html_url ?? branchDetail?.compare?.html_url ?? fallbackCompareUrl;
 
   useEffect(() => {
     let isCurrent = true;
@@ -197,14 +185,10 @@ export function GitRepositoryStatusBar({
 
   const diff = localDiff ?? branchDetail?.compare;
   const diffBadge = diff ? (
-    <button
-      type="button"
-      className="h-6 rounded-md border bg-background px-2 text-xs font-medium shadow-sm"
-      onClick={() => openUrl(effectiveCompareUrl)}
-    >
-      <span className="text-green-600">+{diff.additions}</span>{' '}
+    <span className="inline-flex h-6 items-center gap-1.5 rounded-md border bg-background px-2 text-xs font-medium leading-none shadow-sm">
+      <span className="text-green-600">+{diff.additions}</span>
       <span className="text-red-600">-{diff.deletions}</span>
-    </button>
+    </span>
   ) : null;
   const statusKey = getPullStatusKey(pull);
   const StatusIcon = PULL_STATUS_ICON[statusKey];
@@ -309,10 +293,6 @@ export function GitRepositoryStatusBar({
                     <DropdownMenuItem onClick={() => handleCreatePullRequest(true)}>
                       <GitPullRequestDraft className="h-4 w-4" />
                       {t('gitStatus.createDraftPullRequest')}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => openUrl(effectiveCompareUrl)}>
-                      <ExternalLink className="h-4 w-4" />
-                      {t('gitStatus.createPullRequestManually')}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

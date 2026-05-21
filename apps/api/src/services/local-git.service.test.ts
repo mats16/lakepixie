@@ -1,3 +1,6 @@
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockSpawnAsync } = vi.hoisted(() => ({
@@ -8,7 +11,7 @@ vi.mock('../utils/spawn.js', () => ({
   spawnAsync: mockSpawnAsync,
 }));
 
-import { getLocalGitCompareSummary } from './local-git.service.js';
+import { getLocalGitDiffSummary } from './local-git.service.js';
 
 describe('local-git.service', () => {
   beforeEach(() => {
@@ -17,19 +20,22 @@ describe('local-git.service', () => {
 
   it('summarizes local git diff totals for a branch range', async () => {
     mockSpawnAsync.mockImplementation(async (_command: string, args: string[]) => {
+      if (args[0] === 'merge-base') {
+        return { stdout: 'abc123\n', stderr: '' };
+      }
       if (args[0] === 'diff') {
         return { stdout: '9\t1\tREADME.md\n-\t-\timage.png\n', stderr: '' };
       }
       if (args[0] === 'rev-list') {
         return { stdout: '0\t2\n', stderr: '' };
       }
+      if (args[0] === 'ls-files') {
+        return { stdout: '', stderr: '' };
+      }
       throw new Error('unexpected command');
     });
 
-    await expect(
-      getLocalGitCompareSummary('/tmp/repo', 'acme', 'widgets', 'main', 'ccbricks/test')
-    ).resolves.toEqual({
-      html_url: 'https://github.com/acme/widgets/compare/main...ccbricks%2Ftest',
+    await expect(getLocalGitDiffSummary('/tmp/repo', 'main', 'ccbricks/test')).resolves.toEqual({
       ahead_by: 2,
       behind_by: 0,
       total_commits: 2,
@@ -38,7 +44,12 @@ describe('local-git.service', () => {
     });
     expect(mockSpawnAsync).toHaveBeenCalledWith(
       'git',
-      ['diff', '--numstat', '--ignore-submodules=all', 'main...ccbricks/test'],
+      ['merge-base', 'main', 'ccbricks/test'],
+      expect.objectContaining({ cwd: '/tmp/repo' })
+    );
+    expect(mockSpawnAsync).toHaveBeenCalledWith(
+      'git',
+      ['diff', '--numstat', '--ignore-submodules=all', 'abc123'],
       expect.objectContaining({ cwd: '/tmp/repo' })
     );
     expect(mockSpawnAsync).toHaveBeenCalledWith(
@@ -46,5 +57,41 @@ describe('local-git.service', () => {
       ['rev-list', '--left-right', '--count', 'main...ccbricks/test'],
       expect.objectContaining({ cwd: '/tmp/repo' })
     );
+    expect(mockSpawnAsync).toHaveBeenCalledWith(
+      'git',
+      ['ls-files', '--others', '--exclude-standard', '-z'],
+      expect.objectContaining({ cwd: '/tmp/repo' })
+    );
+  });
+
+  it('includes untracked text file additions in local diff totals', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'ccbricks-local-git-'));
+    try {
+      await fs.mkdir(path.join(cwd, 'src'), { recursive: true });
+      await fs.writeFile(path.join(cwd, 'src', 'new.ts'), 'one\ntwo\nthree', 'utf8');
+
+      mockSpawnAsync.mockImplementation(async (_command: string, args: string[]) => {
+        if (args[0] === 'merge-base') {
+          return { stdout: 'abc123\n', stderr: '' };
+        }
+        if (args[0] === 'diff') {
+          return { stdout: '4\t2\tREADME.md\n', stderr: '' };
+        }
+        if (args[0] === 'rev-list') {
+          return { stdout: '0\t1\n', stderr: '' };
+        }
+        if (args[0] === 'ls-files') {
+          return { stdout: 'src/new.ts\0', stderr: '' };
+        }
+        throw new Error('unexpected command');
+      });
+
+      await expect(getLocalGitDiffSummary(cwd, 'main', 'ccbricks/test')).resolves.toMatchObject({
+        additions: 7,
+        deletions: 2,
+      });
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
   });
 });

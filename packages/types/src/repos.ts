@@ -60,8 +60,7 @@ export interface GitRepositoryBranchListResponse {
   branches: GitRepositoryBranchCandidate[];
 }
 
-export interface GitRepositoryCompareSummary {
-  html_url: string;
+export interface GitRepositoryDiffResponse {
   ahead_by: number;
   behind_by: number;
   total_commits: number;
@@ -69,7 +68,9 @@ export interface GitRepositoryCompareSummary {
   deletions: number;
 }
 
-export type GitRepositoryDiffResponse = GitRepositoryCompareSummary;
+export interface GitRepositoryCompareSummary extends GitRepositoryDiffResponse {
+  html_url: string;
+}
 
 export interface GitRepositoryBranchDetailResponse extends GitRepositoryBranchCandidate {
   html_url: string;

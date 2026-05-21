@@ -49,7 +49,7 @@ import { TelemetryConfigurationError } from '../services/claude-telemetry-env.se
 import { listSessionEvents, getSessionLastEventId } from '../services/session-events.service.js';
 import { wsManager } from '../services/websocket-manager.service.js';
 import { encodeSseEvent, sessionStreamHub } from '../services/session-stream-hub.service.js';
-import { getLocalGitCompareSummary } from '../services/local-git.service.js';
+import { getLocalGitDiffSummary } from '../services/local-git.service.js';
 import { SessionId } from '../models/session.model.js';
 import { createUserContext } from '../lib/user-context.js';
 import { validatePathWithinBase } from '../utils/path-validation.js';
@@ -335,13 +335,7 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
 
       const sessionsBaseDir = path.join(fastify.config.CCBRICKS_BASE_DIR, 'sessions');
       const cwd = await validatePathWithinBase(context.cwd, sessionsBaseDir);
-      const diff = await getLocalGitCompareSummary(
-        cwd,
-        repo.owner,
-        repo.repo,
-        baseBranch,
-        headBranch
-      );
+      const diff = await getLocalGitDiffSummary(cwd, baseBranch, headBranch);
       return reply.send(diff);
     } catch (error) {
       request.log.warn({ error, sessionId: sessionId.toString() }, 'Failed to get local git diff');

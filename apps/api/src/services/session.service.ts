@@ -89,6 +89,19 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function buildGitIdentityEnv(ctx: UserContext): Record<string, string> {
+  // userId/Name/Email はヘッダー欠落時に空文字フォールバックされうるため、最後に固定値を当てる
+  const gitName = ctx.userName.trim() || ctx.userEmail.trim() || ctx.userId || 'ccbricks';
+  const gitEmail = ctx.userEmail.trim() || ctx.userId || 'ccbricks@localhost';
+
+  return {
+    GIT_AUTHOR_NAME: gitName,
+    GIT_AUTHOR_EMAIL: gitEmail,
+    GIT_COMMITTER_NAME: gitName,
+    GIT_COMMITTER_EMAIL: gitEmail,
+  };
+}
+
 function toLogError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
@@ -869,6 +882,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
           PATH: fastify.config.PATH,
           HOME: userHome,
           CLAUDE_CONFIG_DIR: path.join(userHome, '.claude'),
+          ...buildGitIdentityEnv(ctx),
           ...(sdkSessionId ? { CLAUDE_CODE_SESSION_ID: sdkSessionId } : {}),
           SESSION_ID: sessionId.toString(),
           ...(workspacePath ? { SESSION_WORKSPACE_PATH: workspacePath } : {}),
@@ -1666,6 +1680,7 @@ export async function executeAbort(
 }
 
 export const __testing = {
+  buildGitIdentityEnv,
   cloneGitRepositorySource,
   extractEventUuid,
   getGitBranchFromRevision,

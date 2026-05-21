@@ -317,7 +317,6 @@
     "openPullRequest": "PRを開く",
     "createPullRequest": "PRを作成",
     "createDraftPullRequest": "下書きPRを作成",
-    "createPullRequestManually": "PRを手動で作成",
     "createPullRequestError": "PRの作成に失敗しました",
     "status": {
       "open": "Open",
