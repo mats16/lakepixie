@@ -4,6 +4,8 @@ import configPlugin from '../plugins/config.js';
 import requestDecoratorPlugin from '../plugins/request-decorator.js';
 import sessionRoute from './session.js';
 import { SessionId } from '../models/session.model.js';
+import { getLocalGitDiffSummary } from '../services/local-git.service.js';
+import { validatePathWithinBase } from '../utils/path-validation.js';
 
 // Mock session service
 vi.mock('../services/session.service.js', () => ({
@@ -21,12 +23,21 @@ vi.mock('../services/session.service.js', () => ({
   sendMessageToSession: vi.fn(),
   canAbortSession: vi.fn(),
   executeAbort: vi.fn(),
+  broadcastToSession: vi.fn(),
 }));
 
 // Mock session-events service
 vi.mock('../services/session-events.service.js', () => ({
   listSessionEvents: vi.fn(),
   getSessionLastEventId: vi.fn(),
+}));
+
+vi.mock('../services/local-git.service.js', () => ({
+  getLocalGitDiffSummary: vi.fn(),
+}));
+
+vi.mock('../utils/path-validation.js', () => ({
+  validatePathWithinBase: vi.fn(async (targetPath: string) => targetPath),
 }));
 
 // Mock websocket manager
@@ -172,6 +183,110 @@ describe('session route - invalid session ID handling', () => {
       expect(response.statusCode).toBe(401);
       const body = response.json();
       expect(body.error).toBe('Unauthorized');
+    });
+  });
+
+  describe('GET /sessions/:session_id/git-diff', () => {
+    it('should return local git diff using source revision and outcome branch', async () => {
+      const { getSession } = await import('../services/session.service.js');
+      const sessionId = new SessionId();
+      vi.mocked(getSession).mockResolvedValue({
+        id: sessionId.toString(),
+        title: 'Test',
+        session_status: 'idle',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        session_context: {
+          cwd: '/tmp/ccbricks/sessions/test-session',
+          model: 'sonnet',
+          sources: [
+            {
+              type: 'git_repository',
+              url: 'https://github.com/acme/widgets',
+              revision: 'refs/heads/main',
+              sparse_checkout_paths: [],
+              allow_unrestricted_git_push: true,
+            },
+          ],
+          outcomes: [
+            {
+              type: 'git_repository',
+              git_info: { type: 'github', repo: 'acme/widgets', branches: ['ccbricks/test'] },
+            },
+          ],
+        },
+      });
+      vi.mocked(getLocalGitDiffSummary).mockResolvedValue({
+        ahead_by: 2,
+        behind_by: 0,
+        total_commits: 2,
+        additions: 9,
+        deletions: 1,
+      });
+
+      await registerPlugins();
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/sessions/${sessionId.toString()}/git-diff`,
+        headers: TEST_USER_HEADERS,
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ additions: 9, deletions: 1 });
+      expect(validatePathWithinBase).toHaveBeenCalledWith(
+        '/tmp/ccbricks/sessions/test-session',
+        expect.stringContaining('/sessions')
+      );
+      expect(getLocalGitDiffSummary).toHaveBeenCalledWith(
+        '/tmp/ccbricks/sessions/test-session',
+        'main',
+        'ccbricks/test'
+      );
+    });
+
+    it('should return 404 for non-branch git source revisions', async () => {
+      const { getSession } = await import('../services/session.service.js');
+      const sessionId = new SessionId();
+      vi.mocked(getSession).mockResolvedValue({
+        id: sessionId.toString(),
+        title: 'Test',
+        session_status: 'idle',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        session_context: {
+          cwd: '/tmp/ccbricks/sessions/test-session',
+          model: 'sonnet',
+          sources: [
+            {
+              type: 'git_repository',
+              url: 'https://github.com/acme/widgets',
+              revision: 'refs/tags/v1.0.0',
+              sparse_checkout_paths: [],
+              allow_unrestricted_git_push: true,
+            },
+          ],
+          outcomes: [
+            {
+              type: 'git_repository',
+              git_info: { type: 'github', repo: 'acme/widgets', branches: ['ccbricks/test'] },
+            },
+          ],
+        },
+      });
+
+      await registerPlugins();
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/sessions/${sessionId.toString()}/git-diff`,
+        headers: TEST_USER_HEADERS,
+      });
+
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toMatchObject({
+        error: 'NotFound',
+        message: 'Git repository context not found',
+      });
+      expect(getLocalGitDiffSummary).not.toHaveBeenCalled();
     });
   });
 

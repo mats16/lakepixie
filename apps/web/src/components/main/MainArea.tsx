@@ -1,16 +1,19 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { isNewSessionNavigationState } from '@/types/navigation';
-import type {
-  SessionCreateRequest,
-  SessionResponse,
-  UserMessageContentBlock,
-  WsAskUserQuestionRequest,
-  DatabricksWorkspaceSource,
-  SessionOutcome,
-  SessionSource,
-  ResolvedDatabricksAppsOutcome,
+import {
+  parseGitBranchRevision,
+  type DatabricksWorkspaceSource,
+  type GitRepositoryOutcome,
+  type GitRepositorySource,
+  type ResolvedDatabricksAppsOutcome,
+  type SessionCreateRequest,
+  type SessionOutcome,
+  type SessionResponse,
+  type SessionSource,
+  type UserMessageContentBlock,
+  type WsAskUserQuestionRequest,
 } from '@repo/types';
 import { MainHeader } from './MainHeader';
 import { MessageArea } from './MessageArea';
@@ -18,16 +21,36 @@ import { InputArea } from './InputArea';
 import { WelcomeScreen, type NewSessionParams } from './WelcomeScreen';
 import { SessionNotFound } from './SessionNotFound';
 import { FloatingButtons } from './FloatingButtons';
+import { GitRepositoryStatusBar } from './GitRepositoryStatusBar';
 import { useSessionEvents } from '@/hooks/useSessionEvents';
 import { useSession } from '@/hooks/useSession';
 import { AskUserQuestionProvider } from '@/contexts/AskUserQuestionContext';
 import { sessionService } from '@/services/session.service';
 import { extractTextFromContent } from '@/lib/content-builder';
+import { useUser } from '@/hooks/useUser';
 
-function createFallbackBranchName(appName?: string): string {
-  const safeAppName = appName && /^[a-z0-9][a-z0-9-]{0,25}$/.test(appName) ? appName : 'session';
+function toBranchSlug(value: string): string | null {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48)
+    .replace(/-$/g, '');
+  return slug || null;
+}
+
+function createFallbackBranchName(message?: string): string {
+  const safeSlug = message ? (toBranchSlug(message) ?? 'session') : 'session';
   const shortId = crypto.randomUUID().replaceAll('-', '').slice(0, 8);
-  return `ccbricks/${safeAppName}-${shortId}`;
+  return `ccbricks/${safeSlug}-${shortId}`;
+}
+
+function parseRepositoryFullName(fullName: string): { owner: string; repo: string } | null {
+  const [owner, repo] = fullName.split('/');
+  if (!owner || !repo) return null;
+  return { owner, repo };
 }
 
 interface MainAreaProps {
@@ -36,6 +59,8 @@ interface MainAreaProps {
   onSessionArchived?: (sessionId: string) => void;
   onSessionCreated?: (session: SessionResponse) => void;
 }
+
+const GIT_DIFF_REFRESH_DEBOUNCE_MS = 750;
 
 export function MainArea({
   branchName,
@@ -47,7 +72,10 @@ export function MainArea({
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
+  const { githubAppId } = useUser();
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
+  const [gitDiffRefreshKey, setGitDiffRefreshKey] = useState(0);
+  const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // navigate state から初期メッセージを取得
   const initialMessage = useMemo(() => {
@@ -65,6 +93,7 @@ export function MainArea({
   } = useSession({
     sessionId: sessionId ?? null,
   });
+  const activeSession = sessionId && session?.id === sessionId ? session : null;
 
   // AskUserQuestion の pending 状態管理
   const [pendingQuestions, setPendingQuestions] = useState<Map<string, Record<string, unknown>>>(
@@ -77,13 +106,32 @@ export function MainArea({
       return next;
     });
   }, []);
+  const handleGitDiffRefreshNeeded = useCallback(() => {
+    if (gitDiffRefreshTimerRef.current) {
+      clearTimeout(gitDiffRefreshTimerRef.current);
+    }
+    gitDiffRefreshTimerRef.current = setTimeout(() => {
+      gitDiffRefreshTimerRef.current = null;
+      setGitDiffRefreshKey(current => current + 1);
+    }, GIT_DIFF_REFRESH_DEBOUNCE_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (gitDiffRefreshTimerRef.current) {
+        clearTimeout(gitDiffRefreshTimerRef.current);
+        gitDiffRefreshTimerRef.current = null;
+      }
+    };
+  }, [sessionId]);
 
   const { events, isLoading, error, sessionStatus, sendMessage, answerQuestion, abort } =
     useSessionEvents({
       sessionId: sessionId ?? null,
-      initialSessionStatus: session?.session_status,
+      initialSessionStatus: activeSession?.session_status,
       initialMessage,
       onAskUserQuestion: handleAskUserQuestion,
+      onGitDiffRefreshNeeded: handleGitDiffRefreshNeeded,
     });
 
   const submitAnswer = useCallback(
@@ -123,28 +171,55 @@ export function MainArea({
   // init 中の準備処理表示。Git repository は clone、Workspace は sync として見せる。
   const syncingKind = useMemo((): 'workspace' | 'git' | null => {
     if (sessionStatus !== 'init') return null;
-    const sources = session?.session_context?.sources ?? [];
+    const sources = activeSession?.session_context?.sources ?? [];
     if (sources.some(source => source.type === 'git_repository')) return 'git';
     if (sources.some(source => source.type === 'databricks_workspace')) return 'workspace';
     return null;
-  }, [session?.session_context?.sources, sessionStatus]);
+  }, [activeSession?.session_context?.sources, sessionStatus]);
 
-  // session_context.outcomes から workspace / apps outcome を取得
-  const { databricksWorkspaceOutcome, databricksAppsOutcome } = useMemo(() => {
-    const outcomes = session?.session_context?.outcomes;
-    if (!outcomes) return { databricksWorkspaceOutcome: null, databricksAppsOutcome: null };
+  // session_context.outcomes から workspace / apps / git outcome を取得
+  const { databricksWorkspaceOutcome, databricksAppsOutcome, gitRepositoryOutcome } =
+    useMemo(() => {
+      const outcomes = activeSession?.session_context?.outcomes;
+      if (!outcomes) {
+        return {
+          databricksWorkspaceOutcome: null,
+          databricksAppsOutcome: null,
+          gitRepositoryOutcome: null,
+        };
+      }
+      return {
+        databricksWorkspaceOutcome:
+          outcomes.find((o): o is DatabricksWorkspaceSource => o.type === 'databricks_workspace') ??
+          null,
+        databricksAppsOutcome:
+          outcomes.find((o): o is ResolvedDatabricksAppsOutcome => o.type === 'databricks_apps') ??
+          null,
+        gitRepositoryOutcome:
+          outcomes.find((o): o is GitRepositoryOutcome => o.type === 'git_repository') ?? null,
+      };
+    }, [activeSession?.session_context?.outcomes]);
+
+  const gitRepositoryStatus = useMemo(() => {
+    const gitSource = activeSession?.session_context?.sources.find(
+      (source): source is GitRepositorySource => source.type === 'git_repository'
+    );
+    const repoInfo = gitRepositoryOutcome
+      ? parseRepositoryFullName(gitRepositoryOutcome.git_info.repo)
+      : null;
+    const headBranch = gitRepositoryOutcome?.git_info.branches[0];
+    const baseBranch = gitSource ? parseGitBranchRevision(gitSource.revision) : null;
+    if (!repoInfo || !headBranch || !baseBranch) return null;
     return {
-      databricksWorkspaceOutcome:
-        outcomes.find((o): o is DatabricksWorkspaceSource => o.type === 'databricks_workspace') ??
-        null,
-      databricksAppsOutcome:
-        outcomes.find((o): o is ResolvedDatabricksAppsOutcome => o.type === 'databricks_apps') ??
-        null,
+      ...repoInfo,
+      headBranch,
+      baseBranch,
     };
-  }, [session?.session_context?.outcomes]);
+  }, [gitRepositoryOutcome, activeSession?.session_context?.sources]);
 
   // フローティングボタンを表示するかどうか
   const hasFloatingButtons = !!databricksAppsOutcome || !!databricksWorkspaceOutcome;
+  const hasFloatingControls = hasFloatingButtons || !!gitRepositoryStatus;
 
   const handleSend = (content: UserMessageContentBlock[]) => {
     onSendMessage?.(content);
@@ -176,6 +251,10 @@ export function MainArea({
     try {
       setCreateSessionError(null);
       const gitRepositoryForSession = sourceType === 'git_repository' ? gitRepository : null;
+      if (sourceType === 'git_repository' && !githubAppId) {
+        setCreateSessionError(t('welcome.sourceType.repositoryRequired'));
+        return;
+      }
       if (sourceType === 'git_repository' && !gitRepositoryForSession) {
         setCreateSessionError(t('welcome.sourceType.repositoryRequired'));
         return;
@@ -191,8 +270,7 @@ export function MainArea({
       // タイトル生成用にテキストを抽出
       const textContent = extractTextFromContent(content);
       const titleResult = await sessionService.generateTitle(textContent);
-      const branchName =
-        titleResult?.branch_name ?? createFallbackBranchName(titleResult?.app_name);
+      const branchName = titleResult?.branch_name ?? createFallbackBranchName(textContent);
       const sources: SessionSource[] = [];
       const outcomes: SessionOutcome[] = [];
 
@@ -219,17 +297,12 @@ export function MainArea({
         });
         outcomes.push({
           type: 'databricks_workspace',
-          path: '/Workspace/Shared/ccbricks/sessions/{session_id}',
-        });
-      } else {
-        outcomes.push({
-          type: 'databricks_workspace',
-          path: '/Workspace/Shared/ccbricks/sessions/{session_id}',
+          path: workspaceSelection.path,
         });
       }
 
       if (enableDatabricksApps) {
-        outcomes.push({ type: 'databricks_apps', name: titleResult?.app_name });
+        outcomes.push({ type: 'databricks_apps' });
       }
 
       const request: SessionCreateRequest = {
@@ -311,7 +384,7 @@ export function MainArea({
     <AskUserQuestionProvider value={askUserQuestionCtx}>
       <div className="relative z-0 flex flex-col w-full h-full min-w-0 overflow-hidden bg-background">
         <MainHeader
-          title={session?.title ?? 'New Session'}
+          title={activeSession?.title ?? 'New Session'}
           branchName={branchName}
           sessionId={sessionId}
           onTitleUpdate={handleTitleUpdate}
@@ -323,20 +396,33 @@ export function MainArea({
           error={error}
           isAgentThinking={isAgentThinking}
           syncingKind={syncingKind}
-          hasFloatingButton={hasFloatingButtons}
+          hasFloatingButton={hasFloatingControls}
         />
         <InputArea
           sessionId={sessionId}
           onSend={handleSend}
           onAbort={abort}
           isAgentThinking={isAgentThinking}
-          disabled={session?.session_status === 'archived'}
+          disabled={activeSession?.session_status === 'archived'}
         />
         {hasFloatingButtons && (
           <FloatingButtons
             sessionId={sessionId}
             showAppButton={!!databricksAppsOutcome}
             workspacePath={databricksWorkspaceOutcome?.path}
+            bottomClassName={gitRepositoryStatus ? 'pb-[10.75rem]' : undefined}
+          />
+        )}
+        {gitRepositoryStatus && (
+          <GitRepositoryStatusBar
+            key={`${sessionId ?? 'new'}:${gitRepositoryStatus.owner}/${gitRepositoryStatus.repo}:${gitRepositoryStatus.headBranch}:${gitRepositoryStatus.baseBranch}`}
+            sessionId={sessionId}
+            owner={gitRepositoryStatus.owner}
+            repo={gitRepositoryStatus.repo}
+            headBranch={gitRepositoryStatus.headBranch}
+            baseBranch={gitRepositoryStatus.baseBranch}
+            sessionTitle={activeSession?.title ?? undefined}
+            diffRefreshKey={gitDiffRefreshKey}
           />
         )}
       </div>

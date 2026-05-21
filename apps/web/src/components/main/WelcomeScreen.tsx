@@ -111,7 +111,8 @@ function McpItemIcon({ item }: { item: McpSelectionItem }) {
 
 export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps) {
   const { t } = useTranslation();
-  const { welcomeHeading } = useUser();
+  const { welcomeHeading, githubAppId } = useUser();
+  const canUseGitRepositorySource = Boolean(githubAppId);
   const [selectedQuickstart, setSelectedQuickstart] = useState<QuickstartType | null>(null);
   const [content, setContent] = useLocalStorageState('chat-draft-new-session', {
     defaultValue: '',
@@ -191,6 +192,7 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
 
   const loadGitRepositories = useCallback(
     (force = false) => {
+      if (!canUseGitRepositorySource) return Promise.resolve();
       if (hasLoadedGitRepositories && !force) return Promise.resolve();
       if (gitRepositoryLoadPromiseRef.current) return gitRepositoryLoadPromiseRef.current;
 
@@ -225,14 +227,26 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
 
       return gitRepositoryLoadPromiseRef.current;
     },
-    [hasLoadedGitRepositories]
+    [canUseGitRepositorySource, hasLoadedGitRepositories]
   );
 
   useEffect(() => {
-    if (sourceType === 'git_repository') {
+    if (sourceType === 'git_repository' && canUseGitRepositorySource) {
       void loadGitRepositories();
     }
-  }, [loadGitRepositories, sourceType]);
+  }, [canUseGitRepositorySource, loadGitRepositories, sourceType]);
+
+  useEffect(() => {
+    if (canUseGitRepositorySource) return;
+    if (sourceType === 'git_repository') {
+      setSourceType('databricks_workspace');
+    }
+    setGitRepositories([]);
+    setSelectedGitRepositoryName(null);
+    setSelectedGitRepositoryBranch(null);
+    setGitRepositoryLoadError(false);
+    setHasLoadedGitRepositories(false);
+  }, [canUseGitRepositorySource, sourceType]);
 
   const filteredGitRepositories = useMemo(() => {
     const query = gitRepositorySearchQuery.trim().toLowerCase();
@@ -331,6 +345,7 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
 
   const handleSourceTypeChange = (value: string) => {
     const nextSourceType = value as NewSessionSourceType;
+    if (nextSourceType === 'git_repository' && !canUseGitRepositorySource) return;
     setSourceType(nextSourceType);
     if (nextSourceType === 'git_repository') {
       void loadGitRepositories();
@@ -339,7 +354,7 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
 
   const handleGitRepositorySearchOpenChange = (open: boolean) => {
     setGitRepositorySearchOpen(open);
-    if (open) {
+    if (open && canUseGitRepositorySource) {
       void loadGitRepositories();
     }
   };
@@ -358,6 +373,7 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
   const handleSubmit = async () => {
     const hasContent = content.trim() || hasImages;
     if (!hasContent || isSubmitting) return;
+    if (sourceType === 'git_repository' && !canUseGitRepositorySource) return;
     if (sourceType === 'git_repository' && !selectedGitRepository) return;
     if (sourceType === 'git_repository' && !selectedGitRepositoryBranch) return;
     if (sourceType === 'git_repository' && gitRepositoryLoadError) return;
@@ -461,7 +477,11 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
             <SelectItem value="databricks_workspace">
               {t('welcome.sourceType.databricksWorkspace')}
             </SelectItem>
-            <SelectItem value="git_repository">{t('welcome.sourceType.gitRepository')}</SelectItem>
+            {canUseGitRepositorySource && (
+              <SelectItem value="git_repository">
+                {t('welcome.sourceType.gitRepository')}
+              </SelectItem>
+            )}
           </SelectContent>
         </Select>
 

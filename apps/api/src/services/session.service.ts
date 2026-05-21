@@ -14,24 +14,25 @@ import {
   type SDKUserMessageReplay,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
-import type {
-  SessionCreateRequest,
-  SessionCreateResponse,
-  SessionContextResponse,
-  SessionListQuery,
-  SessionListResponse,
-  SessionResponse,
-  SessionStatus,
-  SessionCreateEventData,
-  SessionUpdateRequest,
-  DatabricksWorkspaceSource,
-  DatabricksAppsOutcome,
-  GitRepositoryOutcome,
-  GitRepositorySource,
-  ResolvedDatabricksAppsOutcome,
-  SessionOutcome,
-  SessionSource,
-  WsServerMessage,
+import {
+  parseGitBranchRevision,
+  type DatabricksAppsOutcome,
+  type DatabricksWorkspaceSource,
+  type GitRepositoryOutcome,
+  type GitRepositorySource,
+  type ResolvedDatabricksAppsOutcome,
+  type SessionContextResponse,
+  type SessionCreateRequest,
+  type SessionCreateResponse,
+  type SessionCreateEventData,
+  type SessionListQuery,
+  type SessionListResponse,
+  type SessionOutcome,
+  type SessionResponse,
+  type SessionSource,
+  type SessionStatus,
+  type SessionUpdateRequest,
+  type WsServerMessage,
 } from '@repo/types';
 import { buildSystemPromptConfig } from '../utils/system-prompt.helper.js';
 import { sessionEvents, sessions } from '../db/schema.js';
@@ -87,6 +88,19 @@ type LinuxLibc = 'glibc' | 'musl';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function buildGitIdentityEnv(ctx: UserContext): Record<string, string> {
+  // userId/Name/Email はヘッダー欠落時に空文字フォールバックされうるため、最後に固定値を当てる
+  const gitName = ctx.userName.trim() || ctx.userEmail.trim() || ctx.userId || 'ccbricks';
+  const gitEmail = ctx.userEmail.trim() || ctx.userId || 'ccbricks@localhost';
+
+  return {
+    GIT_AUTHOR_NAME: gitName,
+    GIT_AUTHOR_EMAIL: gitEmail,
+    GIT_COMMITTER_NAME: gitName,
+    GIT_COMMITTER_EMAIL: gitEmail,
+  };
 }
 
 function toLogError(error: unknown): Error {
@@ -245,11 +259,10 @@ function validateGitBranchName(branch: string): void {
 }
 
 function getGitBranchFromRevision(revision: string): string {
-  const prefix = 'refs/heads/';
-  if (!revision.startsWith(prefix)) {
+  const branch = parseGitBranchRevision(revision);
+  if (!branch) {
     throw new Error('Git repository revision must start with refs/heads/');
   }
-  const branch = revision.slice(prefix.length);
   validateGitBranchName(branch);
   return branch;
 }
@@ -869,6 +882,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
           PATH: fastify.config.PATH,
           HOME: userHome,
           CLAUDE_CONFIG_DIR: path.join(userHome, '.claude'),
+          ...buildGitIdentityEnv(ctx),
           ...(sdkSessionId ? { CLAUDE_CODE_SESSION_ID: sdkSessionId } : {}),
           SESSION_ID: sessionId.toString(),
           ...(workspacePath ? { SESSION_WORKSPACE_PATH: workspacePath } : {}),
@@ -1094,15 +1108,9 @@ export async function createSession(
     (s): s is GitRepositorySource => s.type === 'git_repository'
   );
 
-  // 5. outcomes の変数を解決（{session_id} → 実際のセッションID、apps にはアプリ名を割当）
+  // 5. Apps outcome にアプリ名を割当
   const resolvedOutcomes = await Promise.all(
     session_context.outcomes.map(async outcome => {
-      if (outcome.type === 'databricks_workspace') {
-        return {
-          ...outcome,
-          path: outcome.path.replace('{session_id}', sessionId.toString()),
-        };
-      }
       if (outcome.type === 'databricks_apps') {
         return resolveAppsOutcomeName(outcome, sessionId, fastify);
       }
@@ -1672,6 +1680,7 @@ export async function executeAbort(
 }
 
 export const __testing = {
+  buildGitIdentityEnv,
   cloneGitRepositorySource,
   extractEventUuid,
   getGitBranchFromRevision,

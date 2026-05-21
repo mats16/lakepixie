@@ -12,6 +12,7 @@ import type {
   SessionUpdateRequest,
   GenerateTitleRequest,
   GenerateTitleResponse,
+  GitRepositoryDiffResponse,
   SDKUserMessage,
   WsControlRequest,
 } from '@repo/types';
@@ -72,6 +73,10 @@ export const sessionService = {
 
   async getSession(sessionId: string): Promise<SessionResponse> {
     return apiClient<SessionResponse>(`/api/sessions/${sessionId}`);
+  },
+
+  async getGitDiff(sessionId: string): Promise<GitRepositoryDiffResponse> {
+    return apiClient<GitRepositoryDiffResponse>(`/api/sessions/${sessionId}/git-diff`);
   },
 
   async sendMessage(

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { SessionResponse, SessionUpdateRequest } from '@repo/types';
 import { sessionService } from '@/services/session.service';
 
@@ -18,24 +18,35 @@ export function useSession({ sessionId }: UseSessionOptions): UseSessionReturn {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const activeRequestId = useRef(0);
 
   const fetchSession = useCallback(async () => {
+    const requestId = activeRequestId.current + 1;
+    activeRequestId.current = requestId;
+
     if (!sessionId) {
       setSession(null);
+      setError(null);
+      setIsLoading(false);
       return;
     }
 
     setIsLoading(true);
     setError(null);
+    setSession(null);
 
     try {
       const response = await sessionService.getSession(sessionId);
+      if (activeRequestId.current !== requestId) return;
       setSession(response);
     } catch (err) {
+      if (activeRequestId.current !== requestId) return;
       setError(err instanceof Error ? err : new Error('Failed to fetch session'));
       setSession(null);
     } finally {
-      setIsLoading(false);
+      if (activeRequestId.current === requestId) {
+        setIsLoading(false);
+      }
     }
   }, [sessionId]);
 

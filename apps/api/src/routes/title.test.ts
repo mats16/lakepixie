@@ -19,13 +19,6 @@ vi.mock('openai', () => {
   return { default: MockOpenAI };
 });
 
-// Mock typeid-js for deterministic fallback
-vi.mock('typeid-js', () => ({
-  typeid: vi.fn(() => ({
-    toString: () => '01abc2def3ghi4jkl5mno6pqrs',
-  })),
-}));
-
 // Mock UserContext
 const mockGetAuthProvider = vi.fn();
 
@@ -41,14 +34,14 @@ vi.mock('../lib/user-context.js', () => ({
 // Mock admin.service to avoid DB dependency
 vi.mock('../services/admin.service.js', () => ({
   getModelSettings: vi.fn().mockResolvedValue({
-    opusModel: 'databricks-claude-opus-4-6',
+    opusModel: 'databricks-claude-opus-4-7',
     sonnetModel: 'databricks-claude-sonnet-4-6',
     haikuModel: 'databricks-claude-haiku-4-5',
   }),
 }));
 
 /** Helper to create a structured output response from the mock LLM */
-function createStructuredResponse(data: { title: string; app_name: string }) {
+function createStructuredResponse(data: { title: string; branch_name: string }) {
   return {
     choices: [
       {
@@ -104,11 +97,11 @@ describe('title route', () => {
   }
 
   describe('POST /generate_title', () => {
-    it('should return generated title and app_name from LLM', async () => {
+    it('should return generated title and branch_name from LLM', async () => {
       mockCreate.mockResolvedValue(
         createStructuredResponse({
           title: 'React Component Development',
-          app_name: 'react-component-dev',
+          branch_name: 'react-component-dev',
         })
       );
 
@@ -125,7 +118,7 @@ describe('title route', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.title).toBe('React Component Development');
-      expect(body.app_name).toBe('react-component-dev');
+      expect(body).not.toHaveProperty('app_name');
       expect(body.branch_name).toMatch(/^ccbricks\/react-component-dev-[a-f0-9]{8}$/);
 
       // Verify OpenAI was called with response_format
@@ -233,7 +226,7 @@ describe('title route', () => {
       mockCreate.mockResolvedValue(
         createStructuredResponse({
           title: 'SP Token Test',
-          app_name: 'sp-token-test',
+          branch_name: 'sp-token-test',
         })
       );
 
@@ -250,7 +243,6 @@ describe('title route', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.title).toBe('SP Token Test');
-      expect(body.app_name).toBe('sp-token-test');
       expect(body.branch_name).toMatch(/^ccbricks\/sp-token-test-[a-f0-9]{8}$/);
     });
 
@@ -266,7 +258,7 @@ describe('title route', () => {
       mockCreate.mockResolvedValue(
         createStructuredResponse({
           title: 'PAT Priority Test',
-          app_name: 'pat-priority-test',
+          branch_name: 'pat-priority-test',
         })
       );
 
@@ -283,7 +275,6 @@ describe('title route', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.title).toBe('PAT Priority Test');
-      expect(body.app_name).toBe('pat-priority-test');
       expect(body.branch_name).toMatch(/^ccbricks\/pat-priority-test-[a-f0-9]{8}$/);
 
       // Verify that getToken was called
@@ -310,7 +301,7 @@ describe('title route', () => {
       expect(body.statusCode).toBe(500);
     });
 
-    it('should return fallback title and typeid app_name when LLM returns empty content', async () => {
+    it('should return fallback title and content-based branch_name when LLM returns empty content', async () => {
       mockCreate.mockResolvedValue({
         choices: [
           {
@@ -334,9 +325,7 @@ describe('title route', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.title).toBe('General coding session');
-      // Fallback uses typeid mock
-      expect(body.app_name).toBe('01abc2def3ghi4jkl5mno6pqrs');
-      expect(body.branch_name).toMatch(/^ccbricks\/01abc2def3ghi4jkl5mno6pqrs-[a-f0-9]{8}$/);
+      expect(body.branch_name).toMatch(/^ccbricks\/help-me-with-something-[a-f0-9]{8}$/);
     });
 
     it('should return fallback when LLM returns null choices', async () => {
@@ -357,14 +346,14 @@ describe('title route', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.title).toBe('General coding session');
-      expect(body.app_name).toBe('01abc2def3ghi4jkl5mno6pqrs');
+      expect(body.branch_name).toMatch(/^ccbricks\/test-message-[a-f0-9]{8}$/);
     });
 
-    it('should return fallback app_name when LLM returns invalid app_name', async () => {
+    it('should fall back to title when generated branch_name has no usable slug', async () => {
       mockCreate.mockResolvedValue(
         createStructuredResponse({
           title: 'Valid Title',
-          app_name: 'INVALID_APP_NAME!!',
+          branch_name: '!!!',
         })
       );
 
@@ -381,14 +370,14 @@ describe('title route', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.title).toBe('Valid Title');
-      expect(body.app_name).toBe('01abc2def3ghi4jkl5mno6pqrs');
+      expect(body.branch_name).toMatch(/^ccbricks\/valid-title-[a-f0-9]{8}$/);
     });
 
-    it('should return fallback app_name when app_name exceeds 26 characters', async () => {
+    it('should truncate generated branch_name when it exceeds 48 characters', async () => {
       mockCreate.mockResolvedValue(
         createStructuredResponse({
           title: 'Valid Title',
-          app_name: 'this-is-a-very-long-app-name-that-exceeds-thirty-chars',
+          branch_name: 'this-is-a-very-long-branch-name-that-exceeds-forty-eight-chars',
         })
       );
 
@@ -405,7 +394,9 @@ describe('title route', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.title).toBe('Valid Title');
-      expect(body.app_name).toBe('01abc2def3ghi4jkl5mno6pqrs');
+      expect(body.branch_name).toMatch(
+        /^ccbricks\/this-is-a-very-long-branch-name-that-exceeds-for-[a-f0-9]{8}$/
+      );
     });
 
     it('should return fallback when LLM returns invalid JSON', async () => {
@@ -432,14 +423,14 @@ describe('title route', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.title).toBe('General coding session');
-      expect(body.app_name).toBe('01abc2def3ghi4jkl5mno6pqrs');
+      expect(body.branch_name).toMatch(/^ccbricks\/test-message-[a-f0-9]{8}$/);
     });
 
     it('should clean up LLM artifacts - remove surrounding quotes from title', async () => {
       mockCreate.mockResolvedValue(
         createStructuredResponse({
           title: '"Python Data Analysis"',
-          app_name: 'python-data-analysis',
+          branch_name: 'python-data-analysis',
         })
       );
 
@@ -456,14 +447,14 @@ describe('title route', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.title).toBe('Python Data Analysis');
-      expect(body.app_name).toBe('python-data-analysis');
+      expect(body.branch_name).toMatch(/^ccbricks\/python-data-analysis-[a-f0-9]{8}$/);
     });
 
     it('should clean up LLM artifacts - remove markdown formatting from title', async () => {
       mockCreate.mockResolvedValue(
         createStructuredResponse({
           title: '**React Component** Development',
-          app_name: 'react-component-dev',
+          branch_name: 'react-component-dev',
         })
       );
 
@@ -486,7 +477,7 @@ describe('title route', () => {
       mockCreate.mockResolvedValue(
         createStructuredResponse({
           title: '`API Integration`',
-          app_name: 'api-integration',
+          branch_name: 'api-integration',
         })
       );
 
@@ -509,7 +500,7 @@ describe('title route', () => {
       mockCreate.mockResolvedValue(
         createStructuredResponse({
           title: '  Python Data Analysis  ',
-          app_name: 'python-data-analysis',
+          branch_name: 'python-data-analysis',
         })
       );
 
@@ -532,7 +523,7 @@ describe('title route', () => {
       mockCreate.mockResolvedValue(
         createStructuredResponse({
           title: 'React Component Implementation',
-          app_name: 'react-component-impl',
+          branch_name: 'react-component-impl',
         })
       );
 
@@ -549,7 +540,7 @@ describe('title route', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.title).toBe('React Component Implementation');
-      expect(body.app_name).toBe('react-component-impl');
+      expect(body.branch_name).toMatch(/^ccbricks\/react-component-impl-[a-f0-9]{8}$/);
 
       // Verify the Japanese message was passed to the LLM
       expect(mockCreate).toHaveBeenCalledWith(
@@ -568,7 +559,7 @@ describe('title route', () => {
       mockCreate.mockResolvedValue(
         createStructuredResponse({
           title: 'Test Title',
-          app_name: 'test-title',
+          branch_name: 'test-title',
         })
       );
 

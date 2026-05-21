@@ -13,6 +13,8 @@ export class UserContext {
   readonly userId: string;
   /** ユーザー名 (x-forwarded-preferred-username) */
   readonly userName: string;
+  /** ユーザーのメールアドレス (x-forwarded-email) */
+  readonly userEmail: string;
   /** ユーザーのホームディレクトリ */
   readonly userHome: string;
 
@@ -29,6 +31,7 @@ export class UserContext {
     const user = request.ctx.user;
     this.userId = user.id;
     this.userName = user.name;
+    this.userEmail = user.email;
     this.userHome = path.join(fastify.config.CCBRICKS_BASE_DIR, 'users', user.id.split('@')[0]);
   }
 

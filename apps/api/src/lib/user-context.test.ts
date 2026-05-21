@@ -52,13 +52,19 @@ describe('UserContext', () => {
   });
 
   describe('constructor', () => {
-    it('should initialize with correct userId and userHome', () => {
+    it('should initialize with correct user fields and userHome', () => {
       const fastify = createMockFastify();
-      const request = createMockRequest({ id: 'user@example.com' });
+      const request = createMockRequest({
+        id: 'user@example.com',
+        name: 'Example User',
+        email: 'user@example.com',
+      });
 
       const ctx = new UserContext(fastify, request);
 
       expect(ctx.userId).toBe('user@example.com');
+      expect(ctx.userName).toBe('Example User');
+      expect(ctx.userEmail).toBe('user@example.com');
       expect(ctx.userHome).toBe('/home/app/users/user');
     });
 

@@ -39,14 +39,14 @@ describe('TitleService', () => {
   });
 
   describe('generateTitle', () => {
-    it('should return generated title and app_name from LLM', async () => {
+    it('should return generated title and branch_name from LLM', async () => {
       mockCreate.mockResolvedValue({
         choices: [
           {
             message: {
               content: JSON.stringify({
                 title: 'React Component Development',
-                app_name: 'react-component-dev',
+                branch_name: 'react-component-dev',
               }),
             },
           },
@@ -61,7 +61,6 @@ describe('TitleService', () => {
 
       expect(result).toEqual({
         title: 'React Component Development',
-        app_name: 'react-component-dev',
         branch_name: expect.stringMatching(/^ccbricks\/react-component-dev-[a-f0-9]{8}$/),
       });
       expect(mockCreate).toHaveBeenCalledWith(
@@ -97,8 +96,7 @@ describe('TitleService', () => {
       });
 
       expect(result.title).toBe('General coding session');
-      expect(result.app_name).toMatch(/^[a-z0-9]{26}$/);
-      expect(result.branch_name).toMatch(/^ccbricks\/[a-z0-9]{26}-[a-f0-9]{8}$/);
+      expect(result.branch_name).toMatch(/^ccbricks\/test-message-[a-f0-9]{8}$/);
     });
 
     it('should return fallback title when choices array is empty', async () => {
@@ -113,8 +111,7 @@ describe('TitleService', () => {
       });
 
       expect(result.title).toBe('General coding session');
-      expect(result.app_name).toMatch(/^[a-z0-9]{26}$/);
-      expect(result.branch_name).toMatch(/^ccbricks\/[a-z0-9]{26}-[a-f0-9]{8}$/);
+      expect(result.branch_name).toMatch(/^ccbricks\/test-message-[a-f0-9]{8}$/);
     });
 
     it('should return fallback title when message content is null', async () => {
@@ -135,8 +132,7 @@ describe('TitleService', () => {
       });
 
       expect(result.title).toBe('General coding session');
-      expect(result.app_name).toMatch(/^[a-z0-9]{26}$/);
-      expect(result.branch_name).toMatch(/^ccbricks\/[a-z0-9]{26}-[a-f0-9]{8}$/);
+      expect(result.branch_name).toMatch(/^ccbricks\/test-message-[a-f0-9]{8}$/);
     });
 
     it('should generate unique branch names for each request', async () => {
@@ -146,7 +142,7 @@ describe('TitleService', () => {
             message: {
               content: JSON.stringify({
                 title: 'React Component Development',
-                app_name: 'react-component-dev',
+                branch_name: 'react-component-dev',
               }),
             },
           },
@@ -186,7 +182,7 @@ describe('TitleService', () => {
             message: {
               content: JSON.stringify({
                 title: '"Python Data Analysis"',
-                app_name: 'python-data-analysis',
+                branch_name: 'python-data-analysis',
               }),
             },
           },
@@ -200,7 +196,7 @@ describe('TitleService', () => {
       });
 
       expect(result.title).toBe('Python Data Analysis');
-      expect(result.app_name).toBe('python-data-analysis');
+      expect(result.branch_name).toMatch(/^ccbricks\/python-data-analysis-[a-f0-9]{8}$/);
     });
 
     it('should clean single quotes from title', async () => {
@@ -210,7 +206,7 @@ describe('TitleService', () => {
             message: {
               content: JSON.stringify({
                 title: "'React Component'",
-                app_name: 'react-component',
+                branch_name: 'react-component',
               }),
             },
           },
@@ -233,7 +229,7 @@ describe('TitleService', () => {
             message: {
               content: JSON.stringify({
                 title: '`API Integration`',
-                app_name: 'api-integration',
+                branch_name: 'api-integration',
               }),
             },
           },
@@ -256,7 +252,7 @@ describe('TitleService', () => {
             message: {
               content: JSON.stringify({
                 title: '**React Component** Development',
-                app_name: 'react-component-dev',
+                branch_name: 'react-component-dev',
               }),
             },
           },
@@ -279,7 +275,7 @@ describe('TitleService', () => {
             message: {
               content: JSON.stringify({
                 title: '*React Component* Development',
-                app_name: 'react-component-dev',
+                branch_name: 'react-component-dev',
               }),
             },
           },
@@ -302,7 +298,7 @@ describe('TitleService', () => {
             message: {
               content: JSON.stringify({
                 title: '  Python Data Analysis  ',
-                app_name: 'python-data-analysis',
+                branch_name: 'python-data-analysis',
               }),
             },
           },
@@ -325,7 +321,7 @@ describe('TitleService', () => {
             message: {
               content: JSON.stringify({
                 title: 'React Component Implementation',
-                app_name: 'react-component-impl',
+                branch_name: 'react-component-impl',
               }),
             },
           },
@@ -357,7 +353,7 @@ describe('TitleService', () => {
             message: {
               content: JSON.stringify({
                 title: '""',
-                app_name: 'general-session',
+                branch_name: 'general-session',
               }),
             },
           },
@@ -373,14 +369,14 @@ describe('TitleService', () => {
       expect(result.title).toBe('General coding session');
     });
 
-    it('should generate fallback app_name when app_name is invalid', async () => {
+    it('should fall back to title when generated branch_name has no usable slug', async () => {
       mockCreate.mockResolvedValue({
         choices: [
           {
             message: {
               content: JSON.stringify({
                 title: 'Valid Title',
-                app_name: 'INVALID_APP_NAME!',
+                branch_name: '!!!',
               }),
             },
           },
@@ -394,7 +390,7 @@ describe('TitleService', () => {
       });
 
       expect(result.title).toBe('Valid Title');
-      expect(result.app_name).toMatch(/^[a-z0-9]{26}$/);
+      expect(result.branch_name).toMatch(/^ccbricks\/valid-title-[a-f0-9]{8}$/);
     });
 
     it('should return fallback when JSON parsing fails', async () => {
@@ -415,7 +411,7 @@ describe('TitleService', () => {
       });
 
       expect(result.title).toBe('General coding session');
-      expect(result.app_name).toMatch(/^[a-z0-9]{26}$/);
+      expect(result.branch_name).toMatch(/^ccbricks\/test-[a-f0-9]{8}$/);
     });
   });
 });

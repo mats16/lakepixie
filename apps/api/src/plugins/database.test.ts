@@ -1,6 +1,9 @@
 // apps/api/src/plugins/database.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import configPlugin from './config.js';
 import databasePlugin, { RLSContextError } from './database.js';
 
@@ -69,14 +72,16 @@ const TEST_PGDATABASE = 'databricks-postgres';
 describe('database plugin', () => {
   let app: FastifyInstance;
   let originalEnv: NodeJS.ProcessEnv;
+  let testBaseDir = '';
 
   beforeEach(() => {
     // Save original environment
     originalEnv = { ...process.env };
+    testBaseDir = mkdtempSync(join(tmpdir(), 'ccbricks-database-test-'));
 
     // Set required environment variables for config plugin
     process.env.DATABRICKS_HOST = 'test.databricks.com';
-    process.env.CCBRICKS_BASE_DIR = '/private/tmp/ccbricks-database-test';
+    process.env.CCBRICKS_BASE_DIR = testBaseDir;
     delete process.env.LAKEBASE_ENDPOINT;
     delete process.env.PGAPPNAME;
     delete process.env.PGUSER;
@@ -115,7 +120,12 @@ describe('database plugin', () => {
     process.env = originalEnv;
 
     // Close Fastify instance (will trigger onClose hook)
-    await app.close();
+    try {
+      await app.close();
+    } finally {
+      rmSync(testBaseDir, { recursive: true, force: true });
+      testBaseDir = '';
+    }
   });
 
   describe('successful initialization', () => {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Rocket, FolderCode, Settings, Logs, Loader2 } from 'lucide-react';
+import { Rocket, Folder, Settings, Logs, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { APP_STATUS_POLLING_INTERVAL_MS, APP_STATUS_POLLING_STABLE_INTERVAL_MS } from '@/constants';
@@ -14,6 +14,7 @@ interface FloatingButtonsProps {
   showAppButton: boolean;
   /** Workspace パス - ボタン表示は path の有無で判定 */
   workspacePath?: string;
+  bottomClassName?: string;
 }
 
 type AppStateType = 'RUNNING' | 'DEPLOYING' | 'CRASHED' | 'UNAVAILABLE' | 'UNKNOWN';
@@ -64,7 +65,12 @@ function getPollingInterval(state: string | undefined): number {
     : APP_STATUS_POLLING_INTERVAL_MS;
 }
 
-export function FloatingButtons({ sessionId, showAppButton, workspacePath }: FloatingButtonsProps) {
+export function FloatingButtons({
+  sessionId,
+  showAppButton,
+  workspacePath,
+  bottomClassName = 'pb-[7.5rem]',
+}: FloatingButtonsProps) {
   const showWorkspaceButton = !!workspacePath;
   const { t } = useTranslation();
   const { databricksHost } = useUser();
@@ -195,62 +201,71 @@ export function FloatingButtons({ sessionId, showAppButton, workspacePath }: Flo
   }
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 pb-[7.5rem] px-4 pointer-events-none z-10">
-      <div className="w-full max-w-[735px] mx-auto flex justify-between items-center pointer-events-auto">
-        {/* 左側: App ボタン */}
-        <div>
+    <div
+      className={cn(
+        'absolute bottom-0 left-0 right-0 px-4 pointer-events-none z-10',
+        bottomClassName
+      )}
+    >
+      <div className="w-full max-w-[735px] mx-auto pointer-events-auto">
+        <div className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border bg-background px-3 shadow-lg">
+          {showWorkspaceButton && (
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-3 text-left hover:opacity-70 disabled:opacity-50"
+              onClick={handleOpenWorkspace}
+              disabled={isOpeningWorkspace}
+              title={workspacePath}
+            >
+              {isOpeningWorkspace ? (
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-foreground" />
+              ) : (
+                <Folder className="h-4 w-4 shrink-0 text-foreground" />
+              )}
+              <span className="min-w-0 truncate text-sm font-medium">{workspacePath}</span>
+            </button>
+          )}
+
           {showAppButton && (
-            <div className="flex items-center h-8 px-3 rounded-lg shadow-lg bg-background border gap-2">
+            <div
+              className={cn(
+                'flex min-w-0 items-center gap-2 overflow-hidden',
+                showWorkspaceButton ? 'max-w-[42%] shrink-0' : 'ml-auto'
+              )}
+            >
               <button
-                className="flex items-center gap-1 hover:opacity-70 disabled:opacity-50"
+                type="button"
+                className="flex min-w-0 items-center gap-1 hover:opacity-70 disabled:opacity-50"
                 onClick={handleOpenApp}
                 disabled={!appInfo?.url}
               >
-                <Rocket className={cn('h-4 w-4', style.iconClass)} />
-                <span className="text-sm font-medium">{t('databricksApp.app')}</span>
+                <Rocket className={cn('h-4 w-4 shrink-0', style.iconClass)} />
+                <span className="truncate text-sm font-medium">{t('databricksApp.app')}</span>
               </button>
               <Badge
                 variant={style.badgeVariant}
-                className={cn('text-xs px-1.5 py-0', style.badgeClass)}
+                className={cn('shrink-0 text-xs px-1.5 py-0', style.badgeClass)}
               >
                 {appState}
               </Badge>
-              <span className="text-muted-foreground">|</span>
+              <span className="shrink-0 text-muted-foreground">|</span>
               <button
-                className="flex items-center gap-1 hover:opacity-70 disabled:opacity-50"
+                type="button"
+                className="flex min-w-0 items-center gap-1 hover:opacity-70 disabled:opacity-50"
                 onClick={handleOpenLogs}
                 disabled={!appInfo?.url}
               >
-                <Logs className="h-4 w-4 text-foreground" />
-                <span className="text-sm font-medium">{t('databricksApp.logs')}</span>
+                <Logs className="h-4 w-4 shrink-0 text-foreground" />
+                <span className="truncate text-sm font-medium">{t('databricksApp.logs')}</span>
               </button>
-              <span className="text-muted-foreground">|</span>
+              <span className="shrink-0 text-muted-foreground">|</span>
               <button
-                className="hover:opacity-70 disabled:opacity-50"
+                type="button"
+                className="shrink-0 hover:opacity-70 disabled:opacity-50"
                 onClick={handleOpenConsole}
                 disabled={!appInfo?.name}
               >
                 <Settings className="h-4 w-4 text-foreground" />
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* 右側: Workspace ボタン */}
-        <div>
-          {showWorkspaceButton && (
-            <div className="flex items-center h-8 px-3 rounded-lg shadow-lg bg-background border">
-              <button
-                className="flex items-center gap-1 hover:opacity-70 disabled:opacity-50"
-                onClick={handleOpenWorkspace}
-                disabled={isOpeningWorkspace}
-              >
-                {isOpeningWorkspace ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-foreground" />
-                ) : (
-                  <FolderCode className="h-4 w-4 text-foreground" />
-                )}
-                <span className="text-sm font-medium">{t('databricksApp.workspace')}</span>
               </button>
             </div>
           )}

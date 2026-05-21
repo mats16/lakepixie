@@ -16,9 +16,18 @@ export interface DatabricksWorkspaceSource {
 export interface GitRepositorySource {
   type: 'git_repository';
   url: string;
+  /** Branch revision only. Supported format: refs/heads/<branch>. */
   revision: string;
   sparse_checkout_paths: string[];
   allow_unrestricted_git_push: boolean;
+}
+
+export const GIT_BRANCH_REVISION_PREFIX = 'refs/heads/';
+
+export function parseGitBranchRevision(revision: string): string | null {
+  if (!revision.startsWith(GIT_BRANCH_REVISION_PREFIX)) return null;
+  const branch = revision.slice(GIT_BRANCH_REVISION_PREFIX.length);
+  return branch || null;
 }
 
 export interface DatabricksAppsOutcome {

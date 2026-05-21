@@ -3,12 +3,17 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
+  Check,
+  ChevronsUpDown,
+  Database,
   ExternalLink,
   HelpCircle,
+  Info,
   Loader2,
   Save,
   ShieldCheck,
   ShieldOff,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import type {
@@ -19,10 +24,10 @@ import type {
 } from '@repo/types';
 import { useUser } from '@/hooks/useUser';
 import { adminService } from '@/services';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ClearableInput } from '@/components/ui/clearable-input';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -35,12 +40,23 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const GITHUB_APPS_SETTINGS_URL = 'https://github.com/settings/apps';
+
+function includeSelectedModel(options: string[], selectedValue: string): string[] {
+  if (!selectedValue || options.includes(selectedValue)) {
+    return options;
+  }
+  return [selectedValue, ...options];
+}
 
 function useAdminSettings() {
   const { t } = useTranslation();
@@ -82,7 +98,7 @@ function useAdminSettings() {
     [t]
   );
 
-  return { settings, isLoadingSettings, savingKey, saveSetting };
+  return { settings, isLoadingSettings, savingKey, saveSetting, refreshSettings: fetchSettings };
 }
 
 function useGitHubAppAuth() {
@@ -190,6 +206,10 @@ function GitHubAppGuideDialog({ open, onOpenChange }: GitHubAppGuideDialogProps)
                 {t('admin.githubAppGuideContentsPermission')}
               </dt>
               <dd>{t('admin.githubAppGuideContentsPermissionValue')}</dd>
+              <dt className="text-muted-foreground">
+                {t('admin.githubAppGuidePullRequestsPermission')}
+              </dt>
+              <dd>{t('admin.githubAppGuidePullRequestsPermissionValue')}</dd>
             </dl>
           </div>
         </div>
@@ -198,17 +218,350 @@ function GitHubAppGuideDialog({ open, onOpenChange }: GitHubAppGuideDialogProps)
   );
 }
 
+const DEFAULT_TELEMETRY_TABLE_PREFIX = 'ccbricks';
+
+interface SearchableSelectProps {
+  disabled?: boolean;
+  emptyText: string;
+  options: string[];
+  placeholder: string;
+  searchPlaceholder: string;
+  triggerRef?: React.Ref<HTMLButtonElement>;
+  value: string;
+  onValueChange: (value: string) => void;
+}
+
+function SearchableSelect({
+  disabled = false,
+  emptyText,
+  options,
+  placeholder,
+  searchPlaceholder,
+  triggerRef,
+  value,
+  onValueChange,
+}: SearchableSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const filteredOptions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return options;
+
+    return options.filter(option => option.toLowerCase().includes(normalizedQuery));
+  }, [options, query]);
+
+  useEffect(() => {
+    if (!open) setQuery('');
+  }, [open]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          ref={triggerRef}
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="h-10 w-full justify-between px-3 font-normal"
+          disabled={disabled}
+        >
+          <span className={cn('truncate', !value && 'text-muted-foreground')}>
+            {value || placeholder}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="z-[60] w-[--radix-popover-trigger-width] overflow-hidden p-0"
+        align="start"
+      >
+        <div className="border-b p-2">
+          <Input
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder={searchPlaceholder}
+            className="h-9"
+          />
+        </div>
+        <div
+          className="max-h-80 overflow-y-auto overscroll-contain p-1"
+          onWheelCapture={event => event.stopPropagation()}
+        >
+          {filteredOptions.length === 0 ? (
+            <p className="px-2 py-6 text-center text-sm text-muted-foreground">{emptyText}</p>
+          ) : (
+            filteredOptions.map(option => (
+              <button
+                key={option}
+                type="button"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                onClick={() => {
+                  onValueChange(option);
+                  setOpen(false);
+                }}
+              >
+                <Check className={cn('h-4 w-4', option === value ? 'opacity-100' : 'opacity-0')} />
+                <span className="truncate">{option}</span>
+              </button>
+            ))
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+interface FieldHelpLabelProps {
+  label: string;
+  help: string;
+}
+
+function FieldHelpLabel({ label, help }: FieldHelpLabelProps) {
+  return (
+    <div className="flex items-center gap-2">
+      <p className="text-sm font-medium">{label}</p>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              aria-label={help}
+            >
+              <Info className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">
+            <p>{help}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </div>
+  );
+}
+
+interface TelemetrySetupDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  appName: string;
+  onSetupComplete: () => Promise<void>;
+}
+
+function TelemetrySetupDialog({
+  open,
+  onOpenChange,
+  appName,
+  onSetupComplete,
+}: TelemetrySetupDialogProps) {
+  const { t } = useTranslation();
+  const [catalogs, setCatalogs] = useState<string[]>([]);
+  const [schemas, setSchemas] = useState<string[]>([]);
+  const [selectedCatalog, setSelectedCatalog] = useState('');
+  const [selectedSchema, setSelectedSchema] = useState('');
+  const [tablePrefixInput, setTablePrefixInput] = useState(DEFAULT_TELEMETRY_TABLE_PREFIX);
+  const [experimentNameInput, setExperimentNameInput] = useState('ccbricks-otel');
+  const [isLoadingCatalogs, setIsLoadingCatalogs] = useState(false);
+  const [isLoadingSchemas, setIsLoadingSchemas] = useState(false);
+  const [isSettingUp, setIsSettingUp] = useState(false);
+  const catalogTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const catalogName = selectedCatalog.trim();
+  const schemaName = selectedSchema.trim();
+  const tablePrefix = tablePrefixInput.trim();
+  const experimentName = experimentNameInput.trim();
+  const experimentPath = appName
+    ? `/Shared/${appName}/experiments/${experimentName || t('admin.telemetryExperimentNamePreview')}`
+    : t('admin.telemetryAppNameUnavailable');
+  const canSubmit =
+    catalogName.length > 0 &&
+    schemaName.length > 0 &&
+    tablePrefix.length > 0 &&
+    experimentName.length > 0 &&
+    !isSettingUp;
+
+  const loadCatalogs = useCallback(async () => {
+    setIsLoadingCatalogs(true);
+    try {
+      const response = await adminService.getTelemetryCatalogs();
+      setCatalogs(response.catalogs);
+    } catch {
+      toast.error(t('admin.telemetryCatalogsFetchError'));
+    } finally {
+      setIsLoadingCatalogs(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    setSelectedCatalog('');
+    setSelectedSchema('');
+    setSchemas([]);
+    setTablePrefixInput(DEFAULT_TELEMETRY_TABLE_PREFIX);
+    setExperimentNameInput('ccbricks-otel');
+  }, [open]);
+
+  const loadSchemas = useCallback(
+    async (catalog: string) => {
+      setIsLoadingSchemas(true);
+      try {
+        const response = await adminService.getTelemetrySchemas(catalog);
+        setSchemas(response.schemas);
+      } catch {
+        toast.error(t('admin.telemetrySchemasFetchError'));
+      } finally {
+        setIsLoadingSchemas(false);
+      }
+    },
+    [t]
+  );
+
+  useEffect(() => {
+    if (open) {
+      void loadCatalogs();
+    }
+  }, [loadCatalogs, open]);
+
+  useEffect(() => {
+    if (open && selectedCatalog) {
+      void loadSchemas(selectedCatalog);
+    }
+  }, [loadSchemas, open, selectedCatalog]);
+
+  const handleCatalogChange = (value: string) => {
+    setSelectedCatalog(value);
+    setSelectedSchema('');
+  };
+
+  const handleSchemaChange = (value: string) => {
+    setSelectedSchema(value);
+  };
+
+  const handleSetup = async () => {
+    if (!canSubmit) return;
+    setIsSettingUp(true);
+    try {
+      await adminService.setupTelemetry({
+        catalog_name: catalogName,
+        schema_name: schemaName,
+        table_prefix: tablePrefix,
+        experiment_name: experimentName,
+      });
+      toast.success(t('admin.telemetrySetupSuccess'));
+      await onSetupComplete();
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('admin.telemetrySetupError'));
+    } finally {
+      setIsSettingUp(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={nextOpen => {
+        if (!isSettingUp) onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent
+        className="max-w-2xl"
+        onOpenAutoFocus={event => {
+          event.preventDefault();
+          catalogTriggerRef.current?.focus();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>{t('admin.telemetrySetupTitle')}</DialogTitle>
+          <DialogDescription>{t('admin.telemetrySetupDescription')}</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-2">
+              <p className="text-sm font-medium">{t('admin.telemetryCatalog')}</p>
+              <SearchableSelect
+                value={selectedCatalog}
+                onValueChange={handleCatalogChange}
+                disabled={isLoadingCatalogs || isSettingUp}
+                triggerRef={catalogTriggerRef}
+                options={catalogs}
+                placeholder={t('admin.telemetryCatalogPlaceholder')}
+                searchPlaceholder={t('admin.telemetryCatalogSearchPlaceholder')}
+                emptyText={t('admin.telemetryCatalogEmpty')}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <p className="text-sm font-medium">{t('admin.telemetrySchema')}</p>
+              <SearchableSelect
+                value={selectedSchema}
+                onValueChange={handleSchemaChange}
+                disabled={!selectedCatalog || isLoadingSchemas || isSettingUp}
+                options={schemas}
+                placeholder={t('admin.telemetrySchemaPlaceholder')}
+                searchPlaceholder={t('admin.telemetrySchemaSearchPlaceholder')}
+                emptyText={t('admin.telemetrySchemaEmpty')}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <FieldHelpLabel
+              label={t('admin.telemetryTablePrefix')}
+              help={t('admin.telemetryTablePrefixHelp')}
+            />
+            <Input
+              value={tablePrefixInput}
+              onChange={event => setTablePrefixInput(event.target.value)}
+              placeholder={DEFAULT_TELEMETRY_TABLE_PREFIX}
+              disabled={isSettingUp}
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <FieldHelpLabel
+              label={t('admin.telemetryExperimentName')}
+              help={t('admin.telemetryExperimentNameHelp')}
+            />
+            <Input
+              value={experimentNameInput}
+              onChange={event => setExperimentNameInput(event.target.value)}
+              placeholder={t('admin.telemetryExperimentNamePlaceholder')}
+              disabled={isSettingUp}
+            />
+            <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+              {experimentPath}
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSettingUp}>
+            {t('common.cancel')}
+          </Button>
+          <Button onClick={handleSetup} disabled={!canSubmit}>
+            {isSettingUp && <Loader2 className="h-4 w-4 animate-spin" />}
+            {t('admin.telemetrySetupRun')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function AdminSettingsContent() {
   const { t } = useTranslation();
-  const { settings, isLoadingSettings, savingKey, saveSetting } = useAdminSettings();
+  const { settings, isLoadingSettings, savingKey, saveSetting, refreshSettings } =
+    useAdminSettings();
 
   const [servingEndpoints, setServingEndpoints] = useState<ServingEndpointsByTier | null>(null);
   const [isLoadingEndpoints, setIsLoadingEndpoints] = useState(true);
   const [otelMetricsTableInput, setOtelMetricsTableInput] = useState('');
   const [otelLogsTableInput, setOtelLogsTableInput] = useState('');
   const [otelTracesTableInput, setOtelTracesTableInput] = useState('');
-
-  const MODEL_NULL_SENTINEL = '__default__';
+  const [isTelemetrySetupOpen, setIsTelemetrySetupOpen] = useState(false);
 
   const fetchServingEndpoints = useCallback(async () => {
     try {
@@ -236,7 +589,7 @@ function AdminSettingsContent() {
 
   const handleModelChange = (
     key: 'default_opus_model' | 'default_sonnet_model' | 'default_haiku_model',
-    value: string | null
+    value: string
   ) => saveSetting(key, { [key]: value });
 
   const handleDefaultRoleChange = (value: string) =>
@@ -314,34 +667,46 @@ function AdminSettingsContent() {
                   options: servingEndpoints?.haiku ?? [],
                 },
               ] as const
-            ).map(({ key, label, options }) => (
-              <div key={key} className="flex items-center justify-between gap-4">
-                <p className="text-sm font-medium shrink-0">{label}</p>
-                <Select
-                  value={settings?.[key] ?? MODEL_NULL_SENTINEL}
-                  onValueChange={v => handleModelChange(key, v === MODEL_NULL_SENTINEL ? null : v)}
-                  disabled={savingKey !== null}
-                >
-                  <SelectTrigger className="w-[320px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={MODEL_NULL_SENTINEL}>{t('admin.envDefault')}</SelectItem>
-                    {options.map(name => (
-                      <SelectItem key={name} value={name}>
-                        {name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ))}
+            ).map(({ key, label, options }) => {
+              const selectedValue = settings?.[key] ?? '';
+              const modelOptions = includeSelectedModel(options, selectedValue);
+
+              return (
+                <div key={key} className="flex items-center justify-between gap-4">
+                  <p className="text-sm font-medium shrink-0">{label}</p>
+                  <Select
+                    value={selectedValue}
+                    onValueChange={value => handleModelChange(key, value)}
+                    disabled={savingKey !== null}
+                  >
+                    <SelectTrigger className="w-[320px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {modelOptions.map(name => (
+                        <SelectItem key={name} value={name}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold mb-4">{t('admin.telemetryConfiguration')}</h2>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">{t('admin.telemetryConfiguration')}</h2>
+          {!isLoadingSettings && (
+            <Button variant="outline" size="sm" onClick={() => setIsTelemetrySetupOpen(true)}>
+              <Database className="h-4 w-4" />
+              {t('admin.telemetrySetupButton')}
+            </Button>
+          )}
+        </div>
         {isLoadingSettings ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -405,6 +770,12 @@ function AdminSettingsContent() {
             </div>
           </div>
         )}
+        <TelemetrySetupDialog
+          open={isTelemetrySetupOpen}
+          onOpenChange={setIsTelemetrySetupOpen}
+          appName={settings?.databricks_app_name ?? ''}
+          onSetupComplete={refreshSettings}
+        />
       </section>
     </div>
   );
@@ -416,10 +787,6 @@ function AdminGitContent() {
     useGitHubAppAuth();
 
   const [githubAppIdInput, setGitHubAppIdInput] = useState('');
-  const [githubAppPrivateKeyInput, setGitHubAppPrivateKeyInput] = useState('');
-  const [githubAppPrivateKeyFileName, setGitHubAppPrivateKeyFileName] = useState<string | null>(
-    null
-  );
   const [isGitHubAppGuideOpen, setIsGitHubAppGuideOpen] = useState(false);
   const githubAppPrivateKeyFileInputRef = useRef<HTMLInputElement>(null);
   const lastSyncedGitHubAppIdRef = useRef('');
@@ -432,35 +799,29 @@ function AdminGitContent() {
         current === previousPersistedAppId ? persistedAppId : current
       );
       lastSyncedGitHubAppIdRef.current = persistedAppId;
-      setGitHubAppPrivateKeyInput('');
     }
   }, [githubAppAuth]);
 
-  const githubAppAuthDirty =
-    githubAppIdInput.trim() !== (githubAppAuth?.github_app_id ?? '') ||
-    githubAppPrivateKeyInput.trim().length > 0;
+  const trimmedGitHubAppId = githubAppIdInput.trim();
+  const githubAppIdDirty = trimmedGitHubAppId !== (githubAppAuth?.github_app_id ?? '');
+  const isGitHubAppPrivateKeyConfigured = githubAppAuth?.private_key_configured ?? false;
+  const githubAppPrivateKeyHelpText = isGitHubAppPrivateKeyConfigured
+    ? t('admin.githubAppPrivateKeyConfiguredDescription')
+    : t('admin.githubAppPrivateKeyNotConfigured');
 
-  const handleGitHubAppAuthSave = async () => {
-    const patch: Parameters<typeof adminService.updateGitHubAppAuth>[0] = {};
-    if (githubAppIdInput.trim() !== (githubAppAuth?.github_app_id ?? '')) {
-      patch.github_app_id = githubAppIdInput.trim() || null;
-    }
-    if (githubAppPrivateKeyInput.trim()) {
-      patch.github_app_private_key = githubAppPrivateKeyInput.trim();
-    }
+  const openGitHubAppPrivateKeyFilePicker = () => {
+    githubAppPrivateKeyFileInputRef.current?.click();
+  };
 
-    const saved = await saveGitHubAppAuth(patch);
-    if (saved) {
-      setGitHubAppPrivateKeyInput('');
-      setGitHubAppPrivateKeyFileName(null);
-    }
+  const handleGitHubAppIdSave = async () => {
+    if (!githubAppIdDirty) return;
+    await saveGitHubAppAuth({ github_app_id: trimmedGitHubAppId || null });
   };
 
   const handleGitHubAppPrivateKeyFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
     const file = input.files?.[0];
     if (!file) return;
-    setGitHubAppPrivateKeyFileName(null);
 
     try {
       const text = await file.text();
@@ -469,16 +830,18 @@ function AdminGitContent() {
         return;
       }
 
-      const saved = await saveGitHubAppAuth({ github_app_private_key: text });
-      if (saved) {
-        setGitHubAppPrivateKeyInput('');
-        setGitHubAppPrivateKeyFileName(file.name);
-      }
+      await saveGitHubAppAuth({ github_app_private_key: text });
     } catch {
       toast.error(t('admin.githubAppPrivateKeyFileError'));
     } finally {
       input.value = '';
     }
+  };
+
+  const handleGitHubAppPrivateKeyDelete = async () => {
+    if (!window.confirm(t('admin.githubAppPrivateKeyDeleteConfirm'))) return;
+
+    await saveGitHubAppAuth({ github_app_private_key: null });
   };
 
   return (
@@ -505,17 +868,43 @@ function AdminGitContent() {
               <p className="text-sm font-medium">{t('admin.githubAppId')}</p>
               <p className="text-xs text-muted-foreground">{t('admin.githubAppIdDescription')}</p>
             </div>
-            <Input
-              className="w-[320px]"
-              placeholder={t('admin.githubAppIdPlaceholder')}
-              value={githubAppIdInput}
-              onChange={e => setGitHubAppIdInput(e.target.value)}
-              disabled={isSavingGitHubAppAuth}
-            />
+            <div className="flex w-[320px] items-center gap-2">
+              <Input
+                className="min-w-0 flex-1"
+                placeholder={t('admin.githubAppIdPlaceholder')}
+                value={githubAppIdInput}
+                onChange={e => setGitHubAppIdInput(e.target.value)}
+                disabled={isSavingGitHubAppAuth}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleGitHubAppIdSave}
+                disabled={isSavingGitHubAppAuth || !githubAppIdDirty}
+              >
+                {isSavingGitHubAppAuth ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <Save className="h-4 w-4 mr-2" />
+                )}
+                {t('common.save')}
+              </Button>
+            </div>
           </div>
           <div className="flex items-start justify-between gap-4">
             <div className="shrink-0">
-              <p className="text-sm font-medium">{t('admin.githubAppPrivateKey')}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium">{t('admin.githubAppPrivateKey')}</p>
+                {isGitHubAppPrivateKeyConfigured && (
+                  <Badge
+                    variant="secondary"
+                    className="gap-1 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+                  >
+                    <ShieldCheck className="h-3 w-3" />
+                    {t('admin.githubAppPrivateKeyConfigured')}
+                  </Badge>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">
                 {t('admin.githubAppPrivateKeyDescription')}
               </p>
@@ -529,54 +918,47 @@ function AdminGitContent() {
                 onChange={handleGitHubAppPrivateKeyFileChange}
                 disabled={isSavingGitHubAppAuth}
               />
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full justify-start"
-                onClick={() => githubAppPrivateKeyFileInputRef.current?.click()}
-                disabled={isSavingGitHubAppAuth}
-              >
-                <Upload className="h-4 w-4" />
-                {t('admin.githubAppPrivateKeySelectFile')}
-              </Button>
-              <p className="text-xs text-muted-foreground">
-                {githubAppAuth?.private_key_configured
-                  ? t('admin.githubAppPrivateKeyConfigured')
-                  : t('admin.githubAppPrivateKeyNotConfigured')}
-              </p>
-              {githubAppPrivateKeyFileName && (
-                <p className="truncate text-xs text-muted-foreground">
-                  {t('admin.githubAppPrivateKeySelectedFile', {
-                    fileName: githubAppPrivateKeyFileName,
-                  })}
-                </p>
-              )}
-              <Textarea
-                className="min-h-[140px] font-mono text-xs"
-                placeholder={t('admin.githubAppPrivateKeyPlaceholder')}
-                value={githubAppPrivateKeyInput}
-                onChange={e => {
-                  setGitHubAppPrivateKeyInput(e.target.value);
-                  setGitHubAppPrivateKeyFileName(null);
-                }}
-                disabled={isSavingGitHubAppAuth}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleGitHubAppAuthSave}
-              disabled={isSavingGitHubAppAuth || !githubAppAuthDirty}
-            >
-              {isSavingGitHubAppAuth ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              {isGitHubAppPrivateKeyConfigured ? (
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1 justify-center"
+                    onClick={openGitHubAppPrivateKeyFilePicker}
+                    disabled={isSavingGitHubAppAuth}
+                  >
+                    <Upload className="h-4 w-4" />
+                    {t('admin.githubAppPrivateKeyChangeFile')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1 justify-center text-destructive hover:text-destructive"
+                    onClick={handleGitHubAppPrivateKeyDelete}
+                    disabled={isSavingGitHubAppAuth}
+                  >
+                    {isSavingGitHubAppAuth ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                    {t('admin.githubAppPrivateKeyDelete')}
+                  </Button>
+                </div>
               ) : (
-                <Save className="h-4 w-4 mr-2" />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={openGitHubAppPrivateKeyFilePicker}
+                  disabled={isSavingGitHubAppAuth}
+                >
+                  <Upload className="h-4 w-4" />
+                  {t('admin.githubAppPrivateKeySelectFile')}
+                </Button>
               )}
-              {t('common.save')}
-            </Button>
+              <p className="text-xs text-muted-foreground">{githubAppPrivateKeyHelpText}</p>
+            </div>
           </div>
         </div>
       )}

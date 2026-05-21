@@ -4,9 +4,13 @@ import { writeFile, chmod, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type {
+  GitRepositoryBranchDetailResponse,
   GitHubAppAuthResponse,
   GitRepositoryBranchCandidate,
   GitRepositoryCandidate,
+  GitRepositoryPullRequest,
+  GitRepositoryPullRequestCreateRequest,
+  GitRepositoryPullRequestStateFilter,
   UpdateGitHubAppAuthRequest,
 } from '@repo/types';
 import {
@@ -25,6 +29,8 @@ const GITHUB_MAX_PAGES = 50;
 const TOKEN_CACHE_BUFFER_MS = 5 * 60 * 1000;
 
 export type GitHubAppTokenPermission = 'read' | 'write';
+type GitHubAppPermissionName = 'contents' | 'pull_requests';
+type GitHubAppTokenPermissions = Partial<Record<GitHubAppPermissionName, GitHubAppTokenPermission>>;
 
 interface GitHubAppCredentials {
   appId: string;
@@ -37,9 +43,7 @@ interface GitHubInstallationResponse {
 
 interface GitHubInstallationTokenRequest {
   repositories?: string[];
-  permissions: {
-    contents: GitHubAppTokenPermission;
-  };
+  permissions: GitHubAppTokenPermissions;
 }
 
 interface GitHubInstallationTokenResponse {
@@ -61,6 +65,25 @@ interface GitHubInstallationRepositoriesResponse {
 interface GitHubBranchResponse {
   name?: string;
   protected?: boolean;
+}
+
+interface GitHubPullRequestResponse {
+  number?: number;
+  title?: string;
+  state?: string;
+  draft?: boolean;
+  merged?: boolean;
+  html_url?: string;
+  additions?: number;
+  deletions?: number;
+  head?: {
+    ref?: string;
+    label?: string;
+  };
+  base?: {
+    ref?: string;
+    label?: string;
+  };
 }
 
 interface CachedInstallationToken {
@@ -89,7 +112,10 @@ export class GitHubAppAuthNotConfiguredError extends Error {
 }
 
 export class GitHubAppAuthError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly details?: unknown
+  ) {
     super(message);
     this.name = 'GitHubAppAuthError';
   }
@@ -234,12 +260,19 @@ async function githubFetch<T>(
   });
 
   if (!response.ok) {
+    let details: unknown;
+    try {
+      details = await response.json();
+    } catch {
+      details = await response.text().catch(() => undefined);
+    }
     if (response.status === 404) {
       throw new GitHubAppAuthError(
-        'GitHub App is not installed on this repository or the repository is not accessible'
+        'GitHub App is not installed on this repository or the repository is not accessible',
+        details
       );
     }
-    throw new GitHubAppAuthError(`GitHub API returned ${response.status}`);
+    throw new GitHubAppAuthError(`GitHub API returned ${response.status}`, details);
   }
 
   return {
@@ -280,22 +313,73 @@ function normalizeRepositoryCandidate(
   };
 }
 
+function getRepositoryHtmlUrl(owner: string, repo: string): string {
+  return `https://github.com/${owner}/${repo}`;
+}
+
+function getBranchHtmlUrl(owner: string, repo: string, branch: string): string {
+  return `${getRepositoryHtmlUrl(owner, repo)}/tree/${encodeURIComponent(branch)}`;
+}
+
+function normalizePullRequest(pull: GitHubPullRequestResponse): GitRepositoryPullRequest | null {
+  if (
+    !pull.number ||
+    !pull.title ||
+    (pull.state !== 'open' && pull.state !== 'closed') ||
+    !pull.html_url ||
+    !pull.head?.ref ||
+    !pull.head.label ||
+    !pull.base?.ref ||
+    !pull.base.label
+  ) {
+    return null;
+  }
+
+  return {
+    number: pull.number,
+    title: pull.title,
+    state: pull.state,
+    draft: pull.draft ?? false,
+    merged: pull.merged ?? false,
+    html_url: pull.html_url,
+    ...(pull.additions !== undefined ? { additions: pull.additions } : {}),
+    ...(pull.deletions !== undefined ? { deletions: pull.deletions } : {}),
+    head: {
+      ref: pull.head.ref,
+      label: pull.head.label,
+    },
+    base: {
+      ref: pull.base.ref,
+      label: pull.base.label,
+    },
+  };
+}
+
+export function normalizePullRequestCreateHead(repositoryOwner: string, head: string): string {
+  const ownerPrefix = `${repositoryOwner}:`;
+  return head.startsWith(ownerPrefix) ? head.slice(ownerPrefix.length) : head;
+}
+
 async function getScopedInstallationToken(
   appId: string,
   jwt: string,
   installationId: number,
-  permission: GitHubAppTokenPermission,
+  permissions: GitHubAppTokenPermissions,
   cacheScope: string,
   repositories?: string[]
 ): Promise<CachedInstallationToken> {
-  const cacheKey = `${appId}:installation:${installationId}:${cacheScope}:${permission}`;
+  const permissionKey = Object.entries(permissions)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, permission]) => `${name}:${permission}`)
+    .join(',');
+  const cacheKey = `${appId}:installation:${installationId}:${cacheScope}:${permissionKey}`;
   const cached = installationTokenCache.get(cacheKey);
   if (cached && cached.expiresAt - TOKEN_CACHE_BUFFER_MS > Date.now()) {
     return cached;
   }
 
   const requestBody: GitHubInstallationTokenRequest = {
-    permissions: { contents: permission },
+    permissions,
   };
   if (repositories && repositories.length > 0) {
     requestBody.repositories = repositories;
@@ -345,8 +429,47 @@ export async function getGitHubAppInstallationToken(
     credentials.appId,
     jwt,
     installation.id,
-    permission,
+    { contents: permission },
     `repo:${owner}/${repo}`,
+    [repo]
+  );
+
+  installationTokenCache.set(cacheKey, {
+    token: token.token,
+    expiresAt: token.expiresAt,
+  });
+
+  return token.token;
+}
+
+async function getGitHubAppPullRequestToken(
+  fastify: FastifyInstance,
+  repository: string,
+  permission: GitHubAppTokenPermission
+): Promise<string> {
+  const credentials = await getGitHubAppCredentials(fastify);
+  if (!credentials) {
+    throw new GitHubAppAuthNotConfiguredError();
+  }
+
+  const { owner, repo } = parseGitHubRepository(repository);
+  const cacheKey = `${credentials.appId}:${owner}/${repo}:pull_requests:${permission}`;
+  const cached = installationTokenCache.get(cacheKey);
+  if (cached && cached.expiresAt - TOKEN_CACHE_BUFFER_MS > Date.now()) {
+    return cached.token;
+  }
+
+  const jwt = createGitHubAppJwt(credentials.appId, credentials.privateKey);
+  const installation = await githubRequest<GitHubInstallationResponse>(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/installation`,
+    jwt
+  );
+  const token = await getScopedInstallationToken(
+    credentials.appId,
+    jwt,
+    installation.id,
+    { contents: 'read', pull_requests: permission },
+    `repo:${owner}/${repo}:pull_requests`,
     [repo]
   );
 
@@ -414,7 +537,7 @@ async function fetchGitHubAppRepositories(
         credentials.appId,
         jwt,
         installation.id,
-        'read',
+        { contents: 'read' },
         'repositories:*'
       );
       const installationRepositories = await listInstallationRepositories(token.token);
@@ -534,6 +657,106 @@ export async function listGitHubAppRepositoryBranches(
     });
   branchListInflight.set(cacheKey, promise);
   return promise;
+}
+
+export async function getGitHubAppRepositoryBranch(
+  fastify: FastifyInstance,
+  repository: string,
+  branch: string,
+  compare: GitRepositoryBranchDetailResponse['compare'] = null
+): Promise<GitRepositoryBranchDetailResponse> {
+  const { owner, repo } = parseGitHubRepository(repository);
+  const token = await getGitHubAppInstallationToken(fastify, `${owner}/${repo}`, 'read');
+  const encodedBranch = encodeURIComponent(branch);
+  const branchData = await githubRequest<GitHubBranchResponse>(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches/${encodedBranch}`,
+    token
+  );
+
+  if (!branchData.name) {
+    throw new GitHubAppAuthError('GitHub branch response did not include a branch name');
+  }
+
+  return {
+    name: branchData.name,
+    ...(branchData.protected !== undefined ? { protected: branchData.protected } : {}),
+    html_url: getBranchHtmlUrl(owner, repo, branchData.name),
+    compare,
+  };
+}
+
+export async function listGitHubAppPullRequests(
+  fastify: FastifyInstance,
+  repository: string,
+  query: { head?: string; base?: string; state?: GitRepositoryPullRequestStateFilter } = {}
+): Promise<GitRepositoryPullRequest[]> {
+  const { owner, repo } = parseGitHubRepository(repository);
+  const token = await getGitHubAppPullRequestToken(fastify, `${owner}/${repo}`, 'read');
+  const url = new URL(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`
+  );
+  if (query.head) url.searchParams.set('head', query.head);
+  if (query.base) url.searchParams.set('base', query.base);
+  if (query.state) url.searchParams.set('state', query.state);
+
+  const pulls = await githubRequest<GitHubPullRequestResponse[]>(url.toString(), token);
+  return pulls
+    .map(normalizePullRequest)
+    .filter((pull): pull is GitRepositoryPullRequest => pull !== null);
+}
+
+export async function getGitHubAppPullRequest(
+  fastify: FastifyInstance,
+  repository: string,
+  pullNumber: number
+): Promise<GitRepositoryPullRequest> {
+  const { owner, repo } = parseGitHubRepository(repository);
+  const token = await getGitHubAppPullRequestToken(fastify, `${owner}/${repo}`, 'read');
+  const pull = await githubRequest<GitHubPullRequestResponse>(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${pullNumber}`,
+    token
+  );
+  const normalized = normalizePullRequest(pull);
+  if (!normalized) {
+    throw new GitHubAppAuthError('GitHub pull request response was incomplete');
+  }
+  return normalized;
+}
+
+export async function createGitHubAppPullRequest(
+  fastify: FastifyInstance,
+  repository: string,
+  request: GitRepositoryPullRequestCreateRequest
+): Promise<GitRepositoryPullRequest> {
+  const existingPulls = await listGitHubAppPullRequests(fastify, repository, {
+    head: request.head,
+    base: request.base,
+    state: 'open',
+  }).catch(() => []);
+  if (existingPulls[0]) return existingPulls[0];
+
+  const { owner, repo } = parseGitHubRepository(repository);
+  const token = await getGitHubAppPullRequestToken(fastify, `${owner}/${repo}`, 'write');
+  const head = normalizePullRequestCreateHead(owner, request.head);
+  const pull = await githubRequest<GitHubPullRequestResponse>(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
+    token,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        title: request.title,
+        ...(request.body ? { body: request.body } : {}),
+        head,
+        base: request.base,
+        draft: request.draft ?? false,
+      }),
+    }
+  );
+  const normalized = normalizePullRequest(pull);
+  if (!normalized) {
+    throw new GitHubAppAuthError('GitHub pull request response was incomplete');
+  }
+  return normalized;
 }
 
 function clearExpiredGitHubCaches(now = Date.now()): void {

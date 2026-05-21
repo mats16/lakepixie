@@ -1,4 +1,5 @@
 // apps/api/src/routes/session.ts
+import path from 'node:path';
 import type {
   FastifyPluginAsync,
   FastifyReply,
@@ -26,8 +27,11 @@ import type {
   WsAskUserQuestionAnswerRequest,
   SDKAuthStatusMessage,
   ApiError,
+  GitRepositoryDiffResponse,
+  GitRepositoryOutcome,
+  GitRepositorySource,
 } from '@repo/types';
-import { isAuthError } from '@repo/types';
+import { isAuthError, parseGitBranchRevision } from '@repo/types';
 import { resolveUserAnswer } from '../services/ask-user-question.service.js';
 import {
   createSession,
@@ -45,8 +49,10 @@ import { TelemetryConfigurationError } from '../services/claude-telemetry-env.se
 import { listSessionEvents, getSessionLastEventId } from '../services/session-events.service.js';
 import { wsManager } from '../services/websocket-manager.service.js';
 import { encodeSseEvent, sessionStreamHub } from '../services/session-stream-hub.service.js';
+import { getLocalGitDiffSummary } from '../services/local-git.service.js';
 import { SessionId } from '../models/session.model.js';
 import { createUserContext } from '../lib/user-context.js';
+import { validatePathWithinBase } from '../utils/path-validation.js';
 
 const SSE_HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -92,6 +98,12 @@ function parseSessionId(sessionIdStr: string, logger?: FastifyBaseLogger): Sessi
 function getLastEventIdHeader(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];
   return value;
+}
+
+function parseRepositoryFullName(fullName: string): { owner: string; repo: string } | null {
+  const [owner, repo] = fullName.split('/');
+  if (!owner || !repo) return null;
+  return { owner, repo };
 }
 
 function createAuthStatusMessage(sessionId: SessionId, error: unknown): SDKAuthStatusMessage {
@@ -276,6 +288,56 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
     } catch (error) {
       request.log.error(error, 'Failed to get session');
       return sendError(reply, 500, 'InternalServerError', 'Failed to get session');
+    }
+  });
+
+  fastify.get<{
+    Params: { session_id: string };
+    Reply: GitRepositoryDiffResponse | ApiError;
+  }>('/sessions/:session_id/git-diff', async (request, reply) => {
+    const { user } = request.ctx!;
+
+    if (!user.id) {
+      return sendError(reply, 401, 'Unauthorized', 'User ID not found in request context');
+    }
+
+    const sessionId = parseSessionId(request.params.session_id, request.log);
+    if (!sessionId) {
+      return sendError(reply, 404, 'NotFound', 'Session not found');
+    }
+
+    try {
+      const session = await getSession(fastify, user.id, sessionId);
+      const context = session?.session_context;
+      if (!context) {
+        return sendError(reply, 404, 'NotFound', 'Session not found');
+      }
+
+      const gitOutcome = context.outcomes.find(
+        (outcome): outcome is GitRepositoryOutcome => outcome.type === 'git_repository'
+      );
+      const gitSource = context.sources.find(
+        (source): source is GitRepositorySource => source.type === 'git_repository'
+      );
+      const repo = gitOutcome ? parseRepositoryFullName(gitOutcome.git_info.repo) : null;
+      const headBranch = gitOutcome?.git_info.branches[0];
+      const baseBranch = gitSource ? parseGitBranchRevision(gitSource.revision) : null;
+      if (!repo || !headBranch || !baseBranch) {
+        return sendError(reply, 404, 'NotFound', 'Git repository context not found');
+      }
+
+      const sessionsBaseDir = path.join(fastify.config.CCBRICKS_BASE_DIR, 'sessions');
+      const cwd = await validatePathWithinBase(context.cwd, sessionsBaseDir);
+      const diff = await getLocalGitDiffSummary(cwd, baseBranch, headBranch);
+      return reply.send(diff);
+    } catch (error) {
+      request.log.warn({ error, sessionId: sessionId.toString() }, 'Failed to get local git diff');
+      return reply.status(502).send({
+        error: 'GitDiffUnavailable',
+        message: 'Failed to get local git diff',
+        details: error instanceof Error ? error.message : String(error),
+        statusCode: 502,
+      });
     }
   });
 
