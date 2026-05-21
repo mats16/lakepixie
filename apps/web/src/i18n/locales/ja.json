@@ -311,16 +311,19 @@
   },
   "gitStatus": {
     "openRepository": "GitHubでリポジトリを開く",
+    "openBranch": "GitHubでブランチを開く",
     "copyBranch": "ブランチ名をコピー",
     "branchCopied": "ブランチ名をコピーしました",
     "branchCopyError": "ブランチ名をコピーできませんでした",
     "openPullRequest": "PRを開く",
     "createPullRequest": "PRを作成",
     "createDraftPullRequest": "下書きPRを作成",
+    "createPullRequestManually": "PRを手動で作成",
+    "createPullRequestOptions": "PR作成オプション",
     "createPullRequestError": "PRの作成に失敗しました",
     "metadataDialog": {
       "title": "PRメタデータを生成",
-      "description": "PRのタイトルと本文はLLMで生成されます。PRを作成する前に、ローカルのgit差分、コミット、変更ファイル名、PRテンプレートがDatabricks Serving Endpointに送信されます。",
+      "description": "PRのタイトルと本文は AI により生成されます。ローカルのgit差分、コミット、変更ファイル名、PRテンプレートが基盤モデルに送信されますが、蓄積され再学習に利用されることはありません。",
       "cancel": "キャンセル"
     },
     "status": {

@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import {
   Check,
   ChevronDown,
+  Copy,
+  ExternalLink,
   GitCommitVertical,
   GitMerge,
   GitPullRequestArrow,
@@ -51,6 +53,10 @@ function repositoryFullName(owner: string, repo: string): string {
 
 function repositoryUrl(owner: string, repo: string): string {
   return `https://github.com/${owner}/${repo}`;
+}
+
+function pullRequestCreateUrl(owner: string, repo: string, base: string, head: string): string {
+  return `${repositoryUrl(owner, repo)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}?expand=1`;
 }
 
 function openUrl(url: string): void {
@@ -209,6 +215,9 @@ export function GitRepositoryStatusBar({
   const statusKey = getPullStatusKey(pull);
   const StatusIcon = PULL_STATUS_ICON[statusKey];
   const statusTooltip = t(`gitStatus.status.${statusKey}`);
+  const remoteBranchUrl = branchDetail?.html_url;
+  const manualPullRequestUrl = pullRequestCreateUrl(owner, repo, baseBranch, headBranch);
+  const canCreatePullRequest = branchDetail !== null && !pull;
 
   return (
     <>
@@ -260,25 +269,33 @@ export function GitRepositoryStatusBar({
                 </TooltipContent>
               </Tooltip>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
                   <button
                     type="button"
                     className="min-w-0 truncate text-sm font-medium hover:underline"
-                    onClick={handleCopyBranch}
                   >
                     {headBranch}
                   </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{t('gitStatus.copyBranch')}</p>
-                </TooltipContent>
-              </Tooltip>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={handleCopyBranch}>
+                    <Copy className="h-4 w-4" />
+                    {t('gitStatus.copyBranch')}
+                  </DropdownMenuItem>
+                  {remoteBranchUrl && (
+                    <DropdownMenuItem onClick={() => openUrl(remoteBranchUrl)}>
+                      <ExternalLink className="h-4 w-4" />
+                      {t('gitStatus.openBranch')}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
               {diffBadge}
-              {!pull && (
+              {canCreatePullRequest && (
                 <div className="flex overflow-hidden rounded-md border shadow-sm">
                   <Button
                     type="button"
@@ -297,6 +314,7 @@ export function GitRepositoryStatusBar({
                         size="icon"
                         className="h-6 w-6 rounded-none border-l"
                         disabled={isCreating}
+                        aria-label={t('gitStatus.createPullRequestOptions')}
                       >
                         <ChevronDown className="h-3 w-3" />
                       </Button>
@@ -310,6 +328,10 @@ export function GitRepositoryStatusBar({
                       <DropdownMenuItem onClick={() => setPendingPullRequestDraft(true)}>
                         <GitPullRequestDraft className="h-4 w-4" />
                         {t('gitStatus.createDraftPullRequest')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => openUrl(manualPullRequestUrl)}>
+                        <ExternalLink className="h-4 w-4" />
+                        {t('gitStatus.createPullRequestManually')}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
