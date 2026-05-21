@@ -408,8 +408,6 @@
     "opusModel": "Claude Opus",
     "sonnetModel": "Claude Sonnet",
     "haikuModel": "Claude Haiku",
-    "envDefault": "Environment default",
-    "resetToDefault": "Reset to default",
     "fetchEndpointsError": "Failed to load serving endpoints",
     "telemetryConfiguration": "Telemetry Configuration",
     "telemetryDescription": "Configure Unity Catalog table names to enable Claude Code telemetry export. Each signal type can be enabled independently.",

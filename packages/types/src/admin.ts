@@ -23,9 +23,9 @@ export interface AppSettingsResponse {
   app_title: string;
   welcome_heading: string;
   default_new_user_role: UserRole;
-  default_opus_model: string | null;
-  default_sonnet_model: string | null;
-  default_haiku_model: string | null;
+  default_opus_model: string;
+  default_sonnet_model: string;
+  default_haiku_model: string;
   otel_metrics_table_name: string | null;
   otel_logs_table_name: string | null;
   otel_traces_table_name: string | null;

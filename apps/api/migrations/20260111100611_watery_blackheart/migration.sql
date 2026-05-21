@@ -47,12 +47,6 @@ INSERT INTO "app_settings" ("key", "value") VALUES ('welcome_heading', 'Claude C
 --> statement-breakpoint
 INSERT INTO "app_settings" ("key", "value") VALUES ('default_new_user_role', 'admin');
 --> statement-breakpoint
-INSERT INTO "app_settings" ("key", "value") VALUES ('default_opus_model', 'databricks-claude-opus-4-6');
---> statement-breakpoint
-INSERT INTO "app_settings" ("key", "value") VALUES ('default_sonnet_model', 'databricks-claude-sonnet-4-6');
---> statement-breakpoint
-INSERT INTO "app_settings" ("key", "value") VALUES ('default_haiku_model', 'databricks-claude-haiku-4-5');
---> statement-breakpoint
 CREATE INDEX "session_events_session_created_at_idx" ON "session_events" ("session_id","created_at");--> statement-breakpoint
 CREATE INDEX "sessions_user_id_idx" ON "sessions" ("user_id");--> statement-breakpoint
 CREATE INDEX "sessions_updated_at_idx" ON "sessions" ("updated_at");--> statement-breakpoint

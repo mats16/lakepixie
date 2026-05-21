@@ -41,7 +41,7 @@ vi.mock('../lib/user-context.js', () => ({
 // Mock admin.service to avoid DB dependency
 vi.mock('../services/admin.service.js', () => ({
   getModelSettings: vi.fn().mockResolvedValue({
-    opusModel: 'databricks-claude-opus-4-6',
+    opusModel: 'databricks-claude-opus-4-7',
     sonnetModel: 'databricks-claude-sonnet-4-6',
     haikuModel: 'databricks-claude-haiku-4-5',
   }),

@@ -8,6 +8,7 @@ import type {
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { users, appSettings } from '../db/schema.js';
 import { TtlCache } from '../lib/ttl-cache.js';
+import { DEFAULT_MODEL_SETTINGS } from '../constants/model-defaults.js';
 
 const APP_TITLE_DEFAULT = 'ccbricks';
 const WELCOME_HEADING_DEFAULT = 'Claude Code on Databricks';
@@ -21,6 +22,7 @@ const MODEL_SETTINGS_KEYS = [
   'default_sonnet_model',
   'default_haiku_model',
 ] as const;
+type ModelSettingsKey = (typeof MODEL_SETTINGS_KEYS)[number];
 
 const ALL_SETTINGS_KEYS = [
   'app_title',
@@ -31,6 +33,10 @@ const ALL_SETTINGS_KEYS = [
   'otel_logs_table_name',
   'otel_traces_table_name',
 ] as const;
+
+function getModelSetting(map: Map<string, string>, key: ModelSettingsKey): string {
+  return map.get(key) ?? DEFAULT_MODEL_SETTINGS[key];
+}
 
 /**
  * 全ユーザーを取得する（管理者用）
@@ -98,9 +104,9 @@ export async function getAppSettings(fastify: FastifyInstance): Promise<AppSetti
     app_title: map.get('app_title') ?? APP_TITLE_DEFAULT,
     welcome_heading: map.get('welcome_heading') ?? WELCOME_HEADING_DEFAULT,
     default_new_user_role: roleValue === 'admin' || roleValue === 'member' ? roleValue : 'admin',
-    default_opus_model: map.get('default_opus_model') ?? null,
-    default_sonnet_model: map.get('default_sonnet_model') ?? null,
-    default_haiku_model: map.get('default_haiku_model') ?? null,
+    default_opus_model: getModelSetting(map, 'default_opus_model'),
+    default_sonnet_model: getModelSetting(map, 'default_sonnet_model'),
+    default_haiku_model: getModelSetting(map, 'default_haiku_model'),
     otel_metrics_table_name: map.get('otel_metrics_table_name') ?? null,
     otel_logs_table_name: map.get('otel_logs_table_name') ?? null,
     otel_traces_table_name: map.get('otel_traces_table_name') ?? null,
@@ -208,12 +214,6 @@ export interface ModelSettings {
   haikuModel: string;
 }
 
-const MODEL_DEFAULTS = {
-  default_opus_model: 'databricks-claude-opus-4-6',
-  default_sonnet_model: 'databricks-claude-sonnet-4-6',
-  default_haiku_model: 'databricks-claude-haiku-4-5',
-} as const;
-
 /**
  * モデル設定を取得する
  *
@@ -229,9 +229,9 @@ export async function getModelSettings(fastify: FastifyInstance): Promise<ModelS
  */
 export function resolveModelSettings(settings: AppSettingsResponse): ModelSettings {
   return {
-    opusModel: settings.default_opus_model ?? MODEL_DEFAULTS.default_opus_model,
-    sonnetModel: settings.default_sonnet_model ?? MODEL_DEFAULTS.default_sonnet_model,
-    haikuModel: settings.default_haiku_model ?? MODEL_DEFAULTS.default_haiku_model,
+    opusModel: settings.default_opus_model ?? DEFAULT_MODEL_SETTINGS.default_opus_model,
+    sonnetModel: settings.default_sonnet_model ?? DEFAULT_MODEL_SETTINGS.default_sonnet_model,
+    haikuModel: settings.default_haiku_model ?? DEFAULT_MODEL_SETTINGS.default_haiku_model,
   };
 }
 

@@ -408,8 +408,6 @@
     "opusModel": "Claude Opus",
     "sonnetModel": "Claude Sonnet",
     "haikuModel": "Claude Haiku",
-    "envDefault": "環境変数のデフォルト",
-    "resetToDefault": "デフォルトに戻す",
     "fetchEndpointsError": "Serving Endpoint の取得に失敗しました",
     "telemetryConfiguration": "テレメトリ設定",
     "telemetryDescription": "Unity Catalog テーブル名を設定すると、Claude Code のテレメトリが有効になります。各シグナルタイプは個別に有効化できます。",

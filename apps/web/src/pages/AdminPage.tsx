@@ -42,6 +42,13 @@ import { toast } from 'sonner';
 
 const GITHUB_APPS_SETTINGS_URL = 'https://github.com/settings/apps';
 
+function includeSelectedModel(options: string[], selectedValue: string): string[] {
+  if (!selectedValue || options.includes(selectedValue)) {
+    return options;
+  }
+  return [selectedValue, ...options];
+}
+
 function useAdminSettings() {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<AppSettingsResponse | null>(null);
@@ -208,8 +215,6 @@ function AdminSettingsContent() {
   const [otelLogsTableInput, setOtelLogsTableInput] = useState('');
   const [otelTracesTableInput, setOtelTracesTableInput] = useState('');
 
-  const MODEL_NULL_SENTINEL = '__default__';
-
   const fetchServingEndpoints = useCallback(async () => {
     try {
       setIsLoadingEndpoints(true);
@@ -236,7 +241,7 @@ function AdminSettingsContent() {
 
   const handleModelChange = (
     key: 'default_opus_model' | 'default_sonnet_model' | 'default_haiku_model',
-    value: string | null
+    value: string
   ) => saveSetting(key, { [key]: value });
 
   const handleDefaultRoleChange = (value: string) =>
@@ -314,28 +319,32 @@ function AdminSettingsContent() {
                   options: servingEndpoints?.haiku ?? [],
                 },
               ] as const
-            ).map(({ key, label, options }) => (
-              <div key={key} className="flex items-center justify-between gap-4">
-                <p className="text-sm font-medium shrink-0">{label}</p>
-                <Select
-                  value={settings?.[key] ?? MODEL_NULL_SENTINEL}
-                  onValueChange={v => handleModelChange(key, v === MODEL_NULL_SENTINEL ? null : v)}
-                  disabled={savingKey !== null}
-                >
-                  <SelectTrigger className="w-[320px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={MODEL_NULL_SENTINEL}>{t('admin.envDefault')}</SelectItem>
-                    {options.map(name => (
-                      <SelectItem key={name} value={name}>
-                        {name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ))}
+            ).map(({ key, label, options }) => {
+              const selectedValue = settings?.[key] ?? '';
+              const modelOptions = includeSelectedModel(options, selectedValue);
+
+              return (
+                <div key={key} className="flex items-center justify-between gap-4">
+                  <p className="text-sm font-medium shrink-0">{label}</p>
+                  <Select
+                    value={selectedValue}
+                    onValueChange={value => handleModelChange(key, value)}
+                    disabled={savingKey !== null}
+                  >
+                    <SelectTrigger className="w-[320px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {modelOptions.map(name => (
+                        <SelectItem key={name} value={name}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
