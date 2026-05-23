@@ -153,6 +153,18 @@ describe('session.service', () => {
         disallowed_tools: ['WebSearch', 'mcp__disabled__*'],
       });
     });
+
+    it('falls back to persisted settings when stored session contexts omit tool lists', () => {
+      const settings = __testing.buildEffectiveToolSettings({
+        userAllowedTools: ['Read'],
+        userDisallowedTools: ['Bash'],
+      });
+
+      expect(settings).toEqual({
+        allowed_tools: ['Read'],
+        disallowed_tools: ['Bash'],
+      });
+    });
   });
 
   describe('git repository source helpers', () => {

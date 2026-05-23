@@ -63,7 +63,7 @@ function selectModelId(params: {
   if (params.allowedModelIds.has(params.appDefaultModelId)) {
     return params.appDefaultModelId;
   }
-  return params.tierModelIds[0] ?? params.hardcodedDefaultModelId;
+  return params.tierModelIds[0] ?? [...params.allowedModelIds][0] ?? params.hardcodedDefaultModelId;
 }
 
 function normalizeToolList(tools: string[]): string[] {
@@ -204,27 +204,37 @@ export async function updateUserSettings(
   return getUserSettings(fastify, userId);
 }
 
-export async function resolveSessionModelId(
-  fastify: FastifyInstance,
-  userId: string,
+export function resolveSessionModelIdFromSettings(
+  userSettings: UserSettingsResponse,
+  allowedModelIds: Iterable<string>,
   requestedModelId: string
-): Promise<string> {
+): string {
   const trimmed = requestedModelId.trim();
   if (!trimmed) {
     throw new UserSettingsValidationError('session_context.model must be a non-empty string');
   }
 
-  const userSettings = await getUserSettings(fastify, userId);
   if (isLegacyModelTier(trimmed)) {
     return getTierValues(userSettings, trimmed);
   }
 
-  const allowedModelIds = new Set(await getAllowedModelIds(fastify));
-  if (!allowedModelIds.has(trimmed)) {
+  if (!new Set(allowedModelIds).has(trimmed)) {
     throw new UserSettingsValidationError('session_context.model must be an allowed model id');
   }
 
   return trimmed;
+}
+
+export async function resolveSessionModelId(
+  fastify: FastifyInstance,
+  userId: string,
+  requestedModelId: string
+): Promise<string> {
+  const [userSettings, allowedModelIds] = await Promise.all([
+    getUserSettings(fastify, userId),
+    getAllowedModelIds(fastify),
+  ]);
+  return resolveSessionModelIdFromSettings(userSettings, allowedModelIds, requestedModelId);
 }
 
 export class UserSettingsValidationError extends Error {

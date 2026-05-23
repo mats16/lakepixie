@@ -144,6 +144,43 @@ describe('user-settings.service', () => {
     expect(settings.disallowed_tools).toEqual(['Bash', 'mcp__dbsql__*', '*']);
   });
 
+  it('does not fall back to hardcoded model ids when allowed endpoints have custom names', async () => {
+    mocks.getAppSettings.mockResolvedValue({
+      ...appSettings,
+      default_opus_model: 'not-allowed-opus',
+      default_sonnet_model: 'not-allowed-sonnet',
+      default_haiku_model: 'not-allowed-haiku',
+      allowed_model_ids: ['my-company-claude-endpoint'],
+    });
+    const fastify = createMockFastify();
+
+    const settings = await getUserSettings(fastify, 'user-1');
+
+    expect(settings.opus_model_id).toBe('my-company-claude-endpoint');
+    expect(settings.sonnet_model_id).toBe('my-company-claude-endpoint');
+    expect(settings.haiku_model_id).toBe('my-company-claude-endpoint');
+  });
+
+  it('resolves requested session models from a prefetched settings snapshot', async () => {
+    const { resolveSessionModelIdFromSettings } = await import('./user-settings.service.js');
+    const fastify = createMockFastify();
+    const settings = await getUserSettings(fastify, 'user-1');
+
+    expect(
+      resolveSessionModelIdFromSettings(settings, appSettings.allowed_model_ids, 'sonnet')
+    ).toBe(DEFAULT_MODEL_SETTINGS.default_sonnet_model);
+    expect(
+      resolveSessionModelIdFromSettings(
+        settings,
+        appSettings.allowed_model_ids,
+        'databricks-claude-sonnet-custom'
+      )
+    ).toBe('databricks-claude-sonnet-custom');
+    expect(() =>
+      resolveSessionModelIdFromSettings(settings, appSettings.allowed_model_ids, 'blocked-model')
+    ).toThrow('session_context.model must be an allowed model id');
+  });
+
   it('rejects personal model ids outside the allowed list', async () => {
     const fastify = createMockFastify();
 

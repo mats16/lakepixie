@@ -43,7 +43,7 @@ import { fromUUID } from 'typeid-js';
 import { DatabricksAppsClient } from '../lib/databricks-apps-client.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { getAuthProvider } from '../lib/databricks-auth.js';
-import { getAppSettings } from './admin.service.js';
+import { getAllowedModelIds, getAppSettings } from './admin.service.js';
 import { writeHelperScripts } from './helper-scripts.service.js';
 import { buildClaudeTelemetryEnv } from './claude-telemetry-env.service.js';
 import { wsManager } from './websocket-manager.service.js';
@@ -64,7 +64,7 @@ import {
 } from './git-credential.service.js';
 import {
   getUserSettings,
-  resolveSessionModelId,
+  resolveSessionModelIdFromSettings,
   UserSettingsValidationError,
 } from './user-settings.service.js';
 
@@ -848,6 +848,17 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       databricksAppName: fastify.config.DATABRICKS_APP_NAME,
       nodeEnv: fastify.config.NODE_ENV,
     });
+    const toolSettings = buildEffectiveToolSettings({
+      userAllowedTools: userModelSettings.allowed_tools,
+      userDisallowedTools: userModelSettings.disallowed_tools,
+      requestedAllowedTools: sessionContext.allowed_tools,
+      requestedDisallowedTools: sessionContext.disallowed_tools,
+    });
+    const effectiveSessionContext: SessionContextResponse = {
+      ...sessionContext,
+      allowed_tools: toolSettings.allowed_tools,
+      disallowed_tools: toolSettings.disallowed_tools,
+    };
 
     // ヘルパースクリプトを配置（apiKeyHelper / otelHeadersHelper）
     const claudeNativePackage = getClaudeNativePackageName();
@@ -874,8 +885,8 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
         claudeNativePackage,
         pathToClaudeCodeExecutable,
         mcpServerCount: Object.keys(mcpServers).length,
-        allowedToolCount: sessionContext.allowed_tools?.length ?? 0,
-        disallowedToolCount: sessionContext.disallowed_tools?.length ?? 0,
+        allowedToolCount: effectiveSessionContext.allowed_tools?.length ?? 0,
+        disallowedToolCount: effectiveSessionContext.disallowed_tools?.length ?? 0,
       },
       'Starting Claude Agent SDK query'
     );
@@ -885,7 +896,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       options: {
         abortController,
         ...(sdkSessionId ? { resume: sdkSessionId } : {}),
-        cwd: sessionContext.cwd,
+        cwd: effectiveSessionContext.cwd,
         pathToClaudeCodeExecutable,
         model: sessionContext.model,
         maxTurns: 100,
@@ -914,8 +925,8 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
           type: 'preset',
           preset: 'claude_code',
         },
-        allowedTools: sessionContext.allowed_tools,
-        disallowedTools: sessionContext.disallowed_tools,
+        allowedTools: effectiveSessionContext.allowed_tools,
+        disallowedTools: effectiveSessionContext.disallowed_tools,
         env: {
           PATH: fastify.config.PATH,
           HOME: userHome,
@@ -1131,16 +1142,24 @@ export async function createSession(
   validateGitSessionContext(session_context.sources, session_context.outcomes);
 
   await ensureDirectory(cwd);
-  const resolvedModelId = await resolveSessionModelId(fastify, userId, session_context.model).catch(
-    error => {
+  const [userSettings, allowedModelIds] = await Promise.all([
+    getUserSettings(fastify, userId),
+    getAllowedModelIds(fastify),
+  ]);
+  const resolvedModelId = (() => {
+    try {
+      return resolveSessionModelIdFromSettings(
+        userSettings,
+        allowedModelIds,
+        session_context.model
+      );
+    } catch (error) {
       if (error instanceof UserSettingsValidationError) {
         throw new SessionValidationError(error.message);
       }
       throw error;
     }
-  );
-
-  const userSettings = await getUserSettings(fastify, userId);
+  })();
 
   // 4. Workspace ソースのバリデーション
   const workspaceSources = session_context.sources

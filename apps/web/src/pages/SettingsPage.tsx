@@ -220,6 +220,12 @@ export function SettingsContent() {
   const areAllPresetToolsAllowed = CLAUDE_CODE_PRESET_TOOLS.every(tool => allowedToolSet.has(tool));
   const selectedAllowedTools = modelSettings.allowed_tools;
   const selectedDisallowedTools = modelSettings.disallowed_tools;
+  const enableAllPresetTools = () => {
+    void handleToolListChange('allowed_tools', [
+      ...selectedAllowedTools,
+      ...CLAUDE_CODE_PRESET_TOOLS.filter(tool => !allowedToolSet.has(tool)),
+    ]);
+  };
   const handleToolsChange = (
     settingKey: ToolListSettingKey,
     tools: readonly string[],
@@ -299,7 +305,7 @@ export function SettingsContent() {
               variant="outline"
               size="sm"
               disabled={savingKey !== null || areAllPresetToolsAllowed}
-              onClick={() => handleToolListChange('allowed_tools', null)}
+              onClick={enableAllPresetTools}
             >
               {t('settings.enableAllTools')}
             </Button>
