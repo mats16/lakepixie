@@ -243,56 +243,6 @@ export function SettingsContent() {
         </div>
 
         <section>
-          <h2 className="mb-4 text-lg font-semibold">{t('settings.modelConfiguration')}</h2>
-          <div className="rounded-lg border border-border p-4 space-y-4">
-            {(
-              [
-                {
-                  key: 'opus_model_id',
-                  label: t('admin.opusModel'),
-                  value: modelSettings.opus_model_id,
-                  options: modelSettings.allowed_model_ids.opus,
-                },
-                {
-                  key: 'sonnet_model_id',
-                  label: t('admin.sonnetModel'),
-                  value: modelSettings.sonnet_model_id,
-                  options: modelSettings.allowed_model_ids.sonnet,
-                },
-                {
-                  key: 'haiku_model_id',
-                  label: t('admin.haikuModel'),
-                  value: modelSettings.haiku_model_id,
-                  options: modelSettings.allowed_model_ids.haiku,
-                },
-              ] as const
-            ).map(({ key, label, value, options }) => {
-              return (
-                <div key={key} className="flex items-center justify-between gap-4">
-                  <p className="shrink-0 text-sm font-medium">{label}</p>
-                  <Select
-                    value={value}
-                    onValueChange={nextValue => handleModelChange(key, nextValue)}
-                    disabled={savingKey !== null || options.length === 0}
-                  >
-                    <SelectTrigger className="w-[360px] max-w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {options.map(modelId => (
-                        <SelectItem key={modelId} value={modelId}>
-                          {modelId}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        <section>
           <div className="mb-4 flex items-start justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold">{t('settings.toolConfiguration')}</h2>
@@ -377,6 +327,56 @@ export function SettingsContent() {
                 onToolsChange={handleToolsChange}
               />
             </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="mb-4 text-lg font-semibold">{t('settings.modelConfiguration')}</h2>
+          <div className="rounded-lg border border-border p-4 space-y-4">
+            {(
+              [
+                {
+                  key: 'opus_model_id',
+                  label: t('admin.opusModel'),
+                  value: modelSettings.opus_model_id,
+                  options: modelSettings.allowed_model_ids.opus,
+                },
+                {
+                  key: 'sonnet_model_id',
+                  label: t('admin.sonnetModel'),
+                  value: modelSettings.sonnet_model_id,
+                  options: modelSettings.allowed_model_ids.sonnet,
+                },
+                {
+                  key: 'haiku_model_id',
+                  label: t('admin.haikuModel'),
+                  value: modelSettings.haiku_model_id,
+                  options: modelSettings.allowed_model_ids.haiku,
+                },
+              ] as const
+            ).map(({ key, label, value, options }) => {
+              return (
+                <div key={key} className="flex items-center justify-between gap-4">
+                  <p className="shrink-0 text-sm font-medium">{label}</p>
+                  <Select
+                    value={value}
+                    onValueChange={nextValue => handleModelChange(key, nextValue)}
+                    disabled={savingKey !== null || options.length === 0}
+                  >
+                    <SelectTrigger className="w-[360px] max-w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {options.map(modelId => (
+                        <SelectItem key={modelId} value={modelId}>
+                          {modelId}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              );
+            })}
           </div>
         </section>
       </div>

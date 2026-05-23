@@ -1,0 +1,24 @@
+- generic [ref=e2]:
+  - generic [ref=e4]:
+    - generic [ref=e7]:
+      - generic [ref=e9]:
+        - generic [ref=e10]:
+          - generic [ref=e11]:
+            - img [ref=e12]
+            - generic "ccbricks" [ref=e15]
+          - button "サイドバーを閉じる" [ref=e16] [cursor=pointer]:
+            - img
+        - link "新規セッション" [ref=e17] [cursor=pointer]:
+          - /url: /
+          - img [ref=e18]
+          - generic [ref=e20]: 新規セッション
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - generic [ref=e24]: セッション
+          - button [ref=e25] [cursor=pointer]:
+            - img
+        - list [ref=e26]
+      - button "K" [ref=e35] [cursor=pointer]:
+        - generic [ref=e37]: K
+    - img [ref=e40]
+  - region "Notifications alt+T"
