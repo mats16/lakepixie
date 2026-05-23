@@ -5,7 +5,10 @@ const OTEL_HTTP_PROTOBUF = 'http/protobuf';
 export interface ClaudeTelemetryEnvParams {
   appSettings: Pick<
     AppSettingsResponse,
-    'otel_metrics_table_name' | 'otel_logs_table_name' | 'otel_traces_table_name'
+    | 'mlflow_experiment_id'
+    | 'otel_metrics_table_name'
+    | 'otel_logs_table_name'
+    | 'otel_traces_table_name'
   >;
   databricksHost: string;
   databricksClientId: string;
@@ -64,6 +67,10 @@ export function buildClaudeTelemetryEnv(params: ClaudeTelemetryEnvParams): Recor
     OTEL_LOG_USER_PROMPTS: '1',
     OTEL_LOG_TOOL_DETAILS: '1',
   };
+  const mlflowExperimentId = params.appSettings.mlflow_experiment_id?.trim();
+  if (mlflowExperimentId) {
+    env.MLFLOW_EXPERIMENT_ID = mlflowExperimentId;
+  }
 
   const resourceAttributes = buildResourceAttributes(params);
   if (resourceAttributes) {

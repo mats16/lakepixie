@@ -5,12 +5,20 @@ import {
   type ClaudeTelemetryEnvParams,
 } from './claude-telemetry-env.service.js';
 
-function createParams(overrides: Partial<ClaudeTelemetryEnvParams> = {}): ClaudeTelemetryEnvParams {
+type ClaudeTelemetryEnvOverrides = Partial<Omit<ClaudeTelemetryEnvParams, 'appSettings'>> & {
+  appSettings?: Partial<ClaudeTelemetryEnvParams['appSettings']>;
+};
+
+function createParams(overrides: ClaudeTelemetryEnvOverrides = {}): ClaudeTelemetryEnvParams {
+  const { appSettings, ...params } = overrides;
+
   return {
     appSettings: {
+      mlflow_experiment_id: null,
       otel_metrics_table_name: null,
       otel_logs_table_name: null,
       otel_traces_table_name: null,
+      ...appSettings,
     },
     databricksHost: 'test.databricks.com',
     databricksClientId: 'client-id',
@@ -18,7 +26,7 @@ function createParams(overrides: Partial<ClaudeTelemetryEnvParams> = {}): Claude
     databricksWorkspaceId: '1234567890',
     databricksAppName: 'ccbricks',
     nodeEnv: 'production',
-    ...overrides,
+    ...params,
   };
 }
 
@@ -32,8 +40,6 @@ describe('buildClaudeTelemetryEnv', () => {
       createParams({
         appSettings: {
           otel_metrics_table_name: 'catalog.schema.metrics',
-          otel_logs_table_name: null,
-          otel_traces_table_name: null,
         },
       })
     );
@@ -59,9 +65,7 @@ describe('buildClaudeTelemetryEnv', () => {
     const env = buildClaudeTelemetryEnv(
       createParams({
         appSettings: {
-          otel_metrics_table_name: null,
           otel_logs_table_name: 'catalog.schema.logs',
-          otel_traces_table_name: null,
         },
       })
     );
@@ -82,8 +86,6 @@ describe('buildClaudeTelemetryEnv', () => {
     const env = buildClaudeTelemetryEnv(
       createParams({
         appSettings: {
-          otel_metrics_table_name: null,
-          otel_logs_table_name: null,
           otel_traces_table_name: 'catalog.schema.traces',
         },
       })
@@ -120,6 +122,19 @@ describe('buildClaudeTelemetryEnv', () => {
     expect(env).not.toHaveProperty('OTEL_LOG_RAW_API_BODIES');
   });
 
+  it('sets MLflow experiment ID when configured', () => {
+    const env = buildClaudeTelemetryEnv(
+      createParams({
+        appSettings: {
+          mlflow_experiment_id: '123',
+          otel_traces_table_name: 'catalog.schema.traces',
+        },
+      })
+    );
+
+    expect(env.MLFLOW_EXPERIMENT_ID).toBe('123');
+  });
+
   it('throws when telemetry is enabled without Databricks service principal credentials', () => {
     expect(() =>
       buildClaudeTelemetryEnv(
@@ -127,8 +142,6 @@ describe('buildClaudeTelemetryEnv', () => {
           databricksClientSecret: '',
           appSettings: {
             otel_metrics_table_name: 'catalog.schema.metrics',
-            otel_logs_table_name: null,
-            otel_traces_table_name: null,
           },
         })
       )
@@ -142,8 +155,6 @@ describe('buildClaudeTelemetryEnv', () => {
         databricksAppName: 'ccbricks, prod',
         appSettings: {
           otel_metrics_table_name: 'catalog.schema.metrics',
-          otel_logs_table_name: null,
-          otel_traces_table_name: null,
         },
       })
     );

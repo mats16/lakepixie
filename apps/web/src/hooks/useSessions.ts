@@ -15,11 +15,15 @@ interface UseSessionsReturn {
   getSession: (sessionId: string) => SessionResponse | undefined;
 }
 
+interface UseSessionsOptions {
+  enabled?: boolean;
+}
+
 const PAGE_SIZE = 50;
 
-export function useSessions(): UseSessionsReturn {
+export function useSessions({ enabled = true }: UseSessionsOptions = {}): UseSessionsReturn {
   const [sessions, setSessions] = useState<SessionResponse[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(enabled);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -31,6 +35,17 @@ export function useSessions(): UseSessionsReturn {
   const isLoadingMoreRef = useRef(false);
 
   const fetchSessions = useCallback(async () => {
+    if (!enabled) {
+      setSessions([]);
+      setHasMore(false);
+      setError(null);
+      setIsLoadingMore(false);
+      cursorRef.current = undefined;
+      isLoadingMoreRef.current = false;
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     cursorRef.current = undefined;
@@ -47,9 +62,10 @@ export function useSessions(): UseSessionsReturn {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   const loadMore = useCallback(async () => {
+    if (!enabled) return;
     if (!cursorRef.current || isLoadingMoreRef.current) return;
     isLoadingMoreRef.current = true;
     setIsLoadingMore(true);
@@ -73,7 +89,7 @@ export function useSessions(): UseSessionsReturn {
       isLoadingMoreRef.current = false;
       setIsLoadingMore(false);
     }
-  }, []);
+  }, [enabled]);
 
   const addSession = useCallback((newSession: SessionResponse) => {
     setSessions(prev => [newSession, ...prev]);

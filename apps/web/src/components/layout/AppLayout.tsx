@@ -7,6 +7,7 @@ import { useSessions } from '@/hooks/useSessions';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { sessionService } from '@/services';
 import { AppSidebar } from '@/components/sidebar/AppSidebar';
+import { AdminSidebar } from '@/components/sidebar/AdminSidebar';
 import { MainArea } from '@/components/main/MainArea';
 import { SkillsContent } from '@/pages/SkillsPage';
 import { AgentsContent } from '@/pages/AgentsPage';
@@ -36,7 +37,7 @@ export function AppLayout() {
     addSession,
     updateSession,
     getSession,
-  } = useSessions();
+  } = useSessions({ enabled: !isAdminPage });
   const isMobile = useIsMobile();
 
   const handleSelectSession = useCallback(
@@ -102,6 +103,11 @@ export function AppLayout() {
       loadMoreSessions,
     ]
   );
+  const sidebar = isAdminPage ? (
+    <AdminSidebar collapsible={isMobile ? 'offcanvas' : 'icon'} />
+  ) : (
+    <AppSidebar {...sidebarProps} collapsible={isMobile ? 'offcanvas' : 'icon'} />
+  );
 
   // Mobile: SidebarProvider manages open state internally via SidebarTrigger (offcanvas mode)
   // Desktop: We manage open state manually with isSidebarOpen/toggleSidebar for smooth animation
@@ -110,7 +116,7 @@ export function AppLayout() {
       <TooltipProvider>
         <SidebarProvider defaultOpen={false}>
           <div className="flex h-screen w-screen overflow-hidden bg-background">
-            <AppSidebar {...sidebarProps} collapsible="offcanvas" />
+            {sidebar}
             <div className="flex-1 h-full min-w-0 flex flex-col">
               <div className="flex items-center gap-2 p-2 border-b border-border shrink-0">
                 <SidebarTrigger />
@@ -153,7 +159,7 @@ export function AppLayout() {
       >
         <div className="flex h-screen w-screen overflow-hidden bg-background">
           {/* Sidebar */}
-          <AppSidebar {...sidebarProps} collapsible="icon" />
+          {sidebar}
 
           {/* Main Area */}
           <div className="flex-1 h-full min-h-0 min-w-0">

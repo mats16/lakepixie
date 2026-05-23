@@ -198,6 +198,18 @@ const adminRoute: FastifyPluginAsync = async fastify => {
       ];
     }
 
+    const mlflowExperimentId = settings.mlflow_experiment_id;
+    if (mlflowExperimentId !== undefined && mlflowExperimentId !== null) {
+      if (typeof mlflowExperimentId !== 'string' || !/^[0-9]+$/.test(mlflowExperimentId.trim())) {
+        return reply.status(400).send({
+          error: 'BadRequest',
+          message: 'mlflow_experiment_id must be a numeric string or null',
+          statusCode: 400,
+        });
+      }
+      settings.mlflow_experiment_id = mlflowExperimentId.trim();
+    }
+
     // バリデーション: OTEL テーブル名（null か Unity Catalog 3-part name のみ許可）
     for (const key of [
       'otel_metrics_table_name',
