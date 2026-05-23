@@ -25,18 +25,22 @@ export const users = sqliteTable('users', {
  * user_settings テーブル
  * ユーザーごとの設定を管理
  */
-export const userSettings = sqliteTable('user_settings', {
-  userId: text('user_id')
-    .primaryKey()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  claudeConfigBackup: text('claude_config_backup').notNull().default('auto'),
-  createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .notNull()
-    .default(CURRENT_TIMESTAMP_MS),
-  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-    .notNull()
-    .default(CURRENT_TIMESTAMP_MS),
-});
+export const userSettings = sqliteTable(
+  'user_settings',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    value: text('value').notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(CURRENT_TIMESTAMP_MS),
+  },
+  table => ({
+    pk: primaryKey({ columns: [table.userId, table.key] }),
+  })
+);
 
 /**
  * sessions テーブル

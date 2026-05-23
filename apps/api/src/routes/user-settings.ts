@@ -1,8 +1,15 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyBaseLogger } from 'fastify';
+import type { ApiError, UpdateUserSettingsRequest, UserSettingsResponse } from '@repo/types';
 import { getSession } from '../services/session.service.js';
 import { generateSettingsZip } from '../services/settings-export.service.js';
 import { createUserContext } from '../lib/user-context.js';
 import { SessionId } from '../models/session.model.js';
+import {
+  getUserSettings,
+  updateUserSettings,
+  USER_MODEL_SETTING_KEYS,
+  UserSettingsValidationError,
+} from '../services/user-settings.service.js';
 
 function sendError(
   reply: FastifyReply,
@@ -23,6 +30,51 @@ function parseSessionId(sessionIdStr: string, logger?: FastifyBaseLogger): Sessi
 }
 
 const userSettingsRoute: FastifyPluginAsync = async fastify => {
+  fastify.get<{ Reply: UserSettingsResponse | ApiError }>(
+    '/user/settings',
+    async (request, reply) => {
+      const { user } = request.ctx!;
+
+      if (!user.id) {
+        return sendError(reply, 401, 'Unauthorized', 'User ID not found in request context');
+      }
+
+      const settings = await getUserSettings(fastify, user.id);
+      return reply.send(settings);
+    }
+  );
+
+  fastify.patch<{
+    Body: UpdateUserSettingsRequest;
+    Reply: UserSettingsResponse | ApiError;
+  }>('/user/settings', async (request, reply) => {
+    const { user } = request.ctx!;
+
+    if (!user.id) {
+      return sendError(reply, 401, 'Unauthorized', 'User ID not found in request context');
+    }
+
+    const settings: UpdateUserSettingsRequest = {};
+    for (const key of USER_MODEL_SETTING_KEYS) {
+      const value = request.body[key];
+      if (value === undefined) continue;
+      if (value !== null && (typeof value !== 'string' || value.trim().length === 0)) {
+        return sendError(reply, 400, 'BadRequest', `${key} must be a non-empty string or null`);
+      }
+      settings[key] = value === null ? null : value.trim();
+    }
+
+    try {
+      const updated = await updateUserSettings(fastify, user.id, settings);
+      return reply.send(updated);
+    } catch (error) {
+      if (error instanceof UserSettingsValidationError) {
+        return sendError(reply, 400, 'BadRequest', error.message);
+      }
+      throw error;
+    }
+  });
+
   /**
    * GET /user/download-settings?session_id=xxx
    * セッション設定を zip としてダウンロード

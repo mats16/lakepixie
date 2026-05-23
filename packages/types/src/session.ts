@@ -70,7 +70,7 @@ import type { McpConfig } from './mcp.js';
  * セッション作成リクエスト用のコンテキスト
  */
 export interface SessionCreateContext {
-  model: 'opus' | 'sonnet' | 'haiku';
+  model: string;
   sources: SessionSource[];
   outcomes: SessionOutcome[];
   allowed_tools?: string[];
@@ -283,7 +283,7 @@ export interface SessionStartEvent {
  * @deprecated Use SessionCreateContext instead
  */
 export interface SessionContext {
-  model: 'opus' | 'sonnet' | 'haiku';
+  model: string;
   databricksWorkspacePath: string | null;
   databricksWorkspaceAutoPush: boolean;
 }

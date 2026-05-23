@@ -67,10 +67,18 @@
     "skills": "Skills",
     "agents": "Subagents",
     "mcp": "MCP Servers",
+    "settings": "Settings",
     "admin": "Admin",
     "databricksConsole": "Databricks Console",
     "loadError": "Failed to load user",
     "defaultName": "User"
+  },
+  "settings": {
+    "title": "Settings",
+    "description": "Choose the model endpoints used for your sessions.",
+    "modelConfiguration": "Model Configuration",
+    "updateSuccess": "Settings updated successfully",
+    "updateError": "Failed to update settings"
   },
   "common": {
     "loading": "Loading...",
@@ -433,6 +441,8 @@
     "opusModel": "Claude Opus",
     "sonnetModel": "Claude Sonnet",
     "haikuModel": "Claude Haiku",
+    "allowedModelIds": "Allowed Models",
+    "modelUnavailable": "Unavailable",
     "fetchEndpointsError": "Failed to load serving endpoints",
     "telemetryConfiguration": "Telemetry Configuration",
     "telemetryDescription": "Configure Unity Catalog table names to enable Claude Code telemetry export. Each signal type can be enabled independently.",

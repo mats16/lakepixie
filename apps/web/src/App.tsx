@@ -38,6 +38,7 @@ function AppContent() {
       <Route path="/skills" element={<AppLayout />} />
       <Route path="/agents" element={<AppLayout />} />
       <Route path="/mcp" element={<AppLayout />} />
+      <Route path="/settings" element={<AppLayout />} />
       <Route path="/admin" element={<Navigate to="/admin/settings" replace />} />
       <Route path="/admin/branding" element={<AppLayout />} />
       <Route path="/admin/git" element={<AppLayout />} />

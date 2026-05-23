@@ -43,7 +43,7 @@ import { fromUUID } from 'typeid-js';
 import { DatabricksAppsClient } from '../lib/databricks-apps-client.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { getAuthProvider } from '../lib/databricks-auth.js';
-import { getAppSettings, resolveModelSettings } from './admin.service.js';
+import { getAppSettings } from './admin.service.js';
 import { writeHelperScripts } from './helper-scripts.service.js';
 import { buildClaudeTelemetryEnv } from './claude-telemetry-env.service.js';
 import { wsManager } from './websocket-manager.service.js';
@@ -62,6 +62,11 @@ import {
   registerGitCredential,
   revokeGitCredential,
 } from './git-credential.service.js';
+import {
+  getUserSettings,
+  resolveSessionModelId,
+  UserSettingsValidationError,
+} from './user-settings.service.js';
 
 /** セッションID → AbortController のマッピング（abort 用） */
 const sessionAbortControllers = new Map<string, AbortController>();
@@ -798,8 +803,15 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       (source): source is GitRepositorySource => source.type === 'git_repository'
     );
 
-    const appSettings = await getAppSettings(fastify);
-    const modelSettings = resolveModelSettings(appSettings);
+    const [appSettings, userModelSettings] = await Promise.all([
+      getAppSettings(fastify),
+      getUserSettings(fastify, userId),
+    ]);
+    const modelSettings = {
+      opusModel: userModelSettings.opus_model_id,
+      sonnetModel: userModelSettings.sonnet_model_id,
+      haikuModel: userModelSettings.haiku_model_id,
+    };
     const claudeTelemetryEnv = buildClaudeTelemetryEnv({
       appSettings,
       databricksHost: fastify.config.DATABRICKS_HOST,
@@ -1075,6 +1087,9 @@ export async function createSession(
   if (!Array.isArray(session_context.outcomes)) {
     throw new SessionValidationError('session_context.outcomes must be an array');
   }
+  if (typeof session_context.model !== 'string' || session_context.model.trim().length === 0) {
+    throw new SessionValidationError('session_context.model must be a non-empty string');
+  }
 
   // 1. SessionId を生成（UUIDv7）
   const sessionId = new SessionId();
@@ -1090,6 +1105,14 @@ export async function createSession(
   validateGitSessionContext(session_context.sources, session_context.outcomes);
 
   await ensureDirectory(cwd);
+  const resolvedModelId = await resolveSessionModelId(fastify, userId, session_context.model).catch(
+    error => {
+      if (error instanceof UserSettingsValidationError) {
+        throw new SessionValidationError(error.message);
+      }
+      throw error;
+    }
+  );
 
   // 4. Workspace ソースのバリデーション
   const workspaceSources = session_context.sources
@@ -1123,7 +1146,7 @@ export async function createSession(
     allowed_tools: session_context.allowed_tools,
     disallowed_tools: session_context.disallowed_tools,
     cwd,
-    model: session_context.model,
+    model: resolvedModelId,
     sources: session_context.sources,
     outcomes: resolvedOutcomes,
     mcp_config: session_context.mcp_config,

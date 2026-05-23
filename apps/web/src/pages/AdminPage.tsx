@@ -51,11 +51,28 @@ import { toast } from 'sonner';
 
 const GITHUB_APPS_SETTINGS_URL = 'https://github.com/settings/apps';
 
-function includeSelectedModel(options: string[], selectedValue: string): string[] {
-  if (!selectedValue || options.includes(selectedValue)) {
-    return options;
+function classifyModelTier(modelId: string): keyof ServingEndpointsByTier | null {
+  const lower = modelId.toLowerCase();
+  if (lower.includes('opus')) return 'opus';
+  if (lower.includes('sonnet')) return 'sonnet';
+  if (lower.includes('haiku')) return 'haiku';
+  return null;
+}
+
+function groupModelIdsByTier(modelIds: string[]): ServingEndpointsByTier {
+  const grouped: ServingEndpointsByTier = { opus: [], sonnet: [], haiku: [] };
+  for (const modelId of modelIds) {
+    const tier = classifyModelTier(modelId);
+    if (tier) grouped[tier].push(modelId);
   }
-  return [selectedValue, ...options];
+  for (const tier of ['opus', 'sonnet', 'haiku'] as const) {
+    grouped[tier] = [...new Set(grouped[tier])].sort((a, b) => b.localeCompare(a));
+  }
+  return grouped;
+}
+
+function flattenServingEndpoints(endpoints: ServingEndpointsByTier | null): string[] {
+  return endpoints ? [...endpoints.opus, ...endpoints.sonnet, ...endpoints.haiku] : [];
 }
 
 function useAdminSettings() {
@@ -587,13 +604,26 @@ function AdminSettingsContent() {
     }
   }, [settings]);
 
-  const handleModelChange = (
-    key: 'default_opus_model' | 'default_sonnet_model' | 'default_haiku_model',
-    value: string
-  ) => saveSetting(key, { [key]: value });
-
   const handleDefaultRoleChange = (value: string) =>
     saveSetting('default_new_user_role', { default_new_user_role: value as 'admin' | 'member' });
+
+  const handleAllowedModelChange = (modelId: string, checked: boolean) => {
+    const current = settings?.allowed_model_ids ?? [];
+    const next = checked
+      ? [...new Set([...current, modelId])]
+      : current.filter(id => id !== modelId);
+    return saveSetting('allowed_model_ids', { allowed_model_ids: next });
+  };
+
+  const allowedModelOptions = useMemo(() => {
+    const currentEndpoints = flattenServingEndpoints(servingEndpoints);
+    return groupModelIdsByTier([...(settings?.allowed_model_ids ?? []), ...currentEndpoints]);
+  }, [servingEndpoints, settings?.allowed_model_ids]);
+
+  const currentEndpointSet = useMemo(
+    () => new Set(flattenServingEndpoints(servingEndpoints)),
+    [servingEndpoints]
+  );
 
   const otelDirty =
     otelMetricsTableInput.trim() !== (settings?.otel_metrics_table_name ?? '') ||
@@ -642,57 +672,52 @@ function AdminSettingsContent() {
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold mb-4">{t('admin.modelConfiguration')}</h2>
+        <h2 className="text-lg font-semibold mb-4">{t('admin.allowedModelIds')}</h2>
         {isLoadingEndpoints || isLoadingSettings ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <div className="border border-border rounded-lg p-4 space-y-4">
+          <div className="border border-border rounded-lg p-4 space-y-5">
             {(
               [
-                {
-                  key: 'default_opus_model',
-                  label: t('admin.opusModel'),
-                  options: servingEndpoints?.opus ?? [],
-                },
-                {
-                  key: 'default_sonnet_model',
-                  label: t('admin.sonnetModel'),
-                  options: servingEndpoints?.sonnet ?? [],
-                },
-                {
-                  key: 'default_haiku_model',
-                  label: t('admin.haikuModel'),
-                  options: servingEndpoints?.haiku ?? [],
-                },
+                { tier: 'opus', label: t('admin.opusModel') },
+                { tier: 'sonnet', label: t('admin.sonnetModel') },
+                { tier: 'haiku', label: t('admin.haikuModel') },
               ] as const
-            ).map(({ key, label, options }) => {
-              const selectedValue = settings?.[key] ?? '';
-              const modelOptions = includeSelectedModel(options, selectedValue);
-
-              return (
-                <div key={key} className="flex items-center justify-between gap-4">
-                  <p className="text-sm font-medium shrink-0">{label}</p>
-                  <Select
-                    value={selectedValue}
-                    onValueChange={value => handleModelChange(key, value)}
-                    disabled={savingKey !== null}
-                  >
-                    <SelectTrigger className="w-[320px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {modelOptions.map(name => (
-                        <SelectItem key={name} value={name}>
-                          {name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+            ).map(({ tier, label }) => (
+              <div key={tier} className="space-y-2">
+                <p className="text-sm font-medium">{label}</p>
+                <div className="space-y-2">
+                  {allowedModelOptions[tier].map(modelId => {
+                    const checked = settings?.allowed_model_ids.includes(modelId) ?? false;
+                    const isUnavailable = !currentEndpointSet.has(modelId);
+                    return (
+                      <label
+                        key={modelId}
+                        className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-sm"
+                      >
+                        <span className="min-w-0 truncate font-mono">{modelId}</span>
+                        <span className="flex shrink-0 items-center gap-2">
+                          {isUnavailable && (
+                            <Badge variant="outline">{t('admin.modelUnavailable')}</Badge>
+                          )}
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 accent-primary"
+                            checked={checked}
+                            disabled={savingKey !== null}
+                            onChange={event =>
+                              handleAllowedModelChange(modelId, event.currentTarget.checked)
+                            }
+                          />
+                        </span>
+                      </label>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         )}
       </section>

@@ -41,18 +41,22 @@ export const users = pgTable('users', {
  * user_settings テーブル
  * ユーザーごとの設定を管理
  */
-export const userSettings = pgTable('user_settings', {
-  userId: text('user_id')
-    .primaryKey()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  claudeConfigBackup: text('claude_config_backup').notNull().default('auto'),
-  createdAt: timestamp('created_at', { mode: 'date' })
-    .notNull()
-    .default(sql`now()`),
-  updatedAt: timestamp('updated_at', { mode: 'date' })
-    .notNull()
-    .default(sql`now()`),
-}).enableRLS();
+export const userSettings = pgTable(
+  'user_settings',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    value: text('value').notNull(),
+    updatedAt: timestamp('updated_at', { mode: 'date' })
+      .notNull()
+      .default(sql`now()`),
+  },
+  table => ({
+    pk: primaryKey({ columns: [table.userId, table.key] }),
+  })
+).enableRLS();
 
 /**
  * user_settings の RLS ポリシー

@@ -1,5 +1,14 @@
 import { useNavigate } from 'react-router-dom';
-import { Globe, Check, ExternalLink, Puzzle, Bot, Cable, ShieldCheck } from 'lucide-react';
+import {
+  Globe,
+  Check,
+  ExternalLink,
+  Puzzle,
+  Bot,
+  Cable,
+  ShieldCheck,
+  Settings,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
@@ -63,6 +72,10 @@ export function UserFooterExpanded({
           <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
             {versionLabel}
           </DropdownMenuLabel>
+          <DropdownMenuItem onClick={() => navigate('/settings')}>
+            <Settings className="h-4 w-4 mr-2" />
+            {t('user.settings')}
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => navigate('/skills')}>
             <Puzzle className="h-4 w-4 mr-2" />
             {t('user.skills')}

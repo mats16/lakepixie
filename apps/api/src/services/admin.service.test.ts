@@ -4,6 +4,18 @@ import type { AppSettingsResponse } from '@repo/types';
 import { DEFAULT_MODEL_SETTINGS } from '../constants/model-defaults.js';
 import { getAppSettings, resolveModelSettings } from './admin.service.js';
 
+vi.mock('./model-serving.service.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('./model-serving.service.js')>();
+  return {
+    ...actual,
+    listClaudeServingEndpoints: vi.fn().mockResolvedValue({
+      opus: ['databricks-claude-opus-4-7'],
+      sonnet: ['databricks-claude-sonnet-4-6'],
+      haiku: ['databricks-claude-haiku-4-5'],
+    }),
+  };
+});
+
 const baseSettings = {
   app_title: 'ccbricks',
   welcome_heading: 'Claude Code on Databricks',
@@ -12,6 +24,7 @@ const baseSettings = {
   default_opus_model: DEFAULT_MODEL_SETTINGS.default_opus_model,
   default_sonnet_model: DEFAULT_MODEL_SETTINGS.default_sonnet_model,
   default_haiku_model: DEFAULT_MODEL_SETTINGS.default_haiku_model,
+  allowed_model_ids: Object.values(DEFAULT_MODEL_SETTINGS),
   otel_metrics_table_name: null,
   otel_logs_table_name: null,
   otel_traces_table_name: null,
@@ -22,9 +35,22 @@ describe('admin.service model defaults', () => {
     const where = vi.fn().mockResolvedValue([]);
     const from = vi.fn(() => ({ where }));
     const select = vi.fn(() => ({ from }));
-    const fastify = { db: { select } } as unknown as FastifyInstance;
+    const fastify = {
+      db: {
+        select,
+        insert: vi.fn().mockReturnValue({
+          values: vi.fn().mockReturnValue({
+            onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
+          }),
+        }),
+      },
+      log: { warn: vi.fn() },
+    } as unknown as FastifyInstance;
 
-    await expect(getAppSettings(fastify)).resolves.toMatchObject(DEFAULT_MODEL_SETTINGS);
+    await expect(getAppSettings(fastify)).resolves.toMatchObject({
+      ...DEFAULT_MODEL_SETTINGS,
+      allowed_model_ids: Object.values(DEFAULT_MODEL_SETTINGS),
+    });
   });
 
   it('uses configured model settings when present', () => {
