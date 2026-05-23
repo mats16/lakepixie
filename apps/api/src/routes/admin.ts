@@ -200,10 +200,13 @@ const adminRoute: FastifyPluginAsync = async fastify => {
 
     const mlflowExperimentId = settings.mlflow_experiment_id;
     if (mlflowExperimentId !== undefined && mlflowExperimentId !== null) {
-      if (typeof mlflowExperimentId !== 'string' || !/^[0-9]+$/.test(mlflowExperimentId.trim())) {
+      if (
+        typeof mlflowExperimentId !== 'string' ||
+        !/^[1-9][0-9]*$/.test(mlflowExperimentId.trim())
+      ) {
         return reply.status(400).send({
           error: 'BadRequest',
-          message: 'mlflow_experiment_id must be a numeric string or null',
+          message: 'mlflow_experiment_id must be a positive numeric string or null',
           statusCode: 400,
         });
       }

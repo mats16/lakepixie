@@ -123,6 +123,8 @@ function useAdminSettings() {
   return { settings, isLoadingSettings, savingKey, saveSetting, refreshSettings: fetchSettings };
 }
 
+type AdminSettingsState = ReturnType<typeof useAdminSettings>;
+
 function useGitHubAppAuth() {
   const { t } = useTranslation();
   const [githubAppAuth, setGitHubAppAuth] = useState<GitHubAppAuthResponse | null>(null);
@@ -573,10 +575,14 @@ function TelemetrySetupDialog({
   );
 }
 
-function AdminGeneralContent() {
+function AdminGeneralContent({
+  settings,
+  isLoadingSettings,
+  savingKey,
+  saveSetting,
+  refreshSettings,
+}: AdminSettingsState) {
   const { t } = useTranslation();
-  const { settings, isLoadingSettings, savingKey, saveSetting, refreshSettings } =
-    useAdminSettings();
 
   const [servingEndpoints, setServingEndpoints] = useState<ServingEndpointsByTier | null>(null);
   const [isLoadingEndpoints, setIsLoadingEndpoints] = useState(true);
@@ -637,7 +643,7 @@ function AdminGeneralContent() {
 
   const mlflowSettings = [
     {
-      key: 'mlflow_experiment',
+      key: 'mlflow_experiment_id',
       settingKey: 'mlflow_experiment_id',
       label: t('admin.mlflowExperimentId'),
       description: t('admin.mlflowExperimentIdDescription'),
@@ -983,10 +989,14 @@ function AdminRepositoryContent() {
   );
 }
 
-function AdminBrandingContent() {
+function AdminBrandingContent({
+  settings,
+  isLoadingSettings,
+  savingKey,
+  saveSetting,
+}: AdminSettingsState) {
   const { t } = useTranslation();
   const { refetchAppSettings } = useUser();
-  const { settings, isLoadingSettings, savingKey, saveSetting } = useAdminSettings();
 
   const [appTitleInput, setAppTitleInput] = useState('');
   const [welcomeHeadingInput, setWelcomeHeadingInput] = useState('');
@@ -1073,10 +1083,14 @@ function AdminBrandingContent() {
   );
 }
 
-function AdminUsersContent() {
+function AdminUsersContent({
+  settings,
+  isLoadingSettings,
+  savingKey,
+  saveSetting,
+}: AdminSettingsState) {
   const { t } = useTranslation();
   const { user } = useUser();
-  const { settings, isLoadingSettings, savingKey, saveSetting } = useAdminSettings();
 
   const [users, setUsers] = useState<AdminUserInfo[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(true);
@@ -1237,10 +1251,9 @@ function AdminUsersContent() {
   );
 }
 
-export function AdminContent() {
-  const { isAdmin } = useUser();
-  const navigate = useNavigate();
+function AdminContentPanels() {
   const location = useLocation();
+  const adminSettings = useAdminSettings();
 
   const activeTab =
     location.pathname === '/admin/users'
@@ -1256,6 +1269,28 @@ export function AdminContent() {
     setMounted(prev => (prev.has(activeTab) ? prev : new Set(prev).add(activeTab)));
   }, [activeTab]);
 
+  return (
+    <div className="h-full min-h-0 flex flex-col overflow-hidden">
+      <div className={activeTab === 'general' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
+        {mounted.has('general') && <AdminGeneralContent {...adminSettings} />}
+      </div>
+      <div className={activeTab === 'repo' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
+        {mounted.has('repo') && <AdminRepositoryContent />}
+      </div>
+      <div className={activeTab === 'branding' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
+        {mounted.has('branding') && <AdminBrandingContent {...adminSettings} />}
+      </div>
+      <div className={activeTab === 'users' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
+        {mounted.has('users') && <AdminUsersContent {...adminSettings} />}
+      </div>
+    </div>
+  );
+}
+
+export function AdminContent() {
+  const { isAdmin } = useUser();
+  const navigate = useNavigate();
+
   useEffect(() => {
     if (!isAdmin) {
       navigate('/');
@@ -1264,20 +1299,5 @@ export function AdminContent() {
 
   if (!isAdmin) return null;
 
-  return (
-    <div className="h-full min-h-0 flex flex-col overflow-hidden">
-      <div className={activeTab === 'general' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
-        {mounted.has('general') && <AdminGeneralContent />}
-      </div>
-      <div className={activeTab === 'repo' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
-        {mounted.has('repo') && <AdminRepositoryContent />}
-      </div>
-      <div className={activeTab === 'branding' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
-        {mounted.has('branding') && <AdminBrandingContent />}
-      </div>
-      <div className={activeTab === 'users' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
-        {mounted.has('users') && <AdminUsersContent />}
-      </div>
-    </div>
-  );
+  return <AdminContentPanels />;
 }
