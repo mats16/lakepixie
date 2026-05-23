@@ -6,6 +6,7 @@ export * from './message.js';
 export * from './session.js';
 export * from './user.js';
 export * from './title.js';
+export * from './tools.js';
 export * from './websocket.js';
 export * from './workspace.js';
 export * from './skill.js';

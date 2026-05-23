@@ -25,22 +25,23 @@ export const users = sqliteTable('users', {
  * user_settings テーブル
  * ユーザーごとの設定を管理
  */
-export const userSettings = sqliteTable(
-  'user_settings',
-  {
-    userId: text('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    key: text('key').notNull(),
-    value: text('value').notNull(),
-    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-      .notNull()
-      .default(CURRENT_TIMESTAMP_MS),
-  },
-  table => ({
-    pk: primaryKey({ columns: [table.userId, table.key] }),
-  })
-);
+export const userSettings = sqliteTable('user_settings', {
+  userId: text('user_id')
+    .primaryKey()
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  opusModelId: text('opus_model_id'),
+  sonnetModelId: text('sonnet_model_id'),
+  haikuModelId: text('haiku_model_id'),
+  allowedTools: text('allowed_tools', { mode: 'json' }).$type<string[] | null>(),
+  disallowedTools: text('disallowed_tools', { mode: 'json' }).$type<string[] | null>(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .default(CURRENT_TIMESTAMP_MS),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .default(CURRENT_TIMESTAMP_MS),
+});
 
 /**
  * sessions テーブル

@@ -41,22 +41,23 @@ export const users = pgTable('users', {
  * user_settings テーブル
  * ユーザーごとの設定を管理
  */
-export const userSettings = pgTable(
-  'user_settings',
-  {
-    userId: text('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    key: text('key').notNull(),
-    value: text('value').notNull(),
-    updatedAt: timestamp('updated_at', { mode: 'date' })
-      .notNull()
-      .default(sql`now()`),
-  },
-  table => ({
-    pk: primaryKey({ columns: [table.userId, table.key] }),
-  })
-).enableRLS();
+export const userSettings = pgTable('user_settings', {
+  userId: text('user_id')
+    .primaryKey()
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  opusModelId: text('opus_model_id'),
+  sonnetModelId: text('sonnet_model_id'),
+  haikuModelId: text('haiku_model_id'),
+  allowedTools: jsonb('allowed_tools').$type<string[] | null>(),
+  disallowedTools: jsonb('disallowed_tools').$type<string[] | null>(),
+  createdAt: timestamp('created_at', { mode: 'date' })
+    .notNull()
+    .default(sql`now()`),
+  updatedAt: timestamp('updated_at', { mode: 'date' })
+    .notNull()
+    .default(sql`now()`),
+}).enableRLS();
 
 /**
  * user_settings の RLS ポリシー

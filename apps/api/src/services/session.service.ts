@@ -888,8 +888,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
           preset: 'claude_code',
         },
         allowedTools: sessionContext.allowed_tools,
-        // WebSearch は Anthropic API に依存しているため固定で無効化
-        disallowedTools: ['WebSearch', ...(sessionContext.disallowed_tools ?? [])],
+        disallowedTools: sessionContext.disallowed_tools,
         env: {
           PATH: fastify.config.PATH,
           HOME: userHome,

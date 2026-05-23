@@ -243,9 +243,11 @@ async function initSqlite(fastify: FastifyInstance) {
   const userSettingsColumns = client
     .prepare("SELECT name FROM pragma_table_info('user_settings')")
     .all() as Array<{ name: string }>;
-  const hasLegacyUserSettings =
-    userSettingsColumns.length > 0 && !userSettingsColumns.some(col => col.name === 'key');
-  if (hasLegacyUserSettings) {
+  const hasIncompatibleUserSettings =
+    userSettingsColumns.length > 0 &&
+    (!userSettingsColumns.some(col => col.name === 'opus_model_id') ||
+      !userSettingsColumns.some(col => col.name === 'disallowed_tools'));
+  if (hasIncompatibleUserSettings) {
     client.exec(`
       DROP TRIGGER IF EXISTS "set_updated_at_user_settings";
       DROP TABLE IF EXISTS "user_settings";
@@ -264,11 +266,14 @@ async function initSqlite(fastify: FastifyInstance) {
       "updated_at" INTEGER NOT NULL DEFAULT ${TS}
     );
     CREATE TABLE IF NOT EXISTS "user_settings" (
-      "user_id" TEXT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
-      "key" TEXT NOT NULL,
-      "value" TEXT NOT NULL,
-      "updated_at" INTEGER NOT NULL DEFAULT ${TS},
-      PRIMARY KEY ("user_id", "key")
+      "user_id" TEXT PRIMARY KEY REFERENCES "users"("id") ON DELETE CASCADE,
+      "opus_model_id" TEXT,
+      "sonnet_model_id" TEXT,
+      "haiku_model_id" TEXT,
+      "allowed_tools" TEXT,
+      "disallowed_tools" TEXT,
+      "created_at" INTEGER NOT NULL DEFAULT ${TS},
+      "updated_at" INTEGER NOT NULL DEFAULT ${TS}
     );
     CREATE TABLE IF NOT EXISTS "sessions" (
       "id" TEXT PRIMARY KEY,
@@ -328,7 +333,7 @@ async function initSqlite(fastify: FastifyInstance) {
     CREATE TRIGGER "set_updated_at_user_settings"
       AFTER UPDATE ON "user_settings" FOR EACH ROW
       WHEN NEW."updated_at" = OLD."updated_at"
-      BEGIN UPDATE "user_settings" SET "updated_at" = ${TS} WHERE "user_id" = NEW."user_id" AND "key" = NEW."key"; END;
+      BEGIN UPDATE "user_settings" SET "updated_at" = ${TS} WHERE "user_id" = NEW."user_id"; END;
     DROP TRIGGER IF EXISTS "set_updated_at_sessions";
     CREATE TRIGGER "set_updated_at_sessions"
       AFTER UPDATE ON "sessions" FOR EACH ROW

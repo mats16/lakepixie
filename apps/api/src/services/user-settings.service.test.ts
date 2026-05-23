@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { CLAUDE_CODE_PRESET_TOOLS } from '@repo/types';
 import { DEFAULT_MODEL_SETTINGS } from '../constants/model-defaults.js';
 
 const mocks = vi.hoisted(() => ({
@@ -42,20 +43,28 @@ const appSettings = {
   otel_traces_table_name: null,
 } as const;
 
-function createMockFastify(rows: Array<{ key: string; value: string }> = []): FastifyInstance {
+type MockUserSettingsRow = {
+  userId: string;
+  opusModelId: string | null;
+  sonnetModelId: string | null;
+  haikuModelId: string | null;
+  allowedTools: string[] | string | null;
+  disallowedTools: string[] | string | null;
+};
+
+function createMockFastify(rows: MockUserSettingsRow[] = []): FastifyInstance {
   const tx = {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(rows),
+        where: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue(rows),
+        }),
       }),
     }),
     insert: vi.fn().mockReturnValue({
       values: vi.fn().mockReturnValue({
         onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
       }),
-    }),
-    delete: vi.fn().mockReturnValue({
-      where: vi.fn().mockResolvedValue(undefined),
     }),
   };
 
@@ -76,8 +85,14 @@ describe('user-settings.service', () => {
 
   it('resolves invalid user settings through app defaults and allowed models', async () => {
     const fastify = createMockFastify([
-      { key: 'opus_model_id', value: 'not-allowed' },
-      { key: 'sonnet_model_id', value: 'databricks-claude-sonnet-custom' },
+      {
+        userId: 'user-1',
+        opusModelId: 'not-allowed',
+        sonnetModelId: 'databricks-claude-sonnet-custom',
+        haikuModelId: null,
+        allowedTools: null,
+        disallowedTools: null,
+      },
     ]);
 
     const settings = await getUserSettings(fastify, 'user-1');
@@ -85,6 +100,26 @@ describe('user-settings.service', () => {
     expect(settings.opus_model_id).toBe(DEFAULT_MODEL_SETTINGS.default_opus_model);
     expect(settings.sonnet_model_id).toBe('databricks-claude-sonnet-custom');
     expect(settings.haiku_model_id).toBe(DEFAULT_MODEL_SETTINGS.default_haiku_model);
+    expect(settings.allowed_tools).toEqual(CLAUDE_CODE_PRESET_TOOLS);
+    expect(settings.disallowed_tools).toEqual([]);
+  });
+
+  it('resolves saved preset and custom tool settings', async () => {
+    const fastify = createMockFastify([
+      {
+        userId: 'user-1',
+        opusModelId: null,
+        sonnetModelId: null,
+        haikuModelId: null,
+        allowedTools: ['Read', 'WebSearch', 'Bash(*)'],
+        disallowedTools: ['Bash', 'mcp__dbsql__*', '*'],
+      },
+    ]);
+
+    const settings = await getUserSettings(fastify, 'user-1');
+
+    expect(settings.allowed_tools).toEqual(['Read', 'WebSearch', 'Bash(*)']);
+    expect(settings.disallowed_tools).toEqual(['Bash', 'mcp__dbsql__*', '*']);
   });
 
   it('rejects personal model ids outside the allowed list', async () => {
@@ -95,20 +130,35 @@ describe('user-settings.service', () => {
     ).rejects.toBeInstanceOf(UserSettingsValidationError);
   });
 
-  it('upserts and deletes personal settings', async () => {
+  it('accepts custom allowed and disallowed tool patterns', async () => {
+    const fastify = createMockFastify();
+
+    await expect(
+      updateUserSettings(fastify, 'user-1', {
+        allowed_tools: ['Read', 'Bash(*)'],
+        disallowed_tools: ['mcp__dbsql__*', '*'],
+      })
+    ).resolves.toMatchObject({
+      allowed_tools: CLAUDE_CODE_PRESET_TOOLS,
+      disallowed_tools: [],
+    });
+  });
+
+  it('upserts personal settings', async () => {
     const fastify = createMockFastify();
     const tx = (
       fastify as unknown as {
-        __tx: { insert: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> };
+        __tx: { insert: ReturnType<typeof vi.fn> };
       }
     ).__tx;
 
     await updateUserSettings(fastify, 'user-1', {
       opus_model_id: DEFAULT_MODEL_SETTINGS.default_opus_model,
       haiku_model_id: null,
+      allowed_tools: ['Read', 'WebSearch'],
+      disallowed_tools: ['Bash'],
     });
 
     expect(tx.insert).toHaveBeenCalledOnce();
-    expect(tx.delete).toHaveBeenCalledOnce();
   });
 });
