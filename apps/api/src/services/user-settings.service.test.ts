@@ -53,18 +53,40 @@ type MockUserSettingsRow = {
 };
 
 function createMockFastify(rows: MockUserSettingsRow[] = []): FastifyInstance {
+  let storedRows = rows.map(row => ({ ...row }));
+  const makeRow = (
+    values: Partial<MockUserSettingsRow> & { userId: string }
+  ): MockUserSettingsRow => ({
+    userId: values.userId,
+    opusModelId: values.opusModelId ?? null,
+    sonnetModelId: values.sonnetModelId ?? null,
+    haikuModelId: values.haikuModelId ?? null,
+    allowedTools: values.allowedTools ?? null,
+    disallowedTools: values.disallowedTools ?? null,
+  });
+  const upsertValues = vi.fn((values: Partial<MockUserSettingsRow> & { userId: string }) => ({
+    onConflictDoUpdate: vi.fn(async ({ set }: { set: Partial<MockUserSettingsRow> }) => {
+      const index = storedRows.findIndex(row => row.userId === values.userId);
+      const current = index >= 0 ? storedRows[index] : makeRow(values);
+      const next = makeRow({ ...current, ...values, ...set, userId: values.userId });
+
+      if (index >= 0) {
+        storedRows[index] = next;
+      } else {
+        storedRows = [...storedRows, next];
+      }
+    }),
+  }));
   const tx = {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue(rows),
+          limit: vi.fn(async () => storedRows),
         }),
       }),
     }),
     insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockReturnValue({
-        onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
-      }),
+      values: upsertValues,
     }),
   };
 
@@ -139,8 +161,8 @@ describe('user-settings.service', () => {
         disallowed_tools: ['mcp__dbsql__*', '*'],
       })
     ).resolves.toMatchObject({
-      allowed_tools: CLAUDE_CODE_PRESET_TOOLS,
-      disallowed_tools: [],
+      allowed_tools: ['Read', 'Bash(*)'],
+      disallowed_tools: ['mcp__dbsql__*', '*'],
     });
   });
 

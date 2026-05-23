@@ -243,15 +243,21 @@ async function initSqlite(fastify: FastifyInstance) {
   const userSettingsColumns = client
     .prepare("SELECT name FROM pragma_table_info('user_settings')")
     .all() as Array<{ name: string }>;
-  const hasIncompatibleUserSettings =
-    userSettingsColumns.length > 0 &&
-    (!userSettingsColumns.some(col => col.name === 'opus_model_id') ||
-      !userSettingsColumns.some(col => col.name === 'disallowed_tools'));
-  if (hasIncompatibleUserSettings) {
+  const userSettingsColumnNames = new Set(userSettingsColumns.map(col => col.name));
+  const hasLegacyUserSettings =
+    userSettingsColumns.length > 0 && !userSettingsColumnNames.has('opus_model_id');
+  if (hasLegacyUserSettings) {
     client.exec(`
       DROP TRIGGER IF EXISTS "set_updated_at_user_settings";
       DROP TABLE IF EXISTS "user_settings";
     `);
+  } else if (userSettingsColumns.length > 0) {
+    if (!userSettingsColumnNames.has('allowed_tools')) {
+      client.exec('ALTER TABLE "user_settings" ADD COLUMN "allowed_tools" TEXT;');
+    }
+    if (!userSettingsColumnNames.has('disallowed_tools')) {
+      client.exec('ALTER TABLE "user_settings" ADD COLUMN "disallowed_tools" TEXT;');
+    }
   }
 
   // テーブル作成（CREATE TABLE IF NOT EXISTS）

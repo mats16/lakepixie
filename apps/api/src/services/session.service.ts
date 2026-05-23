@@ -74,6 +74,7 @@ const QUEUED_USER_EVENT_SUBTYPE = 'queued';
 const GIT_COMMAND_TIMEOUT_MS = 60000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const moduleRequire = createRequire(import.meta.url);
+const MCP_TOOL_PATTERN_PREFIX = 'mcp__';
 
 export class SessionValidationError extends Error {
   constructor(message: string) {
@@ -385,6 +386,32 @@ function validateGitSessionContext(sources: SessionSource[], outcomes: SessionOu
     gitInfo.repo === sourceRepo,
     'Git repository source URL must match the git repository outcome'
   );
+}
+
+function uniqueTools(tools: readonly string[]): string[] {
+  return [...new Set(tools)];
+}
+
+function getRequestedMcpToolPatterns(tools: readonly string[] | undefined): string[] {
+  return (tools ?? []).filter(tool => tool.startsWith(MCP_TOOL_PATTERN_PREFIX));
+}
+
+function buildEffectiveToolSettings(params: {
+  userAllowedTools: readonly string[];
+  userDisallowedTools: readonly string[];
+  requestedAllowedTools?: readonly string[];
+  requestedDisallowedTools?: readonly string[];
+}): Pick<SessionContextResponse, 'allowed_tools' | 'disallowed_tools'> {
+  return {
+    allowed_tools: uniqueTools([
+      ...params.userAllowedTools,
+      ...getRequestedMcpToolPatterns(params.requestedAllowedTools),
+    ]),
+    disallowed_tools: uniqueTools([
+      ...params.userDisallowedTools,
+      ...getRequestedMcpToolPatterns(params.requestedDisallowedTools),
+    ]),
+  };
 }
 
 function getInternalGitCredentialUrl(fastify: FastifyInstance): string {
@@ -1113,6 +1140,8 @@ export async function createSession(
     }
   );
 
+  const userSettings = await getUserSettings(fastify, userId);
+
   // 4. Workspace ソースのバリデーション
   const workspaceSources = session_context.sources
     .filter((s): s is DatabricksWorkspaceSource => s.type === 'databricks_workspace')
@@ -1141,9 +1170,15 @@ export async function createSession(
   );
 
   // 6. context オブジェクトの構築
+  const toolSettings = buildEffectiveToolSettings({
+    userAllowedTools: userSettings.allowed_tools,
+    userDisallowedTools: userSettings.disallowed_tools,
+    requestedAllowedTools: session_context.allowed_tools,
+    requestedDisallowedTools: session_context.disallowed_tools,
+  });
   const sessionContext: SessionContextResponse = {
-    allowed_tools: session_context.allowed_tools,
-    disallowed_tools: session_context.disallowed_tools,
+    allowed_tools: toolSettings.allowed_tools,
+    disallowed_tools: toolSettings.disallowed_tools,
     cwd,
     model: resolvedModelId,
     sources: session_context.sources,
@@ -1703,6 +1738,7 @@ export async function executeAbort(
 
 export const __testing = {
   buildGitIdentityEnv,
+  buildEffectiveToolSettings,
   cloneGitRepositorySource,
   extractEventUuid,
   getGitBranchFromRevision,
