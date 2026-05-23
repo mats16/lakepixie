@@ -400,6 +400,16 @@ function getRequestedMcpToolPatterns(tools: readonly string[] | undefined): stri
   return (tools ?? []).filter(tool => tool.startsWith(MCP_TOOL_PATTERN_PREFIX));
 }
 
+function getSessionMcpToolPatterns(params: {
+  userTools: readonly string[];
+  requestedTools?: readonly string[];
+}): string[] {
+  const userMcpPatterns = new Set(getRequestedMcpToolPatterns(params.userTools));
+  return getRequestedMcpToolPatterns(params.requestedTools).filter(
+    tool => !userMcpPatterns.has(tool)
+  );
+}
+
 function buildEffectiveToolSettings(params: {
   userAllowedTools: readonly string[];
   userDisallowedTools: readonly string[];
@@ -415,6 +425,28 @@ function buildEffectiveToolSettings(params: {
       ...params.userDisallowedTools,
       ...getRequestedMcpToolPatterns(params.requestedDisallowedTools),
     ]),
+  };
+}
+
+function buildSessionToolSettings(params: {
+  userAllowedTools: readonly string[];
+  userDisallowedTools: readonly string[];
+  requestedAllowedTools?: readonly string[];
+  requestedDisallowedTools?: readonly string[];
+}): EffectiveToolSettings {
+  return {
+    allowed_tools: uniqueTools(
+      getSessionMcpToolPatterns({
+        userTools: params.userAllowedTools,
+        requestedTools: params.requestedAllowedTools,
+      })
+    ),
+    disallowed_tools: uniqueTools(
+      getSessionMcpToolPatterns({
+        userTools: params.userDisallowedTools,
+        requestedTools: params.requestedDisallowedTools,
+      })
+    ),
   };
 }
 
@@ -1187,15 +1219,15 @@ export async function createSession(
   );
 
   // 6. context オブジェクトの構築
-  const toolSettings = buildEffectiveToolSettings({
+  const sessionToolSettings = buildSessionToolSettings({
     userAllowedTools: userSettings.allowed_tools,
     userDisallowedTools: userSettings.disallowed_tools,
     requestedAllowedTools: session_context.allowed_tools,
     requestedDisallowedTools: session_context.disallowed_tools,
   });
   const sessionContext: SessionContextResponse = {
-    allowed_tools: toolSettings.allowed_tools,
-    disallowed_tools: toolSettings.disallowed_tools,
+    allowed_tools: sessionToolSettings.allowed_tools,
+    disallowed_tools: sessionToolSettings.disallowed_tools,
     cwd,
     model: resolvedModelId,
     sources: session_context.sources,
@@ -1756,6 +1788,7 @@ export async function executeAbort(
 export const __testing = {
   buildGitIdentityEnv,
   buildEffectiveToolSettings,
+  buildSessionToolSettings,
   cloneGitRepositorySource,
   extractEventUuid,
   getGitBranchFromRevision,

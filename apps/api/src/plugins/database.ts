@@ -246,6 +246,8 @@ async function initSqlite(fastify: FastifyInstance) {
   const userSettingsColumnNames = new Set(userSettingsColumns.map(col => col.name));
   const hasLegacyUserSettings =
     userSettingsColumns.length > 0 && !userSettingsColumnNames.has('opus_model_id');
+  const TS = `(CAST(unixepoch('subsec') * 1000 AS INTEGER))`;
+  const migrationTimestamp = Date.now();
   if (hasLegacyUserSettings) {
     client.exec(`
       DROP TRIGGER IF EXISTS "set_updated_at_user_settings";
@@ -258,11 +260,20 @@ async function initSqlite(fastify: FastifyInstance) {
     if (!userSettingsColumnNames.has('disallowed_tools')) {
       client.exec('ALTER TABLE "user_settings" ADD COLUMN "disallowed_tools" TEXT;');
     }
+    if (!userSettingsColumnNames.has('created_at')) {
+      client.exec(
+        `ALTER TABLE "user_settings" ADD COLUMN "created_at" INTEGER NOT NULL DEFAULT ${migrationTimestamp};`
+      );
+    }
+    if (!userSettingsColumnNames.has('updated_at')) {
+      client.exec(
+        `ALTER TABLE "user_settings" ADD COLUMN "updated_at" INTEGER NOT NULL DEFAULT ${migrationTimestamp};`
+      );
+    }
   }
 
   // テーブル作成（CREATE TABLE IF NOT EXISTS）
   // updated_at は ORM ではなく DB トリガーで管理し、PG/SQLite 間の一貫性を保つ
-  const TS = `(CAST(unixepoch('subsec') * 1000 AS INTEGER))`;
   client.exec(`
     CREATE TABLE IF NOT EXISTS "users" (
       "id" TEXT PRIMARY KEY,

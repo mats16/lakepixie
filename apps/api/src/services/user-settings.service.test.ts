@@ -54,6 +54,7 @@ type MockUserSettingsRow = {
 
 function createMockFastify(rows: MockUserSettingsRow[] = []): FastifyInstance {
   let storedRows = rows.map(row => ({ ...row }));
+  let activeUserId: string | undefined;
   const makeRow = (
     values: Partial<MockUserSettingsRow> & { userId: string }
   ): MockUserSettingsRow => ({
@@ -81,7 +82,11 @@ function createMockFastify(rows: MockUserSettingsRow[] = []): FastifyInstance {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
-          limit: vi.fn(async () => storedRows),
+          limit: vi.fn(async () =>
+            activeUserId === undefined
+              ? storedRows
+              : storedRows.filter(row => row.userId === activeUserId)
+          ),
         }),
       }),
     }),
@@ -91,9 +96,14 @@ function createMockFastify(rows: MockUserSettingsRow[] = []): FastifyInstance {
   };
 
   return {
-    withUserContext: vi.fn(async (_userId: string, callback: (tx: unknown) => Promise<unknown>) =>
-      callback(tx)
-    ),
+    withUserContext: vi.fn(async (userId: string, callback: (tx: unknown) => Promise<unknown>) => {
+      activeUserId = userId;
+      try {
+        return await callback(tx);
+      } finally {
+        activeUserId = undefined;
+      }
+    }),
     __tx: tx,
   } as unknown as FastifyInstance;
 }
@@ -142,6 +152,33 @@ describe('user-settings.service', () => {
 
     expect(settings.allowed_tools).toEqual(['Read', 'WebSearch', 'Bash(*)']);
     expect(settings.disallowed_tools).toEqual(['Bash', 'mcp__dbsql__*', '*']);
+  });
+
+  it('reads settings for the requested user from the mock transaction', async () => {
+    const fastify = createMockFastify([
+      {
+        userId: 'user-1',
+        opusModelId: null,
+        sonnetModelId: null,
+        haikuModelId: null,
+        allowedTools: ['Read'],
+        disallowedTools: ['Bash'],
+      },
+      {
+        userId: 'user-2',
+        opusModelId: null,
+        sonnetModelId: 'databricks-claude-sonnet-custom',
+        haikuModelId: null,
+        allowedTools: ['Write'],
+        disallowedTools: ['WebSearch'],
+      },
+    ]);
+
+    const settings = await getUserSettings(fastify, 'user-2');
+
+    expect(settings.sonnet_model_id).toBe('databricks-claude-sonnet-custom');
+    expect(settings.allowed_tools).toEqual(['Write']);
+    expect(settings.disallowed_tools).toEqual(['WebSearch']);
   });
 
   it('does not fall back to hardcoded model ids when allowed endpoints have custom names', async () => {

@@ -165,6 +165,20 @@ describe('session.service', () => {
         disallowed_tools: ['Bash'],
       });
     });
+
+    it('stores only session-specific MCP patterns outside persisted user settings', () => {
+      const settings = __testing.buildSessionToolSettings({
+        userAllowedTools: ['Read', 'mcp__dbsql__*'],
+        userDisallowedTools: ['Bash', 'mcp__disabled__*'],
+        requestedAllowedTools: ['Read', 'Write', 'mcp__dbsql__*', 'mcp__vector__*'],
+        requestedDisallowedTools: ['Bash', 'mcp__disabled__*', 'mcp__readonly__*'],
+      });
+
+      expect(settings).toEqual({
+        allowed_tools: ['mcp__vector__*'],
+        disallowed_tools: ['mcp__readonly__*'],
+      });
+    });
   });
 
   describe('git repository source helpers', () => {
