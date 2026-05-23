@@ -43,7 +43,7 @@ import { fromUUID } from 'typeid-js';
 import { DatabricksAppsClient } from '../lib/databricks-apps-client.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { getAuthProvider } from '../lib/databricks-auth.js';
-import { getAppSettings } from './admin.service.js';
+import { getAllowedModelIds, getAppSettings } from './admin.service.js';
 import { writeHelperScripts } from './helper-scripts.service.js';
 import { buildClaudeTelemetryEnv } from './claude-telemetry-env.service.js';
 import { wsManager } from './websocket-manager.service.js';
@@ -64,7 +64,7 @@ import {
 } from './git-credential.service.js';
 import {
   getUserSettings,
-  resolveSessionModelId,
+  resolveSessionModelIdFromSettings,
   UserSettingsValidationError,
 } from './user-settings.service.js';
 
@@ -74,6 +74,11 @@ const QUEUED_USER_EVENT_SUBTYPE = 'queued';
 const GIT_COMMAND_TIMEOUT_MS = 60000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const moduleRequire = createRequire(import.meta.url);
+const MCP_TOOL_PATTERN_PREFIX = 'mcp__';
+type EffectiveToolSettings = {
+  allowed_tools: string[];
+  disallowed_tools: string[];
+};
 
 export class SessionValidationError extends Error {
   constructor(message: string) {
@@ -385,6 +390,64 @@ function validateGitSessionContext(sources: SessionSource[], outcomes: SessionOu
     gitInfo.repo === sourceRepo,
     'Git repository source URL must match the git repository outcome'
   );
+}
+
+function uniqueTools(tools: readonly string[]): string[] {
+  return [...new Set(tools)];
+}
+
+function getRequestedMcpToolPatterns(tools: readonly string[] | undefined): string[] {
+  return (tools ?? []).filter(tool => tool.startsWith(MCP_TOOL_PATTERN_PREFIX));
+}
+
+function getSessionMcpToolPatterns(params: {
+  userTools: readonly string[];
+  requestedTools?: readonly string[];
+}): string[] {
+  const userMcpPatterns = new Set(getRequestedMcpToolPatterns(params.userTools));
+  return getRequestedMcpToolPatterns(params.requestedTools).filter(
+    tool => !userMcpPatterns.has(tool)
+  );
+}
+
+function buildEffectiveToolSettings(params: {
+  userAllowedTools: readonly string[];
+  userDisallowedTools: readonly string[];
+  requestedAllowedTools?: readonly string[];
+  requestedDisallowedTools?: readonly string[];
+}): EffectiveToolSettings {
+  return {
+    allowed_tools: uniqueTools([
+      ...params.userAllowedTools,
+      ...getRequestedMcpToolPatterns(params.requestedAllowedTools),
+    ]),
+    disallowed_tools: uniqueTools([
+      ...params.userDisallowedTools,
+      ...getRequestedMcpToolPatterns(params.requestedDisallowedTools),
+    ]),
+  };
+}
+
+function buildSessionToolSettings(params: {
+  userAllowedTools: readonly string[];
+  userDisallowedTools: readonly string[];
+  requestedAllowedTools?: readonly string[];
+  requestedDisallowedTools?: readonly string[];
+}): EffectiveToolSettings {
+  return {
+    allowed_tools: uniqueTools(
+      getSessionMcpToolPatterns({
+        userTools: params.userAllowedTools,
+        requestedTools: params.requestedAllowedTools,
+      })
+    ),
+    disallowed_tools: uniqueTools(
+      getSessionMcpToolPatterns({
+        userTools: params.userDisallowedTools,
+        requestedTools: params.requestedDisallowedTools,
+      })
+    ),
+  };
 }
 
 function getInternalGitCredentialUrl(fastify: FastifyInstance): string {
@@ -821,6 +884,12 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       databricksAppName: fastify.config.DATABRICKS_APP_NAME,
       nodeEnv: fastify.config.NODE_ENV,
     });
+    const effectiveToolSettings = buildEffectiveToolSettings({
+      userAllowedTools: userModelSettings.allowed_tools,
+      userDisallowedTools: userModelSettings.disallowed_tools,
+      requestedAllowedTools: sessionContext.allowed_tools,
+      requestedDisallowedTools: sessionContext.disallowed_tools,
+    });
 
     // ヘルパースクリプトを配置（apiKeyHelper / otelHeadersHelper）
     const claudeNativePackage = getClaudeNativePackageName();
@@ -847,8 +916,8 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
         claudeNativePackage,
         pathToClaudeCodeExecutable,
         mcpServerCount: Object.keys(mcpServers).length,
-        allowedToolCount: sessionContext.allowed_tools?.length ?? 0,
-        disallowedToolCount: sessionContext.disallowed_tools?.length ?? 0,
+        allowedToolCount: effectiveToolSettings.allowed_tools.length,
+        disallowedToolCount: effectiveToolSettings.disallowed_tools.length,
       },
       'Starting Claude Agent SDK query'
     );
@@ -887,9 +956,8 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
           type: 'preset',
           preset: 'claude_code',
         },
-        allowedTools: sessionContext.allowed_tools,
-        // WebSearch は Anthropic API に依存しているため固定で無効化
-        disallowedTools: ['WebSearch', ...(sessionContext.disallowed_tools ?? [])],
+        allowedTools: effectiveToolSettings.allowed_tools,
+        disallowedTools: effectiveToolSettings.disallowed_tools,
         env: {
           PATH: fastify.config.PATH,
           HOME: userHome,
@@ -1105,14 +1173,23 @@ export async function createSession(
   validateGitSessionContext(session_context.sources, session_context.outcomes);
 
   await ensureDirectory(cwd);
-  const resolvedModelId = await resolveSessionModelId(fastify, userId, session_context.model).catch(
-    error => {
-      if (error instanceof UserSettingsValidationError) {
-        throw new SessionValidationError(error.message);
-      }
-      throw error;
+  const [userSettings, allowedModelIds] = await Promise.all([
+    getUserSettings(fastify, userId),
+    getAllowedModelIds(fastify),
+  ]);
+  let resolvedModelId: string;
+  try {
+    resolvedModelId = resolveSessionModelIdFromSettings(
+      userSettings,
+      new Set(allowedModelIds),
+      session_context.model
+    );
+  } catch (error) {
+    if (error instanceof UserSettingsValidationError) {
+      throw new SessionValidationError(error.message);
     }
-  );
+    throw error;
+  }
 
   // 4. Workspace ソースのバリデーション
   const workspaceSources = session_context.sources
@@ -1142,9 +1219,15 @@ export async function createSession(
   );
 
   // 6. context オブジェクトの構築
+  const sessionToolSettings = buildSessionToolSettings({
+    userAllowedTools: userSettings.allowed_tools,
+    userDisallowedTools: userSettings.disallowed_tools,
+    requestedAllowedTools: session_context.allowed_tools,
+    requestedDisallowedTools: session_context.disallowed_tools,
+  });
   const sessionContext: SessionContextResponse = {
-    allowed_tools: session_context.allowed_tools,
-    disallowed_tools: session_context.disallowed_tools,
+    allowed_tools: sessionToolSettings.allowed_tools,
+    disallowed_tools: sessionToolSettings.disallowed_tools,
     cwd,
     model: resolvedModelId,
     sources: session_context.sources,
@@ -1704,6 +1787,8 @@ export async function executeAbort(
 
 export const __testing = {
   buildGitIdentityEnv,
+  buildEffectiveToolSettings,
+  buildSessionToolSettings,
   cloneGitRepositorySource,
   extractEventUuid,
   getGitBranchFromRevision,

@@ -17,10 +17,10 @@ interface UseMcpSelectionReturn {
   toggleItem: (spaceId: string) => void;
   /** グローバルで有効な全 MCP サーバーの設定（session_context.mcp_config 用） */
   buildMcpConfig: () => McpConfig | undefined;
-  /** CLAUDE_CODE_PRESET_TOOLS + セッションで選択された MCP のツールパターン（session_context.allowed_tools 用） */
-  buildAllowedTools: () => string[];
-  /** セッションで無効化された MCP のツールパターン（session_context.disallowed_tools 用） */
-  buildDisallowedTools: () => string[];
+  /** User allowed Claude Code tools + セッションで選択された MCP のツールパターン（session_context.allowed_tools 用） */
+  buildAllowedTools: (baseTools?: readonly string[]) => string[];
+  /** User disallowed Claude Code tools + セッションで無効化された MCP のツールパターン（session_context.disallowed_tools 用） */
+  buildDisallowedTools: (baseTools?: readonly string[]) => string[];
   isLoading: boolean;
 }
 
@@ -136,11 +136,14 @@ export function useMcpSelection(): UseMcpSelectionReturn {
   );
 
   const buildAllowedTools = useCallback(
-    (): string[] => [...CLAUDE_CODE_PRESET_TOOLS, ...buildToolPatterns(true)],
+    (baseTools: readonly string[] = CLAUDE_CODE_PRESET_TOOLS): string[] => [
+      ...baseTools,
+      ...buildToolPatterns(true),
+    ],
     [buildToolPatterns]
   );
   const buildDisallowedTools = useCallback(
-    (): string[] => buildToolPatterns(false),
+    (baseTools: readonly string[] = []): string[] => [...baseTools, ...buildToolPatterns(false)],
     [buildToolPatterns]
   );
 

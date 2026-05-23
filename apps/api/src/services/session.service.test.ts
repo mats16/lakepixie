@@ -139,6 +139,48 @@ describe('session.service', () => {
     });
   });
 
+  describe('buildEffectiveToolSettings', () => {
+    it('uses persisted standard tool settings and only accepts MCP patterns from the request', () => {
+      const settings = __testing.buildEffectiveToolSettings({
+        userAllowedTools: ['Read', 'Bash(*)'],
+        userDisallowedTools: ['WebSearch'],
+        requestedAllowedTools: ['Read', 'Write', 'mcp__dbsql__*'],
+        requestedDisallowedTools: ['Bash', 'mcp__disabled__*'],
+      });
+
+      expect(settings).toEqual({
+        allowed_tools: ['Read', 'Bash(*)', 'mcp__dbsql__*'],
+        disallowed_tools: ['WebSearch', 'mcp__disabled__*'],
+      });
+    });
+
+    it('falls back to persisted settings when stored session contexts omit tool lists', () => {
+      const settings = __testing.buildEffectiveToolSettings({
+        userAllowedTools: ['Read'],
+        userDisallowedTools: ['Bash'],
+      });
+
+      expect(settings).toEqual({
+        allowed_tools: ['Read'],
+        disallowed_tools: ['Bash'],
+      });
+    });
+
+    it('stores only session-specific MCP patterns outside persisted user settings', () => {
+      const settings = __testing.buildSessionToolSettings({
+        userAllowedTools: ['Read', 'mcp__dbsql__*'],
+        userDisallowedTools: ['Bash', 'mcp__disabled__*'],
+        requestedAllowedTools: ['Read', 'Write', 'mcp__dbsql__*', 'mcp__vector__*'],
+        requestedDisallowedTools: ['Bash', 'mcp__disabled__*', 'mcp__readonly__*'],
+      });
+
+      expect(settings).toEqual({
+        allowed_tools: ['mcp__vector__*'],
+        disallowed_tools: ['mcp__readonly__*'],
+      });
+    });
+  });
+
   describe('git repository source helpers', () => {
     it('should parse refs/heads revision into a branch name', () => {
       expect(__testing.getGitBranchFromRevision('refs/heads/main')).toBe('main');

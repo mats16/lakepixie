@@ -215,15 +215,13 @@ describe.skipIf(!process.env.LAKEBASE_ENDPOINT)('Database Integration Tests', ()
       await withTestUserContext(TEST_USER_1, async tx => {
         await tx.insert(schema.userSettings).values({
           userId: TEST_USER_1,
-          key: 'opus_model_id',
-          value: 'databricks-claude-opus-4-7',
+          opusModelId: 'databricks-claude-opus-4-7',
         });
       });
       await withTestUserContext(TEST_USER_2, async tx => {
         await tx.insert(schema.userSettings).values({
           userId: TEST_USER_2,
-          key: 'opus_model_id',
-          value: 'databricks-claude-opus-4-6',
+          opusModelId: 'databricks-claude-opus-4-6',
         });
       });
     });
@@ -313,8 +311,7 @@ describe.skipIf(!process.env.LAKEBASE_ENDPOINT)('Database Integration Tests', ()
 
         expect(user1Settings).toHaveLength(1);
         expect(user1Settings[0].userId).toBe(TEST_USER_1);
-        expect(user1Settings[0].key).toBe('opus_model_id');
-        expect(user1Settings[0].value).toBe('databricks-claude-opus-4-7');
+        expect(user1Settings[0].opusModelId).toBe('databricks-claude-opus-4-7');
       });
 
       it('should allow user to update their own settings', async () => {
@@ -323,7 +320,7 @@ describe.skipIf(!process.env.LAKEBASE_ENDPOINT)('Database Integration Tests', ()
         await withUserContext(TEST_USER_1, async tx => {
           await tx
             .update(schema.userSettings)
-            .set({ value: 'databricks-claude-opus-4-5' })
+            .set({ opusModelId: 'databricks-claude-opus-4-5' })
             .where(eq(schema.userSettings.userId, TEST_USER_1));
         });
 
@@ -335,7 +332,7 @@ describe.skipIf(!process.env.LAKEBASE_ENDPOINT)('Database Integration Tests', ()
             .where(eq(schema.userSettings.userId, TEST_USER_1));
         });
 
-        expect(updated.value).toBe('databricks-claude-opus-4-5');
+        expect(updated.opusModelId).toBe('databricks-claude-opus-4-5');
       });
     });
   });

@@ -1,7 +1,7 @@
 // apps/api/src/plugins/database.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import configPlugin from './config.js';
@@ -166,6 +166,39 @@ describe('database plugin', () => {
       expect(app.db).toBeDefined();
       expect(app.isSqlite).toBe(true);
       expect(mockCreateLakebasePool).not.toHaveBeenCalled();
+    });
+
+    it('should add missing columns for intermediate SQLite user_settings tables', async () => {
+      const { default: Database } = await import('better-sqlite3');
+      const dataDir = join(testBaseDir, 'db');
+      mkdirSync(dataDir, { recursive: true });
+      const dbPath = join(dataDir, 'ccbricks.sqlite');
+      const setupClient = new Database(dbPath);
+      setupClient.exec(`
+        CREATE TABLE "users" (
+          "id" TEXT PRIMARY KEY
+        );
+        CREATE TABLE "user_settings" (
+          "user_id" TEXT PRIMARY KEY REFERENCES "users"("id") ON DELETE CASCADE,
+          "opus_model_id" TEXT,
+          "sonnet_model_id" TEXT,
+          "haiku_model_id" TEXT
+        );
+      `);
+      setupClient.close();
+
+      await app.register(configPlugin);
+      await app.register(databasePlugin);
+
+      const verifyClient = new Database(dbPath, { readonly: true });
+      const columns = verifyClient
+        .prepare("SELECT name FROM pragma_table_info('user_settings')")
+        .all() as Array<{ name: string }>;
+      verifyClient.close();
+
+      expect(columns.map(column => column.name)).toEqual(
+        expect.arrayContaining(['allowed_tools', 'disallowed_tools', 'created_at', 'updated_at'])
+      );
     });
 
     it('should have access to schema through fastify.db', async () => {

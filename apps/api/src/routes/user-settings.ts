@@ -7,6 +7,8 @@ import { SessionId } from '../models/session.model.js';
 import {
   getUserSettings,
   updateUserSettings,
+  USER_ALLOWED_TOOLS_SETTING_KEY,
+  USER_DISALLOWED_TOOLS_SETTING_KEY,
   USER_MODEL_SETTING_KEYS,
   UserSettingsValidationError,
 } from '../services/user-settings.service.js';
@@ -27,6 +29,20 @@ function parseSessionId(sessionIdStr: string, logger?: FastifyBaseLogger): Sessi
     logger?.debug({ sessionIdStr, error }, 'Invalid session ID format');
     return null;
   }
+}
+
+function parseToolSetting(
+  key: typeof USER_ALLOWED_TOOLS_SETTING_KEY | typeof USER_DISALLOWED_TOOLS_SETTING_KEY,
+  value: unknown
+): string[] | null | undefined | { error: string } {
+  if (value === undefined || value === null) return value;
+  if (!Array.isArray(value) || value.some(tool => typeof tool !== 'string')) {
+    return { error: `${key} must be an array of strings or null` };
+  }
+  if (value.some(tool => tool.trim().length === 0)) {
+    return { error: `${key} must contain only non-empty strings` };
+  }
+  return value.map(tool => tool.trim());
 }
 
 const userSettingsRoute: FastifyPluginAsync = async fastify => {
@@ -62,6 +78,15 @@ const userSettingsRoute: FastifyPluginAsync = async fastify => {
         return sendError(reply, 400, 'BadRequest', `${key} must be a non-empty string or null`);
       }
       settings[key] = value === null ? null : value.trim();
+    }
+    for (const key of [
+      USER_ALLOWED_TOOLS_SETTING_KEY,
+      USER_DISALLOWED_TOOLS_SETTING_KEY,
+    ] as const) {
+      const value = parseToolSetting(key, request.body[key]);
+      if (value === undefined) continue;
+      if (value && 'error' in value) return sendError(reply, 400, 'BadRequest', value.error);
+      settings[key] = value;
     }
 
     try {

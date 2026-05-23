@@ -111,7 +111,7 @@ function McpItemIcon({ item }: { item: McpSelectionItem }) {
 
 export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps) {
   const { t } = useTranslation();
-  const { welcomeHeading, githubAppId } = useUser();
+  const { welcomeHeading, githubAppId, modelSettings } = useUser();
   const canUseGitRepositorySource = Boolean(githubAppId);
   const [selectedQuickstart, setSelectedQuickstart] = useState<QuickstartType | null>(null);
   const [content, setContent] = useLocalStorageState('chat-draft-new-session', {
@@ -384,8 +384,8 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
     try {
       const messageContent = buildMessageContent(content.trim(), images);
       const mcpConfig = buildMcpConfig();
-      const allowedTools = buildAllowedTools();
-      const disallowedTools = buildDisallowedTools();
+      const allowedTools = buildAllowedTools(modelSettings?.allowed_tools);
+      const disallowedTools = buildDisallowedTools(modelSettings?.disallowed_tools);
       await onNewSession?.({
         content: messageContent,
         modelId: selectedModel.id,
