@@ -244,9 +244,7 @@ async function initSqlite(fastify: FastifyInstance) {
     .prepare("SELECT name FROM pragma_table_info('user_settings')")
     .all() as Array<{ name: string }>;
   const hasLegacyUserSettings =
-    userSettingsColumns.length > 0 &&
-    (!userSettingsColumns.some(col => col.name === 'key') ||
-      userSettingsColumns.some(col => col.name === 'claude_config_backup'));
+    userSettingsColumns.length > 0 && !userSettingsColumns.some(col => col.name === 'key');
   if (hasLegacyUserSettings) {
     client.exec(`
       DROP TRIGGER IF EXISTS "set_updated_at_user_settings";

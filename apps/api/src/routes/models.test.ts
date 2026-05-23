@@ -107,4 +107,22 @@ describe('models route', () => {
       statusCode: 401,
     });
   });
+
+  it('returns 502 when serving endpoint fetch fails unexpectedly', async () => {
+    fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+
+    await registerPlugins();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/models',
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toEqual({
+      error: 'UpstreamError',
+      message: 'Failed to reach Databricks serving endpoints',
+      statusCode: 502,
+    });
+  });
 });

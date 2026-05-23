@@ -21,9 +21,13 @@ export function SettingsContent() {
 
   useEffect(() => {
     let isMounted = true;
-    refetchModelSettings().finally(() => {
-      if (isMounted) setIsRefreshing(false);
-    });
+    refetchModelSettings()
+      .catch(err => {
+        console.error('Failed to refresh model settings:', err);
+      })
+      .finally(() => {
+        if (isMounted) setIsRefreshing(false);
+      });
     return () => {
       isMounted = false;
     };

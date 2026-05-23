@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import type { ServingEndpointsByTier, ApiError } from '@repo/types';
 import {
+  DatabricksServingEndpointAuthError,
   DatabricksServingEndpointError,
   listClaudeServingEndpoints,
 } from '../services/model-serving.service.js';
@@ -21,11 +22,19 @@ const modelsRoute: FastifyPluginAsync = async fastify => {
           statusCode: error.statusCode,
         });
       }
+      if (error instanceof DatabricksServingEndpointAuthError) {
+        return reply.status(401).send({
+          error: 'Unauthorized',
+          message: error.message,
+          statusCode: 401,
+        });
+      }
 
-      return reply.status(401).send({
-        error: 'Unauthorized',
-        message: 'Access token is required (Service Principal)',
-        statusCode: 401,
+      fastify.log.error({ error }, 'Unexpected error fetching serving endpoints');
+      return reply.status(502).send({
+        error: 'UpstreamError',
+        message: 'Failed to reach Databricks serving endpoints',
+        statusCode: 502,
       });
     }
   });

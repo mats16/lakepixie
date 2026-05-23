@@ -50,20 +50,25 @@ export function UserProvider({ children }: UserProviderProps) {
     }
   }, []);
 
+  const fetchModelSettings = useCallback(async () => {
+    const settings = await userSettingsService.getSettings();
+    setModelSettings(settings);
+  }, []);
+
   const fetchUser = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
 
-      const [data, settings] = await Promise.all([
-        userService.getCurrentUser(),
-        userSettingsService.getSettings(),
-      ]);
+      const data = await userService.getCurrentUser();
       setUser(data.user);
       setDatabricksHost(data.databricks_host);
       setClaudeAgentSdkVersion(data.claude_agent_sdk_version);
       setClaudeCodeVersion(data.claude_code_version);
-      setModelSettings(settings);
+      void fetchModelSettings().catch(err => {
+        console.error('Failed to fetch model settings:', err);
+        setModelSettings(null);
+      });
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Unknown error');
       console.error('Failed to fetch user:', error);
@@ -76,12 +81,7 @@ export function UserProvider({ children }: UserProviderProps) {
     } finally {
       setIsLoading(false);
     }
-  }, []);
-
-  const fetchModelSettings = useCallback(async () => {
-    const settings = await userSettingsService.getSettings();
-    setModelSettings(settings);
-  }, []);
+  }, [fetchModelSettings]);
 
   useEffect(() => {
     fetchUser();

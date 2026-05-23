@@ -46,7 +46,14 @@ function getModelSetting(map: Map<string, string>, key: ModelSettingsKey): strin
 
 function uniqueNonEmptyStrings(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
-  return [...new Set(values.filter((value): value is string => value.trim().length > 0))];
+
+  const uniqueValues = new Set<string>();
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      uniqueValues.add(value);
+    }
+  }
+  return [...uniqueValues];
 }
 
 function parseAllowedModelIds(value: string | undefined): string[] {

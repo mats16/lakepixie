@@ -48,7 +48,12 @@ export async function listClaudeServingEndpoints(
   fastify: FastifyInstance
 ): Promise<ServingEndpointsByTier> {
   const authProvider = getAuthProvider(fastify);
-  const token = await authProvider.getToken();
+  let token: string;
+  try {
+    token = await authProvider.getToken();
+  } catch {
+    throw new DatabricksServingEndpointAuthError('Access token is required (Service Principal)');
+  }
 
   const response = await fetch(
     `https://${fastify.config.DATABRICKS_HOST}/api/2.0/serving-endpoints`,
@@ -75,6 +80,13 @@ export async function listClaudeServingEndpoints(
     .filter(name => name.startsWith(CLAUDE_PREFIX));
 
   return groupModelIdsByTier(modelIds);
+}
+
+export class DatabricksServingEndpointAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DatabricksServingEndpointAuthError';
+  }
 }
 
 export class DatabricksServingEndpointError extends Error {
