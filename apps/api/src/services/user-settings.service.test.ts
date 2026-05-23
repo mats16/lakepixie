@@ -167,17 +167,21 @@ describe('user-settings.service', () => {
     const settings = await getUserSettings(fastify, 'user-1');
 
     expect(
-      resolveSessionModelIdFromSettings(settings, appSettings.allowed_model_ids, 'sonnet')
+      resolveSessionModelIdFromSettings(settings, new Set(appSettings.allowed_model_ids), 'sonnet')
     ).toBe(DEFAULT_MODEL_SETTINGS.default_sonnet_model);
     expect(
       resolveSessionModelIdFromSettings(
         settings,
-        appSettings.allowed_model_ids,
+        new Set(appSettings.allowed_model_ids),
         'databricks-claude-sonnet-custom'
       )
     ).toBe('databricks-claude-sonnet-custom');
     expect(() =>
-      resolveSessionModelIdFromSettings(settings, appSettings.allowed_model_ids, 'blocked-model')
+      resolveSessionModelIdFromSettings(
+        settings,
+        new Set(appSettings.allowed_model_ids),
+        'blocked-model'
+      )
     ).toThrow('session_context.model must be an allowed model id');
   });
 

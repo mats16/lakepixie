@@ -75,6 +75,10 @@ const GIT_COMMAND_TIMEOUT_MS = 60000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const moduleRequire = createRequire(import.meta.url);
 const MCP_TOOL_PATTERN_PREFIX = 'mcp__';
+type EffectiveToolSettings = {
+  allowed_tools: string[];
+  disallowed_tools: string[];
+};
 
 export class SessionValidationError extends Error {
   constructor(message: string) {
@@ -401,7 +405,7 @@ function buildEffectiveToolSettings(params: {
   userDisallowedTools: readonly string[];
   requestedAllowedTools?: readonly string[];
   requestedDisallowedTools?: readonly string[];
-}): Pick<SessionContextResponse, 'allowed_tools' | 'disallowed_tools'> {
+}): EffectiveToolSettings {
   return {
     allowed_tools: uniqueTools([
       ...params.userAllowedTools,
@@ -848,17 +852,12 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       databricksAppName: fastify.config.DATABRICKS_APP_NAME,
       nodeEnv: fastify.config.NODE_ENV,
     });
-    const toolSettings = buildEffectiveToolSettings({
+    const effectiveToolSettings = buildEffectiveToolSettings({
       userAllowedTools: userModelSettings.allowed_tools,
       userDisallowedTools: userModelSettings.disallowed_tools,
       requestedAllowedTools: sessionContext.allowed_tools,
       requestedDisallowedTools: sessionContext.disallowed_tools,
     });
-    const effectiveSessionContext: SessionContextResponse = {
-      ...sessionContext,
-      allowed_tools: toolSettings.allowed_tools,
-      disallowed_tools: toolSettings.disallowed_tools,
-    };
 
     // ヘルパースクリプトを配置（apiKeyHelper / otelHeadersHelper）
     const claudeNativePackage = getClaudeNativePackageName();
@@ -885,8 +884,8 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
         claudeNativePackage,
         pathToClaudeCodeExecutable,
         mcpServerCount: Object.keys(mcpServers).length,
-        allowedToolCount: effectiveSessionContext.allowed_tools?.length ?? 0,
-        disallowedToolCount: effectiveSessionContext.disallowed_tools?.length ?? 0,
+        allowedToolCount: effectiveToolSettings.allowed_tools.length,
+        disallowedToolCount: effectiveToolSettings.disallowed_tools.length,
       },
       'Starting Claude Agent SDK query'
     );
@@ -896,7 +895,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       options: {
         abortController,
         ...(sdkSessionId ? { resume: sdkSessionId } : {}),
-        cwd: effectiveSessionContext.cwd,
+        cwd: sessionContext.cwd,
         pathToClaudeCodeExecutable,
         model: sessionContext.model,
         maxTurns: 100,
@@ -925,8 +924,8 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
           type: 'preset',
           preset: 'claude_code',
         },
-        allowedTools: effectiveSessionContext.allowed_tools,
-        disallowedTools: effectiveSessionContext.disallowed_tools,
+        allowedTools: effectiveToolSettings.allowed_tools,
+        disallowedTools: effectiveToolSettings.disallowed_tools,
         env: {
           PATH: fastify.config.PATH,
           HOME: userHome,
@@ -1146,20 +1145,19 @@ export async function createSession(
     getUserSettings(fastify, userId),
     getAllowedModelIds(fastify),
   ]);
-  const resolvedModelId = (() => {
-    try {
-      return resolveSessionModelIdFromSettings(
-        userSettings,
-        allowedModelIds,
-        session_context.model
-      );
-    } catch (error) {
-      if (error instanceof UserSettingsValidationError) {
-        throw new SessionValidationError(error.message);
-      }
-      throw error;
+  let resolvedModelId: string;
+  try {
+    resolvedModelId = resolveSessionModelIdFromSettings(
+      userSettings,
+      new Set(allowedModelIds),
+      session_context.model
+    );
+  } catch (error) {
+    if (error instanceof UserSettingsValidationError) {
+      throw new SessionValidationError(error.message);
     }
-  })();
+    throw error;
+  }
 
   // 4. Workspace ソースのバリデーション
   const workspaceSources = session_context.sources

@@ -206,7 +206,7 @@ export async function updateUserSettings(
 
 export function resolveSessionModelIdFromSettings(
   userSettings: UserSettingsResponse,
-  allowedModelIds: Iterable<string>,
+  allowedModelIds: ReadonlySet<string>,
   requestedModelId: string
 ): string {
   const trimmed = requestedModelId.trim();
@@ -218,23 +218,11 @@ export function resolveSessionModelIdFromSettings(
     return getTierValues(userSettings, trimmed);
   }
 
-  if (!new Set(allowedModelIds).has(trimmed)) {
+  if (!allowedModelIds.has(trimmed)) {
     throw new UserSettingsValidationError('session_context.model must be an allowed model id');
   }
 
   return trimmed;
-}
-
-export async function resolveSessionModelId(
-  fastify: FastifyInstance,
-  userId: string,
-  requestedModelId: string
-): Promise<string> {
-  const [userSettings, allowedModelIds] = await Promise.all([
-    getUserSettings(fastify, userId),
-    getAllowedModelIds(fastify),
-  ]);
-  return resolveSessionModelIdFromSettings(userSettings, allowedModelIds, requestedModelId);
 }
 
 export class UserSettingsValidationError extends Error {
