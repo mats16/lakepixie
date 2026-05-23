@@ -1,6 +1,6 @@
 import { createContext, useCallback, useEffect, useState, type ReactNode } from 'react';
-import type { UserInfo } from '@repo/types';
-import { appSettingsService, userService } from '@/services';
+import type { UserInfo, UserSettingsResponse } from '@repo/types';
+import { appSettingsService, userService, userSettingsService } from '@/services';
 
 export interface UserContextValue {
   user: UserInfo | null;
@@ -10,11 +10,13 @@ export interface UserContextValue {
   appTitle: string;
   welcomeHeading: string;
   githubAppId: string | null;
+  modelSettings: UserSettingsResponse | null;
   isLoading: boolean;
   isAdmin: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
   refetchAppSettings: () => Promise<void>;
+  refetchModelSettings: () => Promise<void>;
 }
 
 export const UserContext = createContext<UserContextValue | null>(null);
@@ -31,6 +33,7 @@ export function UserProvider({ children }: UserProviderProps) {
   const [appTitle, setAppTitle] = useState('');
   const [welcomeHeading, setWelcomeHeading] = useState('');
   const [githubAppId, setGithubAppId] = useState<string | null>(null);
+  const [modelSettings, setModelSettings] = useState<UserSettingsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -47,6 +50,11 @@ export function UserProvider({ children }: UserProviderProps) {
     }
   }, []);
 
+  const fetchModelSettings = useCallback(async () => {
+    const settings = await userSettingsService.getSettings();
+    setModelSettings(settings);
+  }, []);
+
   const fetchUser = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -57,6 +65,10 @@ export function UserProvider({ children }: UserProviderProps) {
       setDatabricksHost(data.databricks_host);
       setClaudeAgentSdkVersion(data.claude_agent_sdk_version);
       setClaudeCodeVersion(data.claude_code_version);
+      void fetchModelSettings().catch(err => {
+        console.error('Failed to fetch model settings:', err);
+        setModelSettings(null);
+      });
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Unknown error');
       console.error('Failed to fetch user:', error);
@@ -65,10 +77,11 @@ export function UserProvider({ children }: UserProviderProps) {
       setDatabricksHost(null);
       setClaudeAgentSdkVersion(null);
       setClaudeCodeVersion(null);
+      setModelSettings(null);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [fetchModelSettings]);
 
   useEffect(() => {
     fetchUser();
@@ -85,11 +98,13 @@ export function UserProvider({ children }: UserProviderProps) {
         appTitle,
         welcomeHeading,
         githubAppId,
+        modelSettings,
         isLoading,
         isAdmin: user?.is_admin ?? false,
         error,
         refetch: fetchUser,
         refetchAppSettings: fetchAppSettings,
+        refetchModelSettings: fetchModelSettings,
       }}
     >
       {children}

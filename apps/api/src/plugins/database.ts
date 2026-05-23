@@ -240,6 +240,18 @@ async function initSqlite(fastify: FastifyInstance) {
   client.pragma('busy_timeout = 5000');
   client.pragma('recursive_triggers = OFF');
 
+  const userSettingsColumns = client
+    .prepare("SELECT name FROM pragma_table_info('user_settings')")
+    .all() as Array<{ name: string }>;
+  const hasLegacyUserSettings =
+    userSettingsColumns.length > 0 && !userSettingsColumns.some(col => col.name === 'key');
+  if (hasLegacyUserSettings) {
+    client.exec(`
+      DROP TRIGGER IF EXISTS "set_updated_at_user_settings";
+      DROP TABLE IF EXISTS "user_settings";
+    `);
+  }
+
   // テーブル作成（CREATE TABLE IF NOT EXISTS）
   // updated_at は ORM ではなく DB トリガーで管理し、PG/SQLite 間の一貫性を保つ
   const TS = `(CAST(unixepoch('subsec') * 1000 AS INTEGER))`;
@@ -252,10 +264,11 @@ async function initSqlite(fastify: FastifyInstance) {
       "updated_at" INTEGER NOT NULL DEFAULT ${TS}
     );
     CREATE TABLE IF NOT EXISTS "user_settings" (
-      "user_id" TEXT PRIMARY KEY REFERENCES "users"("id") ON DELETE CASCADE,
-      "claude_config_backup" TEXT NOT NULL DEFAULT 'auto',
-      "created_at" INTEGER NOT NULL DEFAULT ${TS},
-      "updated_at" INTEGER NOT NULL DEFAULT ${TS}
+      "user_id" TEXT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+      "key" TEXT NOT NULL,
+      "value" TEXT NOT NULL,
+      "updated_at" INTEGER NOT NULL DEFAULT ${TS},
+      PRIMARY KEY ("user_id", "key")
     );
     CREATE TABLE IF NOT EXISTS "sessions" (
       "id" TEXT PRIMARY KEY,
@@ -315,7 +328,7 @@ async function initSqlite(fastify: FastifyInstance) {
     CREATE TRIGGER "set_updated_at_user_settings"
       AFTER UPDATE ON "user_settings" FOR EACH ROW
       WHEN NEW."updated_at" = OLD."updated_at"
-      BEGIN UPDATE "user_settings" SET "updated_at" = ${TS} WHERE "user_id" = NEW."user_id"; END;
+      BEGIN UPDATE "user_settings" SET "updated_at" = ${TS} WHERE "user_id" = NEW."user_id" AND "key" = NEW."key"; END;
     DROP TRIGGER IF EXISTS "set_updated_at_sessions";
     CREATE TRIGGER "set_updated_at_sessions"
       AFTER UPDATE ON "sessions" FOR EACH ROW

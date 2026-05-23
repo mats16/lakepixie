@@ -182,6 +182,22 @@ const adminRoute: FastifyPluginAsync = async fastify => {
       }
     }
 
+    if (settings.allowed_model_ids !== undefined) {
+      if (
+        !Array.isArray(settings.allowed_model_ids) ||
+        settings.allowed_model_ids.some(value => typeof value !== 'string' || value.trim() === '')
+      ) {
+        return reply.status(400).send({
+          error: 'BadRequest',
+          message: 'allowed_model_ids must be an array of non-empty strings',
+          statusCode: 400,
+        });
+      }
+      settings.allowed_model_ids = [
+        ...new Set(settings.allowed_model_ids.map(value => value.trim())),
+      ];
+    }
+
     // バリデーション: OTEL テーブル名（null か Unity Catalog 3-part name のみ許可）
     for (const key of [
       'otel_metrics_table_name',

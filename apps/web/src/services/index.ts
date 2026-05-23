@@ -2,6 +2,7 @@ export { appSettingsService } from './app-settings.service';
 export { adminService } from './admin.service';
 export { apiClient, ApiClientError } from './api-client';
 export { userService } from './user.service';
+export { userSettingsService } from './user-settings.service';
 export { sessionService } from './session.service';
 export { workspaceService } from './workspace.service';
 export { skillService } from './skill.service';

@@ -1,14 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import type { UserInfo } from '@repo/types';
 import { eq } from 'drizzle-orm';
-import { users, userSettings } from '../db/schema.js';
+import { users } from '../db/schema.js';
 import { getDefaultNewUserIsAdmin } from './admin.service.js';
 
 /**
  * ユーザーを取得または作成する
  *
- * users テーブルはRLS無効、user_settings はRLS有効。
- * withUserContext で RLS コンテキストを設定してから INSERT する。
+ * users テーブルはRLS無効。
  *
  * @param fastify - Fastify インスタンス
  * @param userInfo - リクエストから取得したユーザー情報（is_admin は無視される）
@@ -34,11 +33,7 @@ export async function getOrCreateUser(
   // 新規ユーザーのデフォルト Admin フラグを取得
   const isAdmin = await getDefaultNewUserIsAdmin(fastify);
 
-  // 新規ユーザー作成（users + user_settings を withUserContext で）
-  await fastify.withUserContext(id, async tx => {
-    await tx.insert(users).values({ id, email, isAdmin: isAdmin }).onConflictDoNothing();
-    await tx.insert(userSettings).values({ userId: id }).onConflictDoNothing();
-  });
+  await fastify.db.insert(users).values({ id, email, isAdmin }).onConflictDoNothing();
 
   return { id, name, email, is_admin: isAdmin };
 }

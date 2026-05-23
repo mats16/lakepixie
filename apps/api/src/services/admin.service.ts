@@ -9,6 +9,10 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { users, appSettings } from '../db/schema.js';
 import { TtlCache } from '../lib/ttl-cache.js';
 import { DEFAULT_MODEL_SETTINGS } from '../constants/model-defaults.js';
+import {
+  flattenServingEndpointsByTier,
+  listClaudeServingEndpoints,
+} from './model-serving.service.js';
 
 const APP_TITLE_DEFAULT = 'ccbricks';
 const WELCOME_HEADING_DEFAULT = 'Claude Code on Databricks';
@@ -23,12 +27,14 @@ const MODEL_SETTINGS_KEYS = [
   'default_haiku_model',
 ] as const;
 type ModelSettingsKey = (typeof MODEL_SETTINGS_KEYS)[number];
+const ALLOWED_MODEL_IDS_KEY = 'allowed_model_ids';
 
 const ALL_SETTINGS_KEYS = [
   'app_title',
   'welcome_heading',
   'default_new_user_role',
   ...MODEL_SETTINGS_KEYS,
+  ALLOWED_MODEL_IDS_KEY,
   'otel_metrics_table_name',
   'otel_logs_table_name',
   'otel_traces_table_name',
@@ -36,6 +42,56 @@ const ALL_SETTINGS_KEYS = [
 
 function getModelSetting(map: Map<string, string>, key: ModelSettingsKey): string {
   return map.get(key) ?? DEFAULT_MODEL_SETTINGS[key];
+}
+
+function uniqueNonEmptyStrings(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+
+  const uniqueValues = new Set<string>();
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      uniqueValues.add(value);
+    }
+  }
+  return [...uniqueValues];
+}
+
+function parseAllowedModelIds(value: string | undefined): string[] {
+  if (!value) return [];
+  try {
+    return uniqueNonEmptyStrings(JSON.parse(value));
+  } catch {
+    return [];
+  }
+}
+
+function getDefaultAllowedModelIds(): string[] {
+  return uniqueNonEmptyStrings(Object.values(DEFAULT_MODEL_SETTINGS));
+}
+
+function serializeAllowedModelIds(modelIds: string[]): string {
+  return JSON.stringify(uniqueNonEmptyStrings(modelIds));
+}
+
+async function seedAllowedModelIds(fastify: FastifyInstance): Promise<string[]> {
+  try {
+    const endpoints = await listClaudeServingEndpoints(fastify);
+    const modelIds = flattenServingEndpointsByTier(endpoints);
+    const fallback = modelIds.length > 0 ? modelIds : getDefaultAllowedModelIds();
+
+    await fastify.db
+      .insert(appSettings)
+      .values({ key: ALLOWED_MODEL_IDS_KEY, value: serializeAllowedModelIds(fallback) })
+      .onConflictDoUpdate({
+        target: appSettings.key,
+        set: { value: serializeAllowedModelIds(fallback) },
+      });
+
+    return fallback;
+  } catch (error) {
+    fastify.log.warn({ error }, 'Failed to seed allowed model IDs from serving endpoints');
+    return getDefaultAllowedModelIds();
+  }
 }
 
 /**
@@ -99,6 +155,9 @@ export async function getAppSettings(fastify: FastifyInstance): Promise<AppSetti
 
   const map = new Map(rows.map(r => [r.key, r.value]));
   const roleValue = map.get('default_new_user_role');
+  const storedAllowedModelIds = parseAllowedModelIds(map.get(ALLOWED_MODEL_IDS_KEY));
+  const allowedModelIds =
+    storedAllowedModelIds.length > 0 ? storedAllowedModelIds : await seedAllowedModelIds(fastify);
 
   const settings = {
     app_title: map.get('app_title') ?? APP_TITLE_DEFAULT,
@@ -108,6 +167,7 @@ export async function getAppSettings(fastify: FastifyInstance): Promise<AppSetti
     default_opus_model: getModelSetting(map, 'default_opus_model'),
     default_sonnet_model: getModelSetting(map, 'default_sonnet_model'),
     default_haiku_model: getModelSetting(map, 'default_haiku_model'),
+    allowed_model_ids: allowedModelIds,
     otel_metrics_table_name: map.get('otel_metrics_table_name') ?? null,
     otel_logs_table_name: map.get('otel_logs_table_name') ?? null,
     otel_traces_table_name: map.get('otel_traces_table_name') ?? null,
@@ -146,7 +206,11 @@ export async function updateAppSettings(
   for (const key of ALL_SETTINGS_KEYS) {
     const value = settings[key];
     if (value !== undefined) {
-      entries.push({ key, value: value ?? null });
+      if (key === ALLOWED_MODEL_IDS_KEY) {
+        entries.push({ key, value: serializeAllowedModelIds(value as string[]) });
+      } else {
+        entries.push({ key, value: value as string | null });
+      }
     }
   }
 
@@ -225,6 +289,11 @@ export interface ModelSettings {
 export async function getModelSettings(fastify: FastifyInstance): Promise<ModelSettings> {
   const settings = await getAppSettings(fastify);
   return resolveModelSettings(settings);
+}
+
+export async function getAllowedModelIds(fastify: FastifyInstance): Promise<string[]> {
+  const settings = await getAppSettings(fastify);
+  return settings.allowed_model_ids;
 }
 
 /**

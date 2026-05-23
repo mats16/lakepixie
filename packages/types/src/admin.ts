@@ -27,6 +27,7 @@ export interface AppSettingsResponse {
   default_opus_model: string;
   default_sonnet_model: string;
   default_haiku_model: string;
+  allowed_model_ids: string[];
   otel_metrics_table_name: string | null;
   otel_logs_table_name: string | null;
   otel_traces_table_name: string | null;
@@ -45,6 +46,7 @@ export interface UpdateAppSettingsRequest {
   default_opus_model?: string | null;
   default_sonnet_model?: string | null;
   default_haiku_model?: string | null;
+  allowed_model_ids?: string[];
   otel_metrics_table_name?: string | null;
   otel_logs_table_name?: string | null;
   otel_traces_table_name?: string | null;

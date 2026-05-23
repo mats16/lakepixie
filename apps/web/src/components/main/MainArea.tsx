@@ -12,6 +12,7 @@ import {
   type SessionOutcome,
   type SessionResponse,
   type SessionSource,
+  type UserSettingsResponse,
   type UserMessageContentBlock,
   type WsAskUserQuestionRequest,
 } from '@repo/types';
@@ -62,6 +63,16 @@ interface MainAreaProps {
 
 const GIT_DIFF_REFRESH_DEBOUNCE_MS = 750;
 
+function getResolvedSessionModelId(
+  modelId: string,
+  modelSettings: UserSettingsResponse | null
+): string {
+  if (modelId === 'opus') return modelSettings?.opus_model_id ?? modelId;
+  if (modelId === 'sonnet') return modelSettings?.sonnet_model_id ?? modelId;
+  if (modelId === 'haiku') return modelSettings?.haiku_model_id ?? modelId;
+  return modelId;
+}
+
 export function MainArea({
   branchName,
   onSendMessage,
@@ -72,7 +83,7 @@ export function MainArea({
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
-  const { githubAppId } = useUser();
+  const { githubAppId, modelSettings } = useUser();
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
   const [gitDiffRefreshKey, setGitDiffRefreshKey] = useState(0);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -323,7 +334,7 @@ export function MainArea({
           },
         ],
         session_context: {
-          model: modelId as 'opus' | 'sonnet' | 'haiku',
+          model: getResolvedSessionModelId(modelId, modelSettings),
           sources,
           outcomes,
           allowed_tools: allowedTools,
