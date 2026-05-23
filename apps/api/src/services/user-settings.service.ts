@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import {
   CLAUDE_CODE_PRESET_TOOLS,
   type UpdateUserSettingsRequest,
@@ -72,7 +72,8 @@ function normalizeToolList(tools: string[]): string[] {
 
 function parseToolList(
   value: string[] | string | null | undefined,
-  defaultTools: string[]
+  defaultTools: string[],
+  options?: { logger?: FastifyBaseLogger; settingKey: string }
 ): string[] {
   if (!value) return [...defaultTools];
 
@@ -85,7 +86,11 @@ function parseToolList(
     if (!Array.isArray(parsed)) return [...defaultTools];
 
     return normalizeToolList(parsed.filter((tool): tool is string => typeof tool === 'string'));
-  } catch {
+  } catch (error) {
+    options?.logger?.warn(
+      { err: error, settingKey: options.settingKey },
+      'Failed to parse stored tool list, using defaults'
+    );
     return [...defaultTools];
   }
 }
@@ -141,8 +146,14 @@ export async function getUserSettings(
       hardcodedDefaultModelId: DEFAULT_MODEL_SETTINGS.default_haiku_model,
       allowedModelIds,
     }),
-    allowed_tools: parseToolList(userSettingRow?.allowedTools, [...CLAUDE_CODE_PRESET_TOOLS]),
-    disallowed_tools: parseToolList(userSettingRow?.disallowedTools, []),
+    allowed_tools: parseToolList(userSettingRow?.allowedTools, [...CLAUDE_CODE_PRESET_TOOLS], {
+      logger: fastify.log,
+      settingKey: USER_ALLOWED_TOOLS_SETTING_KEY,
+    }),
+    disallowed_tools: parseToolList(userSettingRow?.disallowedTools, [], {
+      logger: fastify.log,
+      settingKey: USER_DISALLOWED_TOOLS_SETTING_KEY,
+    }),
     allowed_model_ids: allowedModelIdsByTier,
   };
 }
