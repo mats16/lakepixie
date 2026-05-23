@@ -38,6 +38,7 @@ const appSettings = {
     DEFAULT_MODEL_SETTINGS.default_haiku_model,
     'databricks-claude-sonnet-custom',
   ],
+  mlflow_experiment_id: null,
   otel_metrics_table_name: null,
   otel_logs_table_name: null,
   otel_traces_table_name: null,

@@ -39,10 +39,12 @@ function AppContent() {
       <Route path="/agents" element={<AppLayout />} />
       <Route path="/mcp" element={<AppLayout />} />
       <Route path="/settings" element={<AppLayout />} />
-      <Route path="/admin" element={<Navigate to="/admin/settings" replace />} />
+      <Route path="/admin" element={<Navigate to="/admin/general" replace />} />
       <Route path="/admin/branding" element={<AppLayout />} />
-      <Route path="/admin/git" element={<AppLayout />} />
-      <Route path="/admin/settings" element={<AppLayout />} />
+      <Route path="/admin/general" element={<AppLayout />} />
+      <Route path="/admin/git" element={<Navigate to="/admin/repo" replace />} />
+      <Route path="/admin/repo" element={<AppLayout />} />
+      <Route path="/admin/settings" element={<Navigate to="/admin/general" replace />} />
       <Route path="/admin/users" element={<AppLayout />} />
       <Route path="/sessions/:sessionId" element={<AppLayout />} />
     </Routes>

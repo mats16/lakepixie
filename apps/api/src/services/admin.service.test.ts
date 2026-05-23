@@ -25,6 +25,7 @@ const baseSettings = {
   default_sonnet_model: DEFAULT_MODEL_SETTINGS.default_sonnet_model,
   default_haiku_model: DEFAULT_MODEL_SETTINGS.default_haiku_model,
   allowed_model_ids: Object.values(DEFAULT_MODEL_SETTINGS),
+  mlflow_experiment_id: null,
   otel_metrics_table_name: null,
   otel_logs_table_name: null,
   otel_traces_table_name: null,

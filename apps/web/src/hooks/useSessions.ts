@@ -15,9 +15,13 @@ interface UseSessionsReturn {
   getSession: (sessionId: string) => SessionResponse | undefined;
 }
 
+interface UseSessionsOptions {
+  enabled?: boolean;
+}
+
 const PAGE_SIZE = 50;
 
-export function useSessions(): UseSessionsReturn {
+export function useSessions({ enabled = true }: UseSessionsOptions = {}): UseSessionsReturn {
   const [sessions, setSessions] = useState<SessionResponse[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -29,28 +33,50 @@ export function useSessions(): UseSessionsReturn {
   sessionsRef.current = sessions;
   const cursorRef = useRef<string | undefined>(undefined);
   const isLoadingMoreRef = useRef(false);
+  const fetchGenerationRef = useRef(0);
 
   const fetchSessions = useCallback(async () => {
+    const generation = ++fetchGenerationRef.current;
+
+    if (!enabled) {
+      setSessions([]);
+      setHasMore(false);
+      setError(null);
+      setIsLoadingMore(false);
+      cursorRef.current = undefined;
+      isLoadingMoreRef.current = false;
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     cursorRef.current = undefined;
+    isLoadingMoreRef.current = false;
+    setIsLoadingMore(false);
 
     try {
       const response = await sessionService.getSessions({
         limit: PAGE_SIZE,
       });
+      if (fetchGenerationRef.current !== generation) return;
       setSessions(response.data);
       setHasMore(response.has_more);
       cursorRef.current = response.last_id || undefined;
     } catch (e) {
+      if (fetchGenerationRef.current !== generation) return;
       setError(e instanceof Error ? e : new Error('Failed to load sessions'));
     } finally {
-      setIsLoading(false);
+      if (fetchGenerationRef.current === generation) {
+        setIsLoading(false);
+      }
     }
-  }, []);
+  }, [enabled]);
 
   const loadMore = useCallback(async () => {
+    if (!enabled) return;
     if (!cursorRef.current || isLoadingMoreRef.current) return;
+    const generation = fetchGenerationRef.current;
     isLoadingMoreRef.current = true;
     setIsLoadingMore(true);
 
@@ -59,6 +85,7 @@ export function useSessions(): UseSessionsReturn {
         limit: PAGE_SIZE,
         after: cursorRef.current,
       });
+      if (fetchGenerationRef.current !== generation) return;
       setSessions(prev => [...prev, ...response.data]);
       setHasMore(response.has_more);
       const nextCursor = response.last_id || undefined;
@@ -68,12 +95,15 @@ export function useSessions(): UseSessionsReturn {
         cursorRef.current = nextCursor;
       }
     } catch (e) {
+      if (fetchGenerationRef.current !== generation) return;
       setError(e instanceof Error ? e : new Error('Failed to load more sessions'));
     } finally {
-      isLoadingMoreRef.current = false;
-      setIsLoadingMore(false);
+      if (fetchGenerationRef.current === generation) {
+        isLoadingMoreRef.current = false;
+        setIsLoadingMore(false);
+      }
     }
-  }, []);
+  }, [enabled]);
 
   const addSession = useCallback((newSession: SessionResponse) => {
     setSessions(prev => [newSession, ...prev]);

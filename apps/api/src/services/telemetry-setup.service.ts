@@ -433,6 +433,7 @@ export async function setupTelemetry(
   await linkExperimentTraceLocation(fastify, experimentId, resolvedUcTablePrefix);
 
   await updateAppSettings(fastify, {
+    mlflow_experiment_id: experimentId,
     otel_metrics_table_name: metricsTable,
     otel_logs_table_name: logsTable,
     otel_traces_table_name: tracesTable,

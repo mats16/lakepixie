@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  ArrowLeft,
   Check,
   ChevronsUpDown,
   Database,
@@ -12,15 +11,16 @@ import {
   Loader2,
   Save,
   ShieldCheck,
-  ShieldOff,
   Trash2,
   Upload,
+  User as UserIcon,
 } from 'lucide-react';
 import type {
   AdminUserInfo,
   AppSettingsResponse,
   GitHubAppAuthResponse,
   ServingEndpointsByTier,
+  UpdateAppSettingsRequest,
 } from '@repo/types';
 import { useUser } from '@/hooks/useUser';
 import { adminService } from '@/services';
@@ -35,7 +35,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -50,6 +49,12 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const GITHUB_APPS_SETTINGS_URL = 'https://github.com/settings/apps';
+
+type MlflowSettingKey =
+  | 'mlflow_experiment_id'
+  | 'otel_metrics_table_name'
+  | 'otel_logs_table_name'
+  | 'otel_traces_table_name';
 
 function classifyModelTier(modelId: string): keyof ServingEndpointsByTier | null {
   const lower = modelId.toLowerCase();
@@ -117,6 +122,8 @@ function useAdminSettings() {
 
   return { settings, isLoadingSettings, savingKey, saveSetting, refreshSettings: fetchSettings };
 }
+
+type AdminSettingsState = ReturnType<typeof useAdminSettings>;
 
 function useGitHubAppAuth() {
   const { t } = useTranslation();
@@ -568,13 +575,18 @@ function TelemetrySetupDialog({
   );
 }
 
-function AdminSettingsContent() {
+function AdminGeneralContent({
+  settings,
+  isLoadingSettings,
+  savingKey,
+  saveSetting,
+  refreshSettings,
+}: AdminSettingsState) {
   const { t } = useTranslation();
-  const { settings, isLoadingSettings, savingKey, saveSetting, refreshSettings } =
-    useAdminSettings();
 
   const [servingEndpoints, setServingEndpoints] = useState<ServingEndpointsByTier | null>(null);
   const [isLoadingEndpoints, setIsLoadingEndpoints] = useState(true);
+  const [mlflowExperimentIdInput, setMlflowExperimentIdInput] = useState('');
   const [otelMetricsTableInput, setOtelMetricsTableInput] = useState('');
   const [otelLogsTableInput, setOtelLogsTableInput] = useState('');
   const [otelTracesTableInput, setOtelTracesTableInput] = useState('');
@@ -598,14 +610,12 @@ function AdminSettingsContent() {
 
   useEffect(() => {
     if (settings) {
+      setMlflowExperimentIdInput(settings.mlflow_experiment_id ?? '');
       setOtelMetricsTableInput(settings.otel_metrics_table_name ?? '');
       setOtelLogsTableInput(settings.otel_logs_table_name ?? '');
       setOtelTracesTableInput(settings.otel_traces_table_name ?? '');
     }
   }, [settings]);
-
-  const handleDefaultRoleChange = (value: string) =>
-    saveSetting('default_new_user_role', { default_new_user_role: value as 'admin' | 'member' });
 
   const handleAllowedModelChange = (modelId: string, checked: boolean) => {
     const current = settings?.allowed_model_ids ?? [];
@@ -625,52 +635,53 @@ function AdminSettingsContent() {
     [servingEndpoints]
   );
 
-  const otelDirty =
-    otelMetricsTableInput.trim() !== (settings?.otel_metrics_table_name ?? '') ||
-    otelLogsTableInput.trim() !== (settings?.otel_logs_table_name ?? '') ||
-    otelTracesTableInput.trim() !== (settings?.otel_traces_table_name ?? '');
-
-  const handleOtelSave = () => {
-    const metrics = otelMetricsTableInput.trim();
-    const logs = otelLogsTableInput.trim();
-    const traces = otelTracesTableInput.trim();
-    return saveSetting('otel', {
-      otel_metrics_table_name: metrics || null,
-      otel_logs_table_name: logs || null,
-      otel_traces_table_name: traces || null,
-    });
+  const handleMlflowSettingSave = (key: MlflowSettingKey, value: string) => {
+    const settingValue = value.trim() || null;
+    const patch: UpdateAppSettingsRequest = { [key]: settingValue };
+    return saveSetting(key, patch);
   };
+
+  const mlflowSettings = [
+    {
+      key: 'mlflow_experiment_id',
+      settingKey: 'mlflow_experiment_id',
+      label: t('admin.mlflowExperimentId'),
+      description: t('admin.mlflowExperimentIdDescription'),
+      placeholder: t('admin.mlflowExperimentIdPlaceholder'),
+      value: mlflowExperimentIdInput,
+      onChange: setMlflowExperimentIdInput,
+    },
+    {
+      key: 'otel_metrics',
+      settingKey: 'otel_metrics_table_name',
+      label: t('admin.otelMetricsTableName'),
+      description: t('admin.otelMetricsTableNameDescription'),
+      placeholder: t('admin.otelTableNamePlaceholder'),
+      value: otelMetricsTableInput,
+      onChange: setOtelMetricsTableInput,
+    },
+    {
+      key: 'otel_logs',
+      settingKey: 'otel_logs_table_name',
+      label: t('admin.otelLogsTableName'),
+      description: t('admin.otelLogsTableNameDescription'),
+      placeholder: t('admin.otelTableNamePlaceholder'),
+      value: otelLogsTableInput,
+      onChange: setOtelLogsTableInput,
+    },
+    {
+      key: 'otel_traces',
+      settingKey: 'otel_traces_table_name',
+      label: t('admin.otelTracesTableName'),
+      description: t('admin.otelTracesTableNameDescription'),
+      placeholder: t('admin.otelTableNamePlaceholder'),
+      value: otelTracesTableInput,
+      onChange: setOtelTracesTableInput,
+    },
+  ] as const;
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-8">
-      <section>
-        <h2 className="text-lg font-semibold mb-4">{t('admin.settings')}</h2>
-        {isLoadingSettings ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <div className="border border-border rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium">{t('admin.defaultRole')}</p>
-              <Select
-                value={settings?.default_new_user_role ?? 'admin'}
-                onValueChange={handleDefaultRoleChange}
-                disabled={savingKey !== null}
-              >
-                <SelectTrigger className="w-[140px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">{t('admin.roleAdmin')}</SelectItem>
-                  <SelectItem value="member">{t('admin.roleMember')}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        )}
-      </section>
-
       <section>
         <h2 className="text-lg font-semibold mb-4">{t('admin.allowedModelIds')}</h2>
         {isLoadingEndpoints || isLoadingSettings ? (
@@ -737,62 +748,48 @@ function AdminSettingsContent() {
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <div className="border border-border rounded-lg p-4 space-y-4">
+          <div className="rounded-lg border border-border p-4 space-y-4">
             <p className="text-xs text-muted-foreground">{t('admin.telemetryDescription')}</p>
-            {(
-              [
-                {
-                  key: 'otel_metrics',
-                  label: t('admin.otelMetricsTableName'),
-                  description: t('admin.otelMetricsTableNameDescription'),
-                  value: otelMetricsTableInput,
-                  onChange: setOtelMetricsTableInput,
-                },
-                {
-                  key: 'otel_logs',
-                  label: t('admin.otelLogsTableName'),
-                  description: t('admin.otelLogsTableNameDescription'),
-                  value: otelLogsTableInput,
-                  onChange: setOtelLogsTableInput,
-                },
-                {
-                  key: 'otel_traces',
-                  label: t('admin.otelTracesTableName'),
-                  description: t('admin.otelTracesTableNameDescription'),
-                  value: otelTracesTableInput,
-                  onChange: setOtelTracesTableInput,
-                },
-              ] as const
-            ).map(({ key, label, description, value, onChange }) => (
-              <div key={key} className="flex items-center justify-between gap-4">
-                <div className="shrink-0">
-                  <p className="text-sm font-medium">{label}</p>
-                  <p className="text-xs text-muted-foreground">{description}</p>
-                </div>
-                <Input
-                  className="w-[320px]"
-                  placeholder={t('admin.otelTableNamePlaceholder')}
-                  value={value}
-                  onChange={e => onChange(e.target.value)}
-                  disabled={savingKey !== null}
-                />
-              </div>
-            ))}
-            <div className="flex justify-end">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleOtelSave}
-                disabled={savingKey !== null || !otelDirty}
-              >
-                {savingKey === 'otel' ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : (
-                  <Save className="h-4 w-4 mr-2" />
-                )}
-                {t('common.save')}
-              </Button>
-            </div>
+            {mlflowSettings.map(
+              ({ key, settingKey, label, description, placeholder, value, onChange }) => {
+                const dirty = value.trim() !== (settings?.[settingKey] ?? '');
+                const isSaving = savingKey === settingKey;
+                return (
+                  <div
+                    key={key}
+                    className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between"
+                  >
+                    <div className="min-w-0 xl:w-64">
+                      <p className="text-sm font-medium">{label}</p>
+                      <p className="text-xs text-muted-foreground">{description}</p>
+                    </div>
+                    <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center xl:max-w-md">
+                      <Input
+                        className="min-w-0 flex-1"
+                        placeholder={placeholder}
+                        value={value}
+                        onChange={e => onChange(e.target.value)}
+                        disabled={savingKey !== null}
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full sm:w-auto"
+                        onClick={() => handleMlflowSettingSave(settingKey, value)}
+                        disabled={savingKey !== null || !dirty}
+                      >
+                        {isSaving ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : (
+                          <Save className="h-4 w-4 mr-2" />
+                        )}
+                        {t('common.save')}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              }
+            )}
           </div>
         )}
         <TelemetrySetupDialog
@@ -806,7 +803,7 @@ function AdminSettingsContent() {
   );
 }
 
-function AdminGitContent() {
+function AdminRepositoryContent() {
   const { t } = useTranslation();
   const { githubAppAuth, isLoadingGitHubAppAuth, isSavingGitHubAppAuth, saveGitHubAppAuth } =
     useGitHubAppAuth();
@@ -888,12 +885,12 @@ function AdminGitContent() {
           <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
             {t('admin.githubAppAccessModel')}
           </p>
-          <div className="flex items-center justify-between gap-4">
-            <div className="shrink-0">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="min-w-0">
               <p className="text-sm font-medium">{t('admin.githubAppId')}</p>
               <p className="text-xs text-muted-foreground">{t('admin.githubAppIdDescription')}</p>
             </div>
-            <div className="flex w-[320px] items-center gap-2">
+            <div className="flex w-full max-w-md flex-col gap-2 sm:flex-row sm:items-center xl:w-[380px]">
               <Input
                 className="min-w-0 flex-1"
                 placeholder={t('admin.githubAppIdPlaceholder')}
@@ -916,8 +913,8 @@ function AdminGitContent() {
               </Button>
             </div>
           </div>
-          <div className="flex items-start justify-between gap-4">
-            <div className="shrink-0">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium">{t('admin.githubAppPrivateKey')}</p>
                 {isGitHubAppPrivateKeyConfigured && (
@@ -934,7 +931,7 @@ function AdminGitContent() {
                 {t('admin.githubAppPrivateKeyDescription')}
               </p>
             </div>
-            <div className="w-[320px] space-y-2">
+            <div className="w-full max-w-md space-y-2 xl:w-[380px]">
               <input
                 ref={githubAppPrivateKeyFileInputRef}
                 type="file"
@@ -944,7 +941,7 @@ function AdminGitContent() {
                 disabled={isSavingGitHubAppAuth}
               />
               {isGitHubAppPrivateKeyConfigured ? (
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row">
                   <Button
                     type="button"
                     variant="outline"
@@ -992,10 +989,14 @@ function AdminGitContent() {
   );
 }
 
-function AdminBrandingContent() {
+function AdminBrandingContent({
+  settings,
+  isLoadingSettings,
+  savingKey,
+  saveSetting,
+}: AdminSettingsState) {
   const { t } = useTranslation();
   const { refetchAppSettings } = useUser();
-  const { settings, isLoadingSettings, savingKey, saveSetting } = useAdminSettings();
 
   const [appTitleInput, setAppTitleInput] = useState('');
   const [welcomeHeadingInput, setWelcomeHeadingInput] = useState('');
@@ -1040,17 +1041,18 @@ function AdminBrandingContent() {
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <div className="border border-border rounded-lg p-4">
+        <div>
           {textSettings.map(({ key, label, placeholder, value, onChange, dirty }, index) => (
             <div
               key={key}
-              className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${
-                index === textSettings.length - 1 ? '' : 'pb-4 mb-4 border-b border-border'
+              className={`flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between ${
+                index === textSettings.length - 1 ? '' : 'mb-6'
               }`}
             >
-              <p className="text-sm font-medium shrink-0">{label}</p>
-              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              <p className="shrink-0 text-sm font-medium xl:w-44">{label}</p>
+              <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center xl:max-w-md">
                 <ClearableInput
+                  className="min-w-0 flex-1 sm:w-auto"
                   clearLabel={t('common.clear')}
                   disabled={savingKey !== null}
                   maxLength={80}
@@ -1061,6 +1063,7 @@ function AdminBrandingContent() {
                 <Button
                   variant="outline"
                   size="sm"
+                  className="w-full sm:w-auto"
                   onClick={() => handleTextSettingSave(key, value)}
                   disabled={savingKey !== null || !dirty}
                 >
@@ -1080,7 +1083,12 @@ function AdminBrandingContent() {
   );
 }
 
-function AdminUsersContent() {
+function AdminUsersContent({
+  settings,
+  isLoadingSettings,
+  savingKey,
+  saveSetting,
+}: AdminSettingsState) {
   const { t } = useTranslation();
   const { user } = useUser();
 
@@ -1119,9 +1127,30 @@ function AdminUsersContent() {
     }
   };
 
+  const handleDefaultRoleChange = (value: string) =>
+    saveSetting('default_new_user_role', { default_new_user_role: value as 'admin' | 'member' });
+
   return (
     <section className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6">
       <h2 className="text-lg font-semibold mb-4">{t('admin.userManagement')}</h2>
+      <div className="mb-6">
+        <div className="flex items-center justify-between gap-4">
+          <p className="text-sm font-medium">{t('admin.defaultRole')}</p>
+          <Select
+            value={settings?.default_new_user_role ?? 'admin'}
+            onValueChange={handleDefaultRoleChange}
+            disabled={isLoadingSettings || savingKey !== null}
+          >
+            <SelectTrigger className="w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="admin">{t('admin.roleAdmin')}</SelectItem>
+              <SelectItem value="member">{t('admin.roleMember')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
       {isLoadingUsers ? (
         <div className="flex items-center justify-center py-8">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -1174,7 +1203,7 @@ function AdminUsersContent() {
                         {u.is_admin ? (
                           <ShieldCheck className="h-3.5 w-3.5" />
                         ) : (
-                          <ShieldOff className="h-3.5 w-3.5" />
+                          <UserIcon className="h-3.5 w-3.5" />
                         )}
                         {u.is_admin ? t('admin.roleAdmin') : t('admin.roleMember')}
                       </span>
@@ -1222,25 +1251,45 @@ function AdminUsersContent() {
   );
 }
 
-export function AdminContent() {
-  const { t } = useTranslation();
-  const { isAdmin } = useUser();
-  const navigate = useNavigate();
+function AdminContentPanels() {
   const location = useLocation();
+  const adminSettings = useAdminSettings();
 
   const activeTab =
     location.pathname === '/admin/users'
       ? 'users'
       : location.pathname === '/admin/branding'
         ? 'branding'
-        : location.pathname === '/admin/git'
-          ? 'git'
-          : 'settings';
+        : location.pathname === '/admin/repo'
+          ? 'repo'
+          : 'general';
 
   const [mounted, setMounted] = useState<Set<string>>(() => new Set([activeTab]));
   useEffect(() => {
     setMounted(prev => (prev.has(activeTab) ? prev : new Set(prev).add(activeTab)));
   }, [activeTab]);
+
+  return (
+    <div className="h-full min-h-0 flex flex-col overflow-hidden">
+      <div className={activeTab === 'general' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
+        {mounted.has('general') && <AdminGeneralContent {...adminSettings} />}
+      </div>
+      <div className={activeTab === 'repo' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
+        {mounted.has('repo') && <AdminRepositoryContent />}
+      </div>
+      <div className={activeTab === 'branding' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
+        {mounted.has('branding') && <AdminBrandingContent {...adminSettings} />}
+      </div>
+      <div className={activeTab === 'users' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
+        {mounted.has('users') && <AdminUsersContent {...adminSettings} />}
+      </div>
+    </div>
+  );
+}
+
+export function AdminContent() {
+  const { isAdmin } = useUser();
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!isAdmin) {
@@ -1250,38 +1299,5 @@ export function AdminContent() {
 
   if (!isAdmin) return null;
 
-  return (
-    <div className="h-full min-h-0 flex flex-col overflow-hidden">
-      <div className="flex items-center gap-3 p-4 border-b border-border shrink-0">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/')}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <h1 className="text-xl font-bold">{t('admin.title')}</h1>
-      </div>
-
-      <div className="px-6 pt-4">
-        <Tabs value={activeTab} onValueChange={val => navigate(`/admin/${val}`, { replace: true })}>
-          <TabsList>
-            <TabsTrigger value="settings">{t('admin.settings')}</TabsTrigger>
-            <TabsTrigger value="git">{t('admin.git')}</TabsTrigger>
-            <TabsTrigger value="branding">{t('admin.branding')}</TabsTrigger>
-            <TabsTrigger value="users">{t('admin.userManagement')}</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
-
-      <div className={activeTab === 'settings' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
-        {mounted.has('settings') && <AdminSettingsContent />}
-      </div>
-      <div className={activeTab === 'git' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
-        {mounted.has('git') && <AdminGitContent />}
-      </div>
-      <div className={activeTab === 'branding' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
-        {mounted.has('branding') && <AdminBrandingContent />}
-      </div>
-      <div className={activeTab === 'users' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
-        {mounted.has('users') && <AdminUsersContent />}
-      </div>
-    </div>
-  );
+  return <AdminContentPanels />;
 }

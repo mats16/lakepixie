@@ -149,6 +149,7 @@ describe('telemetry setup service', () => {
     expect(updateAppSettings).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
+        mlflow_experiment_id: '123',
         otel_metrics_table_name: 'main.default.ccbricks_otel_metrics',
         otel_logs_table_name: 'main.default.ccbricks_otel_logs',
         otel_traces_table_name: 'main.default.ccbricks_otel_spans',
