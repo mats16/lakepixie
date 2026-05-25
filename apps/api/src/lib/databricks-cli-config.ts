@@ -61,7 +61,7 @@ export async function writeDatabricksConfig(
 }
 
 export function getDatabricksConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  return env.DATABRICKS_CONFIG_FILE ?? path.join(env.HOME ?? homedir(), DATABRICKS_CONFIG_FILENAME);
+  return env.DATABRICKS_CONFIG_FILE ?? path.join(env.HOME || homedir(), DATABRICKS_CONFIG_FILENAME);
 }
 
 function parseDatabricksConfig(content: string, profile: string): Record<string, string> {

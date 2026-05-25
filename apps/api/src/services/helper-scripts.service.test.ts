@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import {
   buildDatabricksConfigContent,
+  getDatabricksConfigPath,
   writeDatabricksConfig,
 } from '../lib/databricks-cli-config.js';
 import { API_KEY_HELPER_SCRIPT } from './helper-scripts.service.js';
@@ -131,7 +132,19 @@ describe('writeDatabricksConfig', () => {
   });
 });
 
+describe('getDatabricksConfigPath', () => {
+  it('falls back to the OS home directory when HOME is empty', () => {
+    expect(getDatabricksConfigPath({ HOME: '' })).not.toBe('.databrickscfg');
+  });
+});
+
 describe('API_KEY_HELPER_SCRIPT', () => {
+  it('exits when config value command substitutions fail', () => {
+    expect(API_KEY_HELPER_SCRIPT).toContain(
+      'host="$(require_databricks_config_value "host")" || exit 1'
+    );
+  });
+
   it('returns a Service Principal token from ~/.databrickscfg', async () => {
     await expect(
       runApiKeyHelper(async dir => {

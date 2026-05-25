@@ -71,10 +71,10 @@ require_databricks_config_value() {
 
 get_databricks_sp_token() {
   local host auth_type client_id client_secret response token
-  host="$(require_databricks_config_value "host")"
-  auth_type="$(require_databricks_config_value "auth_type")"
-  client_id="$(require_databricks_config_value "client_id")"
-  client_secret="$(require_databricks_config_value "client_secret")"
+  host="$(require_databricks_config_value "host")" || exit 1
+  auth_type="$(require_databricks_config_value "auth_type")" || exit 1
+  client_id="$(require_databricks_config_value "client_id")" || exit 1
+  client_secret="$(require_databricks_config_value "client_secret")" || exit 1
   if [ "\${auth_type}" != "oauth-m2m" ]; then
     echo "ERROR: Databricks config profile \${DATABRICKS_CONFIG_PROFILE} must use auth_type = oauth-m2m" >&2
     exit 1
