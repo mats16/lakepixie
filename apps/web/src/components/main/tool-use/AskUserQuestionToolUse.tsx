@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -31,6 +31,58 @@ interface AskUserQuestionToolUseProps extends BaseToolUseProps {
   toolUseId?: string;
 }
 
+type AnswerValue = string | string[];
+type AnswerSelections = Record<string, AnswerValue>;
+type AnswerSource = 'structured' | 'resultText';
+
+interface AnswerSelectionState {
+  answers: AnswerSelections;
+  source: AnswerSource;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isAnswerValue(value: unknown): value is AnswerValue {
+  return (
+    typeof value === 'string' || (Array.isArray(value) && value.every(v => typeof v === 'string'))
+  );
+}
+
+function toAnswerSelections(value: unknown): AnswerSelections | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const answers: AnswerSelections = {};
+  for (const [key, answer] of Object.entries(value)) {
+    if (isAnswerValue(answer)) {
+      answers[key] = answer;
+    }
+  }
+  return Object.keys(answers).length > 0 ? answers : undefined;
+}
+
+function getToolUseResultAnswers(toolUseResult: unknown): AnswerSelections | undefined {
+  return isRecord(toolUseResult) ? toAnswerSelections(toolUseResult.answers) : undefined;
+}
+
+function isEmptyAnswer(value: AnswerValue | undefined): boolean {
+  return value === undefined || value === '' || (Array.isArray(value) && value.length === 0);
+}
+
+function hasAnswer(value: AnswerValue | undefined): value is AnswerValue {
+  return !isEmptyAnswer(value);
+}
+
+function toMultiSelectValues(value: AnswerValue, source: AnswerSource): string[] {
+  if (Array.isArray(value)) return value;
+  return source === 'resultText' ? value.split(',') : [value];
+}
+
+function toSingleSelectValue(value: AnswerValue): string {
+  return Array.isArray(value) ? value.join(',') : value;
+}
+
 /**
  * tool_result テキストから回答をパース（表示専用）。
  *
@@ -38,8 +90,8 @@ interface AskUserQuestionToolUseProps extends BaseToolUseProps {
  * 生成する結果文字列に依存。パース失敗時は空オブジェクトを返し、選択状態が
  * 表示されないだけで機能には影響しない。
  */
-function parseAnswersFromResult(content: string): Record<string, string> {
-  const answers: Record<string, string> = {};
+function parseAnswersFromResult(content: string): AnswerSelections {
+  const answers: AnswerSelections = {};
   const regex = /"([^"]+)"="([^"]+)"/g;
   let match;
   while ((match = regex.exec(content)) !== null) {
@@ -48,17 +100,32 @@ function parseAnswersFromResult(content: string): Record<string, string> {
   return answers;
 }
 
+function getAnsweredSelections(
+  result: AskUserQuestionToolUseProps['result']
+): AnswerSelectionState | undefined {
+  const structuredAnswers = getToolUseResultAnswers(result?.toolUseResult);
+  if (structuredAnswers) return { answers: structuredAnswers, source: 'structured' };
+
+  if (!result || result.isError) return undefined;
+
+  const parsedAnswers = parseAnswersFromResult(result.content);
+  return Object.keys(parsedAnswers).length > 0
+    ? { answers: parsedAnswers, source: 'resultText' }
+    : undefined;
+}
+
 /** 回答済みの値から selections / otherTexts の初期値を一括生成 */
 function buildInitialState(
   questions: Question[],
-  answeredSelections?: Record<string, string>
+  answeredSelections?: AnswerSelectionState
 ): { selections: Record<string, string | string[]>; otherTexts: Record<string, string> } {
   const selections: Record<string, string | string[]> = {};
   const otherTexts: Record<string, string> = {};
 
   for (const q of questions) {
-    const val = answeredSelections?.[q.header];
-    if (!val) {
+    const answeredState = answeredSelections;
+    const answeredValue = answeredState?.answers[q.header];
+    if (!answeredState || !hasAnswer(answeredValue)) {
       selections[q.header] = q.multiSelect ? [] : '';
       otherTexts[q.header] = '';
       continue;
@@ -67,12 +134,13 @@ function buildInitialState(
     const optionLabels = (q.options ?? []).map(o => o.label);
 
     if (q.multiSelect) {
-      const vals = val.split(',');
+      const vals = toMultiSelectValues(answeredValue, answeredState.source);
       const known = vals.filter(v => optionLabels.includes(v));
       const unknown = vals.filter(v => !optionLabels.includes(v));
       selections[q.header] = unknown.length > 0 ? [...known, OTHER_SENTINEL] : known;
       otherTexts[q.header] = unknown.join(',');
     } else {
+      const val = toSingleSelectValue(answeredValue);
       const isKnown = optionLabels.includes(val);
       selections[q.header] = isKnown ? val : OTHER_SENTINEL;
       otherTexts[q.header] = isKnown ? '' : val;
@@ -96,8 +164,7 @@ export function AskUserQuestionToolUse({ input, result, toolUseId }: AskUserQues
 
   const isPending = toolUseId ? pendingQuestions.has(toolUseId) : false;
 
-  const answeredSelections =
-    result && !result.isError ? parseAnswersFromResult(result.content) : undefined;
+  const answeredSelections = useMemo(() => getAnsweredSelections(result), [result]);
 
   const handleSubmit = useCallback(
     (answers: Record<string, string | string[]>) => {
@@ -142,7 +209,7 @@ interface TabbedQuestionsProps {
   questions: Question[];
   isPending: boolean;
   /** 回答済みの場合、パース結果を渡す（header → label） */
-  answeredSelections?: Record<string, string>;
+  answeredSelections?: AnswerSelectionState;
   onSubmit: (answers: Record<string, string | string[]>) => void;
 }
 
@@ -155,9 +222,18 @@ function TabbedQuestions({
   const { t } = useTranslation();
   const [activeIndex, setActiveIndex] = useState(0);
 
-  const [initialState] = useState(() => buildInitialState(questions, answeredSelections));
-  const [selections, setSelections] = useState(initialState.selections);
-  const [otherTexts, setOtherTexts] = useState(initialState.otherTexts);
+  const restoredState = useMemo(
+    () => buildInitialState(questions, answeredSelections),
+    [questions, answeredSelections]
+  );
+  const [selections, setSelections] = useState(restoredState.selections);
+  const [otherTexts, setOtherTexts] = useState(restoredState.otherTexts);
+
+  useEffect(() => {
+    if (!answeredSelections || isPending) return;
+    setSelections(restoredState.selections);
+    setOtherTexts(restoredState.otherTexts);
+  }, [answeredSelections, isPending, restoredState]);
 
   const isLastTab = activeIndex === questions.length - 1;
   const isFirstTab = activeIndex === 0;

@@ -1,4 +1,4 @@
-import type { SDKMessage } from '@repo/types';
+import type { SDKMessage, ToolResultContentBlock } from '@repo/types';
 import {
   isSDKUserMessageEvent,
   isSDKAssistantMessageEvent,
@@ -11,6 +11,7 @@ import { TOOL_NAMES_OMIT_INPUT_SUMMARY } from './tool-constants';
 export interface ToolResult {
   content: string;
   isError: boolean;
+  toolUseResult?: unknown;
 }
 
 export interface ToolUseBlock {
@@ -32,18 +33,25 @@ export function extractToolResults(events: SDKMessage[]): Map<string, ToolResult
     const content = event.message.content;
     if (!Array.isArray(content)) continue;
 
+    const toolResultBlocks: ToolResultContentBlock[] = [];
     for (const block of content) {
       if (isToolResultContentBlock(block)) {
-        toolResultMap.set(block.tool_use_id, {
-          content:
-            typeof block.content === 'string'
-              ? block.content
-              : block.content != null
-                ? JSON.stringify(block.content)
-                : '',
-          isError: block.is_error ?? false,
-        });
+        toolResultBlocks.push(block);
       }
+    }
+    const toolUseResult = toolResultBlocks.length === 1 ? event.tool_use_result : undefined;
+
+    for (const block of toolResultBlocks) {
+      toolResultMap.set(block.tool_use_id, {
+        content:
+          typeof block.content === 'string'
+            ? block.content
+            : block.content != null
+              ? JSON.stringify(block.content)
+              : '',
+        isError: block.is_error ?? false,
+        toolUseResult,
+      });
     }
   }
 
