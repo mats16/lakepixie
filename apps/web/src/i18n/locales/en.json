@@ -42,6 +42,13 @@
     "archiveSession": "Archive",
     "downloadSettings": "Download settings",
     "downloadSettingsError": "Failed to download settings",
+    "modelControl": "Session model",
+    "modelChangeError": "Failed to change model",
+    "effortControl": "Effort",
+    "effortChangeError": "Failed to change effort",
+    "planMode": "Plan",
+    "planModeTooltip": "Plan mode prevents tool execution until it is turned off.",
+    "planModeChangeError": "Failed to change plan mode",
     "archiveSessionError": "Failed to archive session",
     "sessionTitlePlaceholder": "Session title",
     "sessionNotFound": "Session not found",
@@ -538,6 +545,7 @@
   },
   "tools": {
     "updateTodos": "Update Todos",
+    "exitPlanMode": "Plan",
     "readLines": "Read {{count}} lines",
     "collapse": "Collapse",
     "expandLines": "+{{count}} lines",
@@ -555,6 +563,16 @@
     "askQuestionNext": "Next",
     "askQuestionSubmit": "Submit",
     "askQuestionOther": "Other",
-    "askQuestionOtherPlaceholder": "Enter your answer..."
+    "askQuestionOtherPlaceholder": "Enter your answer...",
+    "exitPlanPrompt": "Proceed with this plan?",
+    "exitPlanApprove": "Approve",
+    "exitPlanReject": "Reject",
+    "exitPlanSuggest": "Suggest",
+    "exitPlanRejectMessage": "The user rejected this plan.",
+    "exitPlanApproved": "User approved the plan",
+    "exitPlanRejected": "User rejected the plan",
+    "exitPlanSuggested": "User requested changes",
+    "exitPlanRevisionPlaceholder": "Describe what should change...",
+    "exitPlanSendRevision": "Send changes"
   }
 }

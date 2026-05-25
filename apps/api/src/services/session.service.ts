@@ -6,12 +6,15 @@ import { createRequire } from 'node:module';
 import { spawnAsync } from '../utils/spawn.js';
 import {
   query,
+  type CanUseTool,
   type McpServerConfig,
+  type PermissionResult,
   type SDKMessage,
   type SDKResultMessage,
   type SDKSystemMessage,
   type SDKUserMessage,
   type SDKUserMessageReplay,
+  type Query,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
 import {
@@ -33,6 +36,8 @@ import {
   type SessionStatus,
   type SessionUpdateRequest,
   type WsServerMessage,
+  type WsEffortLevel,
+  type WsPermissionMode,
 } from '@repo/types';
 import { buildSystemPromptConfig } from '../utils/system-prompt.helper.js';
 import { sessionEvents, sessions } from '../db/schema.js';
@@ -51,6 +56,7 @@ import { wsManager } from './websocket-manager.service.js';
 import { sessionStreamHub } from './session-stream-hub.service.js';
 import { enqueueSessionEvent } from './event-queue.service.js';
 import { waitForUserAnswer } from './ask-user-question.service.js';
+import { waitForExitPlanModeDecision } from './exit-plan-mode.service.js';
 import { SessionId } from '../models/session.model.js';
 import type { UserContext } from '../lib/user-context.js';
 import path from 'node:path';
@@ -69,17 +75,39 @@ import {
   UserSettingsValidationError,
 } from './user-settings.service.js';
 
-/** セッションID → AbortController のマッピング（abort 用） */
-const sessionAbortControllers = new Map<string, AbortController>();
+interface ActiveSessionQuery {
+  abortController: AbortController;
+  query: Query;
+}
+
+/** セッションID → 実行中 SDK query のマッピング（abort / control request 用） */
+const activeSessionQueries = new Map<string, ActiveSessionQuery>();
 const QUEUED_USER_EVENT_SUBTYPE = 'queued';
 const GIT_COMMAND_TIMEOUT_MS = 60000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const moduleRequire = createRequire(import.meta.url);
 const MCP_TOOL_PATTERN_PREFIX = 'mcp__';
+const PERMISSION_MODES = new Set<WsPermissionMode>([
+  'default',
+  'acceptEdits',
+  'bypassPermissions',
+  'plan',
+  'dontAsk',
+  'auto',
+]);
+const EFFORT_LEVELS = new Set<WsEffortLevel>(['low', 'medium', 'high', 'xhigh', 'max']);
 type EffectiveToolSettings = {
   allowed_tools: string[];
   disallowed_tools: string[];
 };
+
+function isValidPermissionMode(value: unknown): value is WsPermissionMode {
+  return typeof value === 'string' && PERMISSION_MODES.has(value as WsPermissionMode);
+}
+
+function isValidEffortLevel(value: unknown): value is WsEffortLevel {
+  return typeof value === 'string' && EFFORT_LEVELS.has(value as WsEffortLevel);
+}
 
 export class SessionValidationError extends Error {
   constructor(message: string) {
@@ -237,11 +265,74 @@ async function persistSessionFailureEvent(
 }
 
 /**
- * 単一の SDKUserMessage を AsyncIterable として返す
- * query() 関数に構造化コンテンツを渡すために使用
+ * query() の streaming input mode を有効にするため、単一 user message を AsyncIterable 化する。
  */
 async function* singleMessageIterable(msg: SDKUserMessage): AsyncIterable<SDKUserMessage> {
   yield msg;
+}
+
+function buildPromptMessage(
+  sessionId: SessionId,
+  rawPrompt: string | SDKUserMessage,
+  initialUserEvent: SessionCreateEventData | undefined
+): SDKUserMessage {
+  if (typeof rawPrompt !== 'string') return rawPrompt;
+
+  return {
+    type: 'user',
+    uuid: (initialUserEvent?.uuid ?? crypto.randomUUID()) as UUID,
+    session_id: sessionId.toString(),
+    parent_tool_use_id: null,
+    message: {
+      role: 'user',
+      content: rawPrompt,
+    },
+  };
+}
+
+interface HandleCanUseToolParams {
+  fastify: FastifyInstance;
+  userId: string;
+  sessionId: SessionId;
+  toolName: string;
+  input: Record<string, unknown>;
+  options: Parameters<CanUseTool>[2];
+}
+
+async function handleCanUseTool({
+  fastify,
+  userId,
+  sessionId,
+  toolName,
+  input,
+  options,
+}: HandleCanUseToolParams): Promise<PermissionResult> {
+  if (toolName === 'AskUserQuestion') {
+    const answers = await waitForUserAnswer(
+      sessionId.toString(),
+      options.toolUseID,
+      input,
+      options.signal
+    );
+    return { behavior: 'allow', updatedInput: { ...input, answers } };
+  }
+
+  if (toolName === 'ExitPlanMode') {
+    const decision = await waitForExitPlanModeDecision(
+      sessionId.toString(),
+      options.toolUseID,
+      input,
+      options.signal
+    );
+    if (!decision.approved) {
+      return { behavior: 'deny', message: decision.message };
+    }
+
+    await updateSessionContext(fastify, userId, sessionId, { permission_mode: 'auto' });
+    return { behavior: 'allow', updatedInput: input };
+  }
+
+  return { behavior: 'allow', updatedInput: input };
 }
 
 function validateGitBranchName(branch: string): void {
@@ -666,8 +757,8 @@ async function processAllEvents(
   } finally {
     cleanupGitCredential?.();
 
-    // AbortController を削除
-    sessionAbortControllers.delete(sessionId.toString());
+    // 実行中 query ハンドルを削除
+    activeSessionQueries.delete(sessionId.toString());
 
     // エラーでない場合は status を idle に更新
     // （result イベントの有無に関わらず、正常終了時に確実に idle にする）
@@ -778,6 +869,75 @@ async function completeRunAndClaimQueuedMessage(
   });
 }
 
+async function getLatestSessionContext(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId
+): Promise<SessionContextResponse> {
+  const [sessionRow] = await fastify.withUserContext(userId, async tx =>
+    tx
+      .select({
+        context: sessions.context,
+        status: sessions.status,
+      })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId.toUUID()))
+      .limit(1)
+  );
+
+  if (!sessionRow) {
+    throw new Error('Session not found');
+  }
+  if (sessionRow.status === 'archived') {
+    throw new Error('Session is archived');
+  }
+  if (!sessionRow.context) {
+    throw new Error('Session context not found');
+  }
+
+  return sessionRow.context as SessionContextResponse;
+}
+
+async function updateSessionContext(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId,
+  patch: Partial<Pick<SessionContextResponse, 'model' | 'permission_mode' | 'effort_level'>>
+): Promise<SessionContextResponse> {
+  return fastify.withUserContext(userId, async tx => {
+    const [sessionRow] = await tx
+      .select({
+        context: sessions.context,
+        status: sessions.status,
+      })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId.toUUID()))
+      .limit(1);
+
+    if (!sessionRow) {
+      throw new Error('Session not found');
+    }
+    if (sessionRow.status === 'archived') {
+      throw new Error('Session is archived');
+    }
+    if (!sessionRow.context) {
+      throw new Error('Session context not found');
+    }
+
+    const nextContext: SessionContextResponse = {
+      ...(sessionRow.context as SessionContextResponse),
+      ...patch,
+    };
+
+    await tx
+      .update(sessions)
+      .set({ context: nextContext, updatedAt: new Date() })
+      .where(eq(sessions.id, sessionId.toUUID()));
+
+    return nextContext;
+  });
+}
+
 /**
  * SDK query() 呼び出し〜バックグラウンドイベント処理のパイプラインパラメータ
  */
@@ -802,28 +962,15 @@ interface StartQueryPipelineParams {
  * エラー時は session status を 'error' に更新して throw する。
  */
 async function startQueryPipeline(params: StartQueryPipelineParams): Promise<void> {
-  const {
-    fastify,
-    ctx,
-    sessionId,
-    prompt: rawPrompt,
-    sessionContext,
-    sdkSessionId,
-    initialUserEvent,
-  } = params;
+  const { fastify, ctx, sessionId, prompt: rawPrompt, sdkSessionId, initialUserEvent } = params;
   const { userId, userHome } = ctx;
   let cleanupGitCredential: (() => void) | undefined;
 
   try {
-    // Prompt: 構造化コンテンツは AsyncIterable にラップ、文字列はそのまま
-    let prompt: string | AsyncIterable<SDKUserMessage>;
-    if (typeof rawPrompt === 'string') {
-      prompt = rawPrompt;
-    } else if (Array.isArray(rawPrompt.message.content)) {
-      prompt = singleMessageIterable(rawPrompt);
-    } else {
-      prompt = rawPrompt.message.content as string;
-    }
+    const sessionContext = await getLatestSessionContext(fastify, userId, sessionId);
+    const prompt = singleMessageIterable(
+      buildPromptMessage(sessionId, rawPrompt, initialUserEvent)
+    );
 
     const systemPromptConfig = buildSystemPromptConfig(sessionContext.outcomes);
     const abortController = new AbortController();
@@ -944,19 +1091,10 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
           otelHeadersHelper: helperPaths.otelHeadersHelper,
         },
         settingSources: ['user', 'project', 'local'],
-        permissionMode: 'auto',
-        canUseTool: async (toolName, input, options) => {
-          if (toolName === 'AskUserQuestion') {
-            const answers = await waitForUserAnswer(
-              sessionId.toString(),
-              options.toolUseID,
-              input,
-              options.signal
-            );
-            return { behavior: 'allow', updatedInput: { ...input, answers } };
-          }
-          return { behavior: 'allow' };
-        },
+        permissionMode: sessionContext.permission_mode ?? 'auto',
+        ...(sessionContext.effort_level ? { effort: sessionContext.effort_level } : {}),
+        canUseTool: (toolName, input, options) =>
+          handleCanUseTool({ fastify, userId, sessionId, toolName, input, options }),
         systemPrompt: systemPromptConfig,
         mcpServers,
         tools: {
@@ -1003,7 +1141,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       'Claude Agent SDK query iterable created'
     );
 
-    sessionAbortControllers.set(sessionId.toString(), abortController);
+    activeSessionQueries.set(sessionId.toString(), { abortController, query: response });
 
     // バックグラウンド処理開始（await しない）
     processAllEvents(
@@ -1164,6 +1302,19 @@ export async function createSession(
   if (typeof session_context.model !== 'string' || session_context.model.trim().length === 0) {
     throw new SessionValidationError('session_context.model must be a non-empty string');
   }
+  if (
+    session_context.permission_mode !== undefined &&
+    !isValidPermissionMode(session_context.permission_mode)
+  ) {
+    throw new SessionValidationError('session_context.permission_mode is invalid');
+  }
+  if (
+    session_context.effort_level !== undefined &&
+    session_context.effort_level !== null &&
+    !isValidEffortLevel(session_context.effort_level)
+  ) {
+    throw new SessionValidationError('session_context.effort_level is invalid');
+  }
 
   // 1. SessionId を生成（UUIDv7）
   const sessionId = new SessionId();
@@ -1236,6 +1387,8 @@ export async function createSession(
     disallowed_tools: sessionToolSettings.disallowed_tools,
     cwd,
     model: resolvedModelId,
+    permission_mode: session_context.permission_mode ?? 'auto',
+    effort_level: session_context.effort_level ?? null,
     sources: session_context.sources,
     outcomes: resolvedOutcomes,
     mcp_config: session_context.mcp_config,
@@ -1731,6 +1884,54 @@ export async function archiveSession(
   });
 }
 
+export async function setSessionPermissionMode(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId,
+  mode: WsPermissionMode
+): Promise<void> {
+  const activeQuery = activeSessionQueries.get(sessionId.toString());
+  if (activeQuery) {
+    await activeQuery.query.setPermissionMode(mode);
+  }
+  await updateSessionContext(fastify, userId, sessionId, { permission_mode: mode });
+}
+
+export async function setSessionModel(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId,
+  model: string
+): Promise<void> {
+  const activeQuery = activeSessionQueries.get(sessionId.toString());
+  if (activeQuery) {
+    await activeQuery.query.setModel(model);
+  }
+  await updateSessionContext(fastify, userId, sessionId, { model });
+}
+
+export async function applySessionFlagSettings(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId,
+  settings: { effortLevel?: WsEffortLevel | null }
+): Promise<void> {
+  const activeQuery = activeSessionQueries.get(sessionId.toString());
+  if (activeQuery) {
+    await activeQuery.query.applyFlagSettings(
+      settings as Parameters<Query['applyFlagSettings']>[0]
+    );
+  }
+
+  if ('effortLevel' in settings) {
+    await updateSessionContext(fastify, userId, sessionId, {
+      effort_level: settings.effortLevel ?? null,
+    });
+  } else {
+    await getLatestSessionContext(fastify, userId, sessionId);
+  }
+}
+
 /**
  * セッションが abort 可能かチェック
  *
@@ -1738,7 +1939,7 @@ export async function archiveSession(
  * @returns abort 可能な場合は true
  */
 export function canAbortSession(sessionId: SessionId): boolean {
-  return sessionAbortControllers.has(sessionId.toString());
+  return activeSessionQueries.has(sessionId.toString());
 }
 
 /**
@@ -1755,12 +1956,12 @@ export async function executeAbort(
   sessionId: SessionId
 ): Promise<void> {
   const sessionIdStr = sessionId.toString();
-  const abortController = sessionAbortControllers.get(sessionIdStr);
+  const activeQuery = activeSessionQueries.get(sessionIdStr);
 
-  if (!abortController) return;
+  if (!activeQuery) return;
 
-  // 1. abort を呼び出し（AbortController の削除は processAllEvents の finally で行う）
-  abortController.abort();
+  // 1. abort を呼び出し（ハンドルの削除は processAllEvents の finally で行う）
+  activeQuery.abortController.abort();
 
   // 2. user メッセージを送信（画面表示用）
   const userMessage = {
@@ -1802,4 +2003,15 @@ export const __testing = {
   validateGitSessionContext,
   validateGitRepositoryUrl,
   validateSparseCheckoutPath,
+  handleCanUseTool,
+  clearActiveSessionQueries: () => activeSessionQueries.clear(),
+  registerActiveSessionQuery: (
+    sessionId: SessionId,
+    activeQuery: Partial<ActiveSessionQuery> & { query: Query }
+  ) => {
+    activeSessionQueries.set(sessionId.toString(), {
+      abortController: activeQuery.abortController ?? new AbortController(),
+      query: activeQuery.query,
+    });
+  },
 };

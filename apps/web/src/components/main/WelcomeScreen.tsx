@@ -14,9 +14,9 @@ import {
   Cable,
   Sparkles,
   Network,
-  Rocket,
   FolderGit2,
   GitBranch,
+  ListTodo,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -57,6 +57,7 @@ import { gitRepositoryService } from '@/services';
 import {
   SESSION_MODELS,
   DEFAULT_SESSION_MODEL,
+  EFFORT_LEVEL_OPTIONS,
   TEXTAREA_MAX_HEIGHT_MAIN,
   MCP_DBSQL_ID,
 } from '@/constants';
@@ -67,6 +68,7 @@ import type {
   GitRepositoryBranchCandidate,
   GitRepositoryCandidate,
   McpConfig,
+  WsEffortLevel,
   WorkspaceSelection,
 } from '@repo/types';
 
@@ -75,11 +77,12 @@ export type NewSessionSourceType = 'databricks_workspace' | 'git_repository';
 export interface NewSessionParams {
   content: UserMessageContentBlock[];
   modelId: string;
+  effortLevel: WsEffortLevel;
   sourceType: NewSessionSourceType;
   gitRepository: GitRepositoryCandidate | null;
   gitRepositoryBranch: string | null;
   enableDatabricksSqlWrite: boolean;
-  enableDatabricksApps: boolean;
+  isPlanMode: boolean;
   workspaceSelection: WorkspaceSelection | null;
   mcpConfig?: McpConfig;
   allowedTools?: string[];
@@ -120,7 +123,16 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
   const [selectedModelId, setSelectedModelId] = useLocalStorageState('selected-model-id', {
     defaultValue: DEFAULT_SESSION_MODEL.id,
   });
+  const [selectedEffortLevel, setSelectedEffortLevel] = useLocalStorageState<WsEffortLevel>(
+    'selected-effort-level',
+    {
+      defaultValue: 'high',
+    }
+  );
   const selectedModel = SESSION_MODELS.find(m => m.id === selectedModelId) ?? DEFAULT_SESSION_MODEL;
+  const selectedEffort = EFFORT_LEVEL_OPTIONS.includes(selectedEffortLevel)
+    ? selectedEffortLevel
+    : 'high';
   const [sourceType, setSourceType] = useState<NewSessionSourceType>('databricks_workspace');
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelection | null>(null);
   const [gitRepositories, setGitRepositories] = useState<GitRepositoryCandidate[]>([]);
@@ -143,7 +155,7 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
   >({});
   const [hasLoadedGitRepositories, setHasLoadedGitRepositories] = useState(false);
   const [enableDatabricksSqlWrite, setEnableDatabricksSqlWrite] = useState(false);
-  const [enableDatabricksApps, setEnableDatabricksApps] = useState(false);
+  const [isPlanMode, setIsPlanMode] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const {
     items: mcpItems,
@@ -389,11 +401,12 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
       await onNewSession?.({
         content: messageContent,
         modelId: selectedModel.id,
+        effortLevel: selectedEffort,
         sourceType,
         gitRepository: selectedGitRepository,
         gitRepositoryBranch: sourceType === 'git_repository' ? selectedGitRepositoryBranch : null,
         enableDatabricksSqlWrite,
-        enableDatabricksApps,
+        isPlanMode,
         workspaceSelection: sourceType === 'databricks_workspace' ? selectedWorkspace : null,
         mcpConfig,
         allowedTools,
@@ -687,32 +700,6 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
                 </Tooltip>
               </TooltipProvider>
 
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={cn('h-8 w-8 shrink-0', enableDatabricksApps && 'bg-red-500/10')}
-                      onClick={() => setEnableDatabricksApps(prev => !prev)}
-                      disabled={isSubmitting}
-                    >
-                      <Rocket
-                        className={cn(
-                          'h-4 w-4',
-                          enableDatabricksApps
-                            ? 'text-red-500 stroke-[2.5]'
-                            : 'text-muted-foreground'
-                        )}
-                      />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{t('databricksApp.enableApps')}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-
               {mcpItems.length > 0 && (
                 <Popover>
                   <TooltipProvider>
@@ -775,6 +762,36 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
                   </PopoverContent>
                 </Popover>
               )}
+
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        'h-8 shrink-0 gap-1 px-2 text-xs text-muted-foreground',
+                        isPlanMode && 'bg-primary/10 text-primary'
+                      )}
+                      onClick={() => setIsPlanMode(prev => !prev)}
+                      disabled={isSubmitting}
+                      aria-label={t('main.planMode')}
+                      aria-pressed={isPlanMode}
+                    >
+                      <ListTodo
+                        className={cn(
+                          'h-4 w-4',
+                          isPlanMode ? 'text-primary stroke-[2.5]' : 'text-muted-foreground'
+                        )}
+                      />
+                      <span>{t('main.planMode')}</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{t('main.planModeTooltip')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
 
             <div className="flex items-center gap-2">
@@ -805,6 +822,34 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
                         )}
                       </div>
                       {selectedModel.id === model.id && (
+                        <Check className="h-4 w-4 text-primary shrink-0 ml-2" />
+                      )}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-3 text-sm text-muted-foreground hover:text-foreground"
+                    title={t('main.effortControl')}
+                  >
+                    {selectedEffort}
+                    <ChevronDown className="h-3 w-3 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-36">
+                  {EFFORT_LEVEL_OPTIONS.map(effortLevel => (
+                    <DropdownMenuItem
+                      key={effortLevel}
+                      onClick={() => setSelectedEffortLevel(effortLevel)}
+                      className="flex items-center justify-between py-2"
+                    >
+                      <span className="font-medium">{effortLevel}</span>
+                      {selectedEffort === effortLevel && (
                         <Check className="h-4 w-4 text-primary shrink-0 ml-2" />
                       )}
                     </DropdownMenuItem>

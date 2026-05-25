@@ -6,6 +6,7 @@ export type SseEventName =
   | 'connected'
   | 'message'
   | 'ask_user_question'
+  | 'exit_plan_mode'
   | 'control_response'
   | 'error';
 
@@ -24,6 +25,7 @@ interface SessionStreamConnection {
 function getEventName(message: WsServerMessage | SDKMessage): SseEventName {
   if (message.type === 'connected') return 'connected';
   if (message.type === 'ask_user_question') return 'ask_user_question';
+  if (message.type === 'exit_plan_mode') return 'exit_plan_mode';
   if (message.type === 'control_response') return 'control_response';
   if (message.type === 'error') return 'error';
   return 'message';

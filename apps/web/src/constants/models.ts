@@ -1,3 +1,5 @@
+import type { WsEffortLevel } from '@repo/types';
+
 export interface ClaudeModel {
   id: string;
   name: string;
@@ -37,3 +39,10 @@ export const AGENT_MODELS: ClaudeModel[] = [
 
 export const DEFAULT_SESSION_MODEL = SESSION_MODELS[1]; // Sonnet
 export const DEFAULT_AGENT_MODEL = AGENT_MODELS[0];
+export const EFFORT_LEVEL_OPTIONS = [
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const satisfies readonly WsEffortLevel[];

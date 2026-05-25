@@ -33,7 +33,6 @@ export function useSession({ sessionId }: UseSessionOptions): UseSessionReturn {
 
     setIsLoading(true);
     setError(null);
-    setSession(null);
 
     try {
       const response = await sessionService.getSession(sessionId);

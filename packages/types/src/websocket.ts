@@ -43,12 +43,67 @@ export interface WsAskUserQuestionAnswerRequest {
 }
 
 /**
+ * ExitPlanMode 承認/修正リクエスト（クライアント -> サーバー）
+ */
+export interface WsExitPlanModeResponseRequest {
+  subtype: 'exit_plan_mode_response';
+  tool_use_id: string;
+  approved: boolean;
+  /** approved=false の場合、Claude に返す修正指示 */
+  message?: string;
+}
+
+export type WsPermissionMode =
+  | 'default'
+  | 'acceptEdits'
+  | 'bypassPermissions'
+  | 'plan'
+  | 'dontAsk'
+  | 'auto';
+
+export type WsEffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/**
+ * 権限モード変更リクエスト（クライアント -> サーバー）
+ */
+export interface WsSetPermissionModeRequest {
+  subtype: 'set_permission_mode';
+  mode: WsPermissionMode;
+}
+
+/**
+ * モデル変更リクエスト（クライアント -> サーバー）
+ */
+export interface WsSetModelRequest {
+  subtype: 'set_model';
+  model: string;
+}
+
+/**
+ * Claude Code flag settings 更新リクエスト（クライアント -> サーバー）
+ */
+export interface WsApplyFlagSettingsRequest {
+  subtype: 'apply_flag_settings';
+  settings: {
+    effortLevel?: WsEffortLevel | null;
+  };
+}
+
+export type WsControlRequestPayload =
+  | WsAbortRequest
+  | WsAskUserQuestionAnswerRequest
+  | WsExitPlanModeResponseRequest
+  | WsSetPermissionModeRequest
+  | WsSetModelRequest
+  | WsApplyFlagSettingsRequest;
+
+/**
  * Control リクエスト（クライアント -> サーバー）
  */
 export interface WsControlRequest {
   type: 'control_request';
   request_id: string;
-  request: WsAbortRequest | WsAskUserQuestionAnswerRequest;
+  request: WsControlRequestPayload;
 }
 
 /**
@@ -87,6 +142,16 @@ export interface WsAskUserQuestionRequest {
 }
 
 /**
+ * ExitPlanMode リクエスト（サーバー -> クライアント）
+ * canUseTool コールバックで ExitPlanMode を検知した際に送信
+ */
+export interface WsExitPlanModeRequest {
+  type: 'exit_plan_mode';
+  tool_use_id: string;
+  input: Record<string, unknown>;
+}
+
+/**
  * WebSocket サーバー -> クライアントメッセージ
  */
 export type WsServerMessage =
@@ -95,7 +160,8 @@ export type WsServerMessage =
   | SDKAuthStatusMessage
   | WsErrorMessage
   | WsControlResponse
-  | WsAskUserQuestionRequest;
+  | WsAskUserQuestionRequest
+  | WsExitPlanModeRequest;
 
 /**
  * WebSocket KeepAlive メッセージ（クライアント -> サーバー）

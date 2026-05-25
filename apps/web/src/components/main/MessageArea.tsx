@@ -8,6 +8,7 @@ import { LoadingScreen } from '@/components/ui/loading-spinner';
 import { extractToolResults, groupChildEvents } from '@/lib/message-utils';
 import { HIDDEN_EVENT_TYPES } from '@/lib/tool-constants';
 import { cn, throttle } from '@/lib/utils';
+import type { ExitPlanModeOptimisticResult } from './tool-use/types';
 
 interface MessageAreaProps {
   events: SDKMessage[];
@@ -16,6 +17,7 @@ interface MessageAreaProps {
   isAgentThinking?: boolean;
   syncingKind?: SyncingIndicatorKind | null;
   hasFloatingButton?: boolean;
+  optimisticExitPlanResults?: Map<string, ExitPlanModeOptimisticResult>;
 }
 
 // ユーザーが最下部付近にいるかどうかの閾値（px）
@@ -28,6 +30,7 @@ export function MessageArea({
   isAgentThinking,
   syncingKind,
   hasFloatingButton,
+  optimisticExitPlanResults,
 }: MessageAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -105,6 +108,7 @@ export function MessageArea({
             event={event}
             toolResultMap={toolResultMap}
             childEventsMap={childEventsMap}
+            optimisticExitPlanResults={optimisticExitPlanResults}
           />
         ))}
         {syncingKind && <SyncingIndicator kind={syncingKind} />}

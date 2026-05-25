@@ -3,6 +3,10 @@ import type {
   SDKMessage,
   SDKUserMessage,
   WsAskUserQuestionRequest,
+  WsExitPlanModeRequest,
+  WsExitPlanModeResponseRequest,
+  WsEffortLevel,
+  WsPermissionMode,
   UserMessageContentBlock,
   SessionStatus,
 } from '@repo/types';
@@ -23,6 +27,8 @@ interface UseSessionEventsOptions {
   initialMessage?: SDKUserMessage;
   /** AskUserQuestion リクエスト受信時のコールバック */
   onAskUserQuestion?: (request: WsAskUserQuestionRequest) => void;
+  /** ExitPlanMode リクエスト受信時のコールバック */
+  onExitPlanMode?: (request: WsExitPlanModeRequest) => void;
   /** Agent の tool_result / result 受信時に git diff を再取得するためのコールバック */
   onGitDiffRefreshNeeded?: () => void;
 }
@@ -39,7 +45,14 @@ interface UseSessionEventsReturn {
     toolUseId: string,
     answers: Record<string, string | string[]>
   ) => Promise<boolean>;
+  respondExitPlanMode: (
+    toolUseId: string,
+    decision: Pick<WsExitPlanModeResponseRequest, 'approved' | 'message'>
+  ) => Promise<boolean>;
   abort: () => Promise<boolean>;
+  setPermissionMode: (mode: WsPermissionMode) => Promise<boolean>;
+  setModel: (model: string) => Promise<boolean>;
+  setEffortLevel: (effortLevel: WsEffortLevel) => Promise<boolean>;
 }
 
 export function shouldRefreshGitDiffForEvent(event: SDKMessage): boolean {
@@ -56,6 +69,7 @@ export function useSessionEvents({
   initialSessionStatus,
   initialMessage,
   onAskUserQuestion,
+  onExitPlanMode,
   onGitDiffRefreshNeeded,
 }: UseSessionEventsOptions): UseSessionEventsReturn {
   const [events, setEvents] = useState<SDKMessage[]>([]);
@@ -116,6 +130,7 @@ export function useSessionEvents({
             }
             return true;
           });
+          if (newEvents.length === 0) return prev;
           return [...prev, ...newEvents];
         });
 
@@ -165,12 +180,17 @@ export function useSessionEvents({
     error: streamError,
     sendMessage,
     answerQuestion,
+    respondExitPlanMode,
     abort,
+    setPermissionMode,
+    setModel,
+    setEffortLevel,
   } = useSessionStream({
     sessionId,
     autoConnect: shouldAutoConnect,
     onEvent: handleEvent,
     onAskUserQuestion,
+    onExitPlanMode,
   });
 
   // セッション ID が変わったら過去イベントを取得
@@ -199,6 +219,10 @@ export function useSessionEvents({
     sessionStatus,
     sendMessage,
     answerQuestion,
+    respondExitPlanMode,
     abort,
+    setPermissionMode,
+    setModel,
+    setEffortLevel,
   };
 }

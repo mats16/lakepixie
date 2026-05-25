@@ -42,6 +42,13 @@
     "archiveSession": "アーカイブ",
     "downloadSettings": "設定をダウンロード",
     "downloadSettingsError": "設定のダウンロードに失敗しました",
+    "modelControl": "セッションのモデル",
+    "modelChangeError": "モデルの変更に失敗しました",
+    "effortControl": "Effort",
+    "effortChangeError": "Effort の変更に失敗しました",
+    "planMode": "プラン",
+    "planModeTooltip": "プランモード中は、解除するまでツール実行を行いません。",
+    "planModeChangeError": "プランモードの変更に失敗しました",
     "archiveSessionError": "セッションのアーカイブに失敗しました",
     "sessionTitlePlaceholder": "セッション名",
     "sessionNotFound": "セッションが見つかりませんでした",
@@ -538,6 +545,7 @@
   },
   "tools": {
     "updateTodos": "Update Todos",
+    "exitPlanMode": "プラン",
     "readLines": "{{count}} 行を読み込み",
     "collapse": "折りたたむ",
     "expandLines": "+{{count}} 行",
@@ -555,6 +563,16 @@
     "askQuestionNext": "次へ",
     "askQuestionSubmit": "送信",
     "askQuestionOther": "その他",
-    "askQuestionOtherPlaceholder": "回答を入力..."
+    "askQuestionOtherPlaceholder": "回答を入力...",
+    "exitPlanPrompt": "このプランで進めますか？",
+    "exitPlanApprove": "承認",
+    "exitPlanReject": "拒否",
+    "exitPlanSuggest": "修正提案",
+    "exitPlanRejectMessage": "このプランはユーザーに拒否されました。",
+    "exitPlanApproved": "ユーザーが承認しました",
+    "exitPlanRejected": "ユーザーが拒否しました",
+    "exitPlanSuggested": "ユーザーの修正指示",
+    "exitPlanRevisionPlaceholder": "修正してほしい内容を入力...",
+    "exitPlanSendRevision": "修正指示を送信"
   }
 }

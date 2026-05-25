@@ -3,7 +3,6 @@ import type {
   SessionCreateRequest,
   SessionCreateResponse,
   SessionEventsResponse,
-  SessionEventCreateResponse,
   SessionEventPostResponse,
   SessionListResponse,
   SessionListQuery,
@@ -79,13 +78,10 @@ export const sessionService = {
     return apiClient<GitRepositoryDiffResponse>(`/api/sessions/${sessionId}/git-diff`);
   },
 
-  async sendMessage(
-    sessionId: string,
-    message: SDKUserMessage
-  ): Promise<SessionEventCreateResponse> {
-    return apiClient<SessionEventCreateResponse>(`/api/sessions/${sessionId}/events`, {
+  async sendMessage(sessionId: string, message: SDKUserMessage): Promise<SessionEventPostResponse> {
+    return apiClient<SessionEventPostResponse>(`/api/sessions/${sessionId}/events`, {
       method: 'POST',
-      body: JSON.stringify(message),
+      body: JSON.stringify({ events: [message] }),
     });
   },
 
@@ -95,7 +91,7 @@ export const sessionService = {
   ): Promise<SessionEventPostResponse> {
     return apiClient<SessionEventPostResponse>(`/api/sessions/${sessionId}/events`, {
       method: 'POST',
-      body: JSON.stringify(request),
+      body: JSON.stringify({ events: [request] }),
     });
   },
 

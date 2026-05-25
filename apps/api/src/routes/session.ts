@@ -25,7 +25,11 @@ import type {
   WsControlRequest,
   WsControlResponse,
   WsAskUserQuestionAnswerRequest,
+  WsExitPlanModeResponseRequest,
+  WsEffortLevel,
+  WsPermissionMode,
   SDKAuthStatusMessage,
+  SDKUserMessage,
   ApiError,
   GitRepositoryDiffResponse,
   GitRepositoryOutcome,
@@ -33,6 +37,7 @@ import type {
 } from '@repo/types';
 import { isAuthError, parseGitBranchRevision } from '@repo/types';
 import { resolveUserAnswer } from '../services/ask-user-question.service.js';
+import { resolveExitPlanModeDecision } from '../services/exit-plan-mode.service.js';
 import {
   createSession,
   SessionValidationError,
@@ -44,6 +49,9 @@ import {
   canAbortSession,
   executeAbort,
   broadcastToSession,
+  setSessionPermissionMode,
+  setSessionModel,
+  applySessionFlagSettings,
 } from '../services/session.service.js';
 import { TelemetryConfigurationError } from '../services/claude-telemetry-env.service.js';
 import { listSessionEvents, getSessionLastEventId } from '../services/session-events.service.js';
@@ -66,6 +74,19 @@ function sendError(
   message: string
 ): ReturnType<FastifyReply['send']> {
   return reply.status(statusCode).send({ error, message, statusCode });
+}
+
+function getApiErrorName(statusCode: 400 | 401 | 404 | 500): string {
+  switch (statusCode) {
+    case 400:
+      return 'BadRequest';
+    case 401:
+      return 'Unauthorized';
+    case 404:
+      return 'NotFound';
+    case 500:
+      return 'InternalServerError';
+  }
 }
 
 /**
@@ -130,50 +151,185 @@ function getMessageErrorStatus(error: unknown): 400 | 404 | 500 {
   return 500;
 }
 
-function handleControlRequest(
+class ControlRequestProcessingError extends Error {
+  constructor(
+    public readonly statusCode: 400 | 404 | 500,
+    message: string
+  ) {
+    super(message);
+    this.name = 'ControlRequestProcessingError';
+  }
+}
+
+const PERMISSION_MODES = new Set<WsPermissionMode>([
+  'default',
+  'acceptEdits',
+  'bypassPermissions',
+  'plan',
+  'dontAsk',
+  'auto',
+]);
+
+const EFFORT_LEVELS = new Set<WsEffortLevel>(['low', 'medium', 'high', 'xhigh', 'max']);
+
+function getControlErrorStatus(error: unknown): 400 | 404 | 500 {
+  if (error instanceof ControlRequestProcessingError) return error.statusCode;
+  if (!(error instanceof Error)) return 500;
+  if (error.message === 'Session not found') return 404;
+  if (error.message === 'Session is archived') return 400;
+  if (error.message === 'Session context not found') return 400;
+  return 500;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error';
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isValidPermissionMode(value: unknown): value is WsPermissionMode {
+  return typeof value === 'string' && PERMISSION_MODES.has(value as WsPermissionMode);
+}
+
+function isValidEffortLevel(value: unknown): value is WsEffortLevel {
+  return typeof value === 'string' && EFFORT_LEVELS.has(value as WsEffortLevel);
+}
+
+function assertValidFlagSettings(settings: unknown): asserts settings is {
+  effortLevel?: WsEffortLevel | null;
+} {
+  if (!isObject(settings)) {
+    throw new ControlRequestProcessingError(400, 'settings must be an object');
+  }
+
+  for (const key of Object.keys(settings)) {
+    if (key !== 'effortLevel') {
+      throw new ControlRequestProcessingError(400, `Unsupported flag setting: ${key}`);
+    }
+  }
+
+  if (
+    'effortLevel' in settings &&
+    settings.effortLevel !== null &&
+    settings.effortLevel !== undefined &&
+    !isValidEffortLevel(settings.effortLevel)
+  ) {
+    throw new ControlRequestProcessingError(400, 'settings.effortLevel is invalid');
+  }
+}
+
+async function processControlRequest(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId,
+  controlRequest: WsControlRequest
+): Promise<void> {
+  if (!isObject(controlRequest.request) || typeof controlRequest.request.subtype !== 'string') {
+    throw new ControlRequestProcessingError(400, 'Unsupported control request');
+  }
+
+  if (controlRequest.request.subtype === 'ask_user_question_answer') {
+    const answerRequest = controlRequest.request as WsAskUserQuestionAnswerRequest;
+    const resolved = resolveUserAnswer(answerRequest.tool_use_id, answerRequest.answers);
+    if (!resolved) {
+      throw new ControlRequestProcessingError(
+        400,
+        'No pending question found for this tool_use_id'
+      );
+    }
+    return;
+  }
+
+  if (controlRequest.request.subtype === 'exit_plan_mode_response') {
+    const responseRequest = controlRequest.request as WsExitPlanModeResponseRequest;
+    if (typeof responseRequest.tool_use_id !== 'string' || !responseRequest.tool_use_id) {
+      throw new ControlRequestProcessingError(400, 'tool_use_id must be a non-empty string');
+    }
+    if (typeof responseRequest.approved !== 'boolean') {
+      throw new ControlRequestProcessingError(400, 'approved must be a boolean');
+    }
+    if (responseRequest.message !== undefined && typeof responseRequest.message !== 'string') {
+      throw new ControlRequestProcessingError(400, 'message must be a string');
+    }
+
+    const message = responseRequest.message?.trim();
+    if (!responseRequest.approved && !message) {
+      throw new ControlRequestProcessingError(
+        400,
+        'message must be a non-empty string when approved is false'
+      );
+    }
+
+    const resolved = resolveExitPlanModeDecision(
+      responseRequest.tool_use_id,
+      responseRequest.approved ? { approved: true } : { approved: false, message: message! }
+    );
+    if (!resolved) {
+      throw new ControlRequestProcessingError(
+        400,
+        'No pending ExitPlanMode found for this tool_use_id'
+      );
+    }
+    return;
+  }
+
+  if (controlRequest.request.subtype === 'abort') {
+    if (!canAbortSession(sessionId)) {
+      throw new ControlRequestProcessingError(400, 'No active query for this session');
+    }
+
+    try {
+      await executeAbort(fastify, userId, sessionId);
+    } catch (error) {
+      throw new ControlRequestProcessingError(getControlErrorStatus(error), getErrorMessage(error));
+    }
+    return;
+  }
+
+  try {
+    if (controlRequest.request.subtype === 'set_permission_mode') {
+      if (!isValidPermissionMode(controlRequest.request.mode)) {
+        throw new ControlRequestProcessingError(400, 'mode is invalid');
+      }
+      await setSessionPermissionMode(fastify, userId, sessionId, controlRequest.request.mode);
+      return;
+    }
+
+    if (controlRequest.request.subtype === 'set_model') {
+      if (
+        typeof controlRequest.request.model !== 'string' ||
+        controlRequest.request.model.trim().length === 0
+      ) {
+        throw new ControlRequestProcessingError(400, 'model must be a non-empty string');
+      }
+      await setSessionModel(fastify, userId, sessionId, controlRequest.request.model);
+      return;
+    }
+
+    if (controlRequest.request.subtype === 'apply_flag_settings') {
+      assertValidFlagSettings(controlRequest.request.settings);
+      await applySessionFlagSettings(fastify, userId, sessionId, controlRequest.request.settings);
+      return;
+    }
+  } catch (error) {
+    if (error instanceof ControlRequestProcessingError) throw error;
+    throw new ControlRequestProcessingError(getControlErrorStatus(error), getErrorMessage(error));
+  }
+
+  throw new ControlRequestProcessingError(400, 'Unsupported control request');
+}
+
+async function handleControlRequest(
   fastify: FastifyInstance,
   request: FastifyRequest,
   userId: string,
   sessionId: SessionId,
   controlRequest: WsControlRequest
-): WsControlResponse {
-  if (controlRequest.request.subtype === 'ask_user_question_answer') {
-    const answerRequest = controlRequest.request as WsAskUserQuestionAnswerRequest;
-    const resolved = resolveUserAnswer(answerRequest.tool_use_id, answerRequest.answers);
-    return {
-      type: 'control_response',
-      response: resolved
-        ? { subtype: 'success', request_id: controlRequest.request_id }
-        : {
-            subtype: 'error',
-            request_id: controlRequest.request_id,
-            error: 'No pending question found for this tool_use_id',
-          },
-    };
-  }
-
-  if (controlRequest.request.subtype === 'abort') {
-    if (!canAbortSession(sessionId)) {
-      return {
-        type: 'control_response',
-        response: {
-          subtype: 'error',
-          request_id: controlRequest.request_id,
-          error: 'No active query for this session',
-        },
-      };
-    }
-
-    executeAbort(fastify, userId, sessionId).catch(err => {
-      request.log.error(err, 'Failed to execute abort');
-      const errorMsg: WsErrorMessage = {
-        type: 'error',
-        code: 'ABORT_FAILED',
-        message: err instanceof Error ? err.message : 'Failed to abort session',
-      };
-      broadcastToSession(sessionId.toString(), errorMsg);
-    });
-
+): Promise<WsControlResponse> {
+  try {
+    await processControlRequest(fastify, userId, sessionId, controlRequest);
     return {
       type: 'control_response',
       response: {
@@ -181,16 +337,41 @@ function handleControlRequest(
         request_id: controlRequest.request_id,
       },
     };
-  }
+  } catch (error) {
+    if (
+      controlRequest.request?.subtype === 'abort' &&
+      (!(error instanceof ControlRequestProcessingError) || error.statusCode === 500)
+    ) {
+      request.log.error(error, 'Failed to execute abort');
+      const errorMsg: WsErrorMessage = {
+        type: 'error',
+        code: 'ABORT_FAILED',
+        message: getErrorMessage(error),
+      };
+      broadcastToSession(sessionId.toString(), errorMsg);
+    }
 
-  return {
-    type: 'control_response',
-    response: {
-      subtype: 'error',
-      request_id: controlRequest.request_id,
-      error: 'Unsupported control request',
-    },
-  };
+    return {
+      type: 'control_response',
+      response: {
+        subtype: 'error',
+        request_id: controlRequest.request_id,
+        error: getErrorMessage(error),
+      },
+    };
+  }
+}
+
+function isSessionEventCreateRequest(body: unknown): body is SessionEventCreateRequest {
+  return isObject(body) && Array.isArray(body.events) && body.events.length > 0;
+}
+
+function isControlRequestEvent(event: unknown): event is WsControlRequest {
+  return isObject(event) && event.type === 'control_request';
+}
+
+function isUserMessageEvent(event: unknown): event is SDKUserMessage {
+  return isObject(event) && event.type === 'user';
 }
 
 const sessionRoute: FastifyPluginAsync = async fastify => {
@@ -571,19 +752,45 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
       return sendError(reply, 404, 'NotFound', 'Session not found');
     }
 
+    if (!isSessionEventCreateRequest(request.body)) {
+      return sendError(reply, 400, 'BadRequest', 'events must be a non-empty array');
+    }
+
     try {
-      if (request.body?.type === 'control_request') {
-        return reply.send(handleControlRequest(fastify, request, user.id, sessionId, request.body));
-      }
-
-      if (request.body?.type !== 'user') {
-        return sendError(reply, 400, 'BadRequest', 'Only user and control events can be submitted');
-      }
-
       const ctx = createUserContext(fastify, request);
-      await sendMessageToSession(fastify, user.id, sessionId, request.body, ctx);
-      return reply.status(202).send({ success: true });
+      const acceptedEvents: SessionEventCreateRequest['events'] = [];
+
+      for (const event of request.body.events) {
+        if (isControlRequestEvent(event)) {
+          await processControlRequest(fastify, user.id, sessionId, event);
+          acceptedEvents.push(event);
+          continue;
+        }
+
+        if (isUserMessageEvent(event)) {
+          await sendMessageToSession(fastify, user.id, sessionId, event, ctx);
+          acceptedEvents.push(event);
+          continue;
+        }
+
+        throw new ControlRequestProcessingError(
+          400,
+          'Only user and control events can be submitted'
+        );
+      }
+
+      return reply.status(202).send({ events: acceptedEvents });
     } catch (error) {
+      if (error instanceof ControlRequestProcessingError) {
+        request.log.error(error, 'Failed to process control request');
+        return sendError(
+          reply,
+          error.statusCode,
+          getApiErrorName(error.statusCode),
+          error.message
+        );
+      }
+
       request.log.error(error, 'Failed to send message to session');
       const authStatusMsg = createAuthStatusMessage(sessionId, error);
       broadcastToSession(sessionId.toString(), authStatusMsg);
@@ -592,7 +799,7 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
       return sendError(
         reply,
         status,
-        status === 404 ? 'NotFound' : status === 400 ? 'BadRequest' : 'InternalServerError',
+        getApiErrorName(status),
         authStatusMsg.error ?? 'Failed to send message to session'
       );
     }
@@ -651,7 +858,7 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
               socket.send(JSON.stringify(authStatusMsg));
             }
           } else if (msg.type === 'control_request') {
-            const response = handleControlRequest(
+            const response = await handleControlRequest(
               fastify,
               request,
               user.id,

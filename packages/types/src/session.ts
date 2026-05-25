@@ -65,12 +65,15 @@ export type ResolvedSessionOutcome =
 // =====================================================
 
 import type { McpConfig } from './mcp.js';
+import type { WsControlRequest, WsEffortLevel, WsPermissionMode } from './websocket.js';
 
 /**
  * セッション作成リクエスト用のコンテキスト
  */
 export interface SessionCreateContext {
   model: string;
+  permission_mode?: WsPermissionMode;
+  effort_level?: WsEffortLevel | null;
   sources: SessionSource[];
   outcomes: SessionOutcome[];
   allowed_tools?: string[];
@@ -86,6 +89,8 @@ export interface SessionContextResponse {
   disallowed_tools?: string[];
   cwd: string;
   model: string;
+  permission_mode?: WsPermissionMode;
+  effort_level?: WsEffortLevel | null;
   sources: SessionSource[];
   outcomes: ResolvedSessionOutcome[];
   mcp_config?: McpConfig;
@@ -195,7 +200,6 @@ import type {
   SDKUserMessage,
   SDKAuthStatusMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { WsControlRequest, WsControlResponse } from './websocket.js';
 
 // SDK Message 型を re-export
 export type { SDKMessage, SDKUserMessage, SDKAuthStatusMessage };
@@ -221,21 +225,18 @@ export interface SessionEventsResponse {
 }
 
 /**
- * POST /api/sessions/:session_id/events のレスポンス
+ * POST /api/sessions/:session_id/events のリクエスト
  */
-export interface SessionEventCreateResponse {
-  success: true;
+export interface SessionEventCreateRequest {
+  events: Array<SDKUserMessage | WsControlRequest>;
 }
 
 /**
- * POST /api/sessions/:session_id/events のリクエスト
- */
-export type SessionEventCreateRequest = SDKUserMessage | WsControlRequest;
-
-/**
  * POST /api/sessions/:session_id/events のレスポンス
  */
-export type SessionEventPostResponse = SessionEventCreateResponse | WsControlResponse;
+export interface SessionEventPostResponse {
+  events: Array<SDKUserMessage | WsControlRequest>;
+}
 
 // =====================================================
 // Message Types
