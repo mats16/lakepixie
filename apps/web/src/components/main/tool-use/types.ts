@@ -1,10 +1,7 @@
 import type { SDKMessage } from '@repo/types';
+import type { ToolResult } from '@/lib/message-utils';
 
-export interface ToolResult {
-  content: string;
-  isError: boolean;
-  toolUseResult?: unknown;
-}
+export type { ToolResult };
 
 export interface BaseToolUseProps {
   name: string;

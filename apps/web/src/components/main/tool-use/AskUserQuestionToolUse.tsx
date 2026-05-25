@@ -25,7 +25,6 @@ interface Question {
 interface AskUserQuestionInput {
   questions?: Question[];
   question?: string;
-  answers?: AnswerSelections;
 }
 
 interface AskUserQuestionToolUseProps extends BaseToolUseProps {
@@ -34,6 +33,12 @@ interface AskUserQuestionToolUseProps extends BaseToolUseProps {
 
 type AnswerValue = string | string[];
 type AnswerSelections = Record<string, AnswerValue>;
+type AnswerSource = 'structured' | 'resultText';
+
+interface AnswerSelectionState {
+  answers: AnswerSelections;
+  source: AnswerSource;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -50,10 +55,11 @@ function toAnswerSelections(value: unknown): AnswerSelections | undefined {
 
   const answers: AnswerSelections = {};
   for (const [key, answer] of Object.entries(value)) {
-    if (!isAnswerValue(answer)) return undefined;
-    answers[key] = answer;
+    if (isAnswerValue(answer)) {
+      answers[key] = answer;
+    }
   }
-  return answers;
+  return Object.keys(answers).length > 0 ? answers : undefined;
 }
 
 function getToolUseResultAnswers(toolUseResult: unknown): AnswerSelections | undefined {
@@ -68,16 +74,13 @@ function hasAnswer(value: AnswerValue | undefined): value is AnswerValue {
   return !isEmptyAnswer(value);
 }
 
-function toMultiSelectValues(value: AnswerValue): string[] {
+function toMultiSelectValues(value: AnswerValue, source: AnswerSource): string[] {
   if (Array.isArray(value)) return value;
-  return value
-    .split(',')
-    .map(v => v.trim())
-    .filter(Boolean);
+  return source === 'resultText' ? value.split(',') : [value];
 }
 
 function toSingleSelectValue(value: AnswerValue): string {
-  return Array.isArray(value) ? (value[0] ?? '') : value;
+  return Array.isArray(value) ? value.join(',') : value;
 }
 
 /**
@@ -98,29 +101,31 @@ function parseAnswersFromResult(content: string): AnswerSelections {
 }
 
 function getAnsweredSelections(
-  input: AskUserQuestionInput,
   result: AskUserQuestionToolUseProps['result']
-): AnswerSelections | undefined {
-  if (result?.isError) return undefined;
+): AnswerSelectionState | undefined {
+  const structuredAnswers = getToolUseResultAnswers(result?.toolUseResult);
+  if (structuredAnswers) return { answers: structuredAnswers, source: 'structured' };
 
-  return (
-    getToolUseResultAnswers(result?.toolUseResult) ??
-    toAnswerSelections(input.answers) ??
-    (result ? parseAnswersFromResult(result.content) : undefined)
-  );
+  if (!result || result.isError) return undefined;
+
+  const parsedAnswers = parseAnswersFromResult(result.content);
+  return Object.keys(parsedAnswers).length > 0
+    ? { answers: parsedAnswers, source: 'resultText' }
+    : undefined;
 }
 
 /** 回答済みの値から selections / otherTexts の初期値を一括生成 */
 function buildInitialState(
   questions: Question[],
-  answeredSelections?: AnswerSelections
+  answeredSelections?: AnswerSelectionState
 ): { selections: Record<string, string | string[]>; otherTexts: Record<string, string> } {
   const selections: Record<string, string | string[]> = {};
   const otherTexts: Record<string, string> = {};
 
   for (const q of questions) {
-    const answeredValue = answeredSelections?.[q.header];
-    if (!hasAnswer(answeredValue)) {
+    const answeredState = answeredSelections;
+    const answeredValue = answeredState?.answers[q.header];
+    if (!answeredState || !hasAnswer(answeredValue)) {
       selections[q.header] = q.multiSelect ? [] : '';
       otherTexts[q.header] = '';
       continue;
@@ -129,7 +134,7 @@ function buildInitialState(
     const optionLabels = (q.options ?? []).map(o => o.label);
 
     if (q.multiSelect) {
-      const vals = toMultiSelectValues(answeredValue);
+      const vals = toMultiSelectValues(answeredValue, answeredState.source);
       const known = vals.filter(v => optionLabels.includes(v));
       const unknown = vals.filter(v => !optionLabels.includes(v));
       selections[q.header] = unknown.length > 0 ? [...known, OTHER_SENTINEL] : known;
@@ -159,10 +164,7 @@ export function AskUserQuestionToolUse({ input, result, toolUseId }: AskUserQues
 
   const isPending = toolUseId ? pendingQuestions.has(toolUseId) : false;
 
-  const answeredSelections = useMemo(
-    () => getAnsweredSelections(typedInput, result),
-    [typedInput, result]
-  );
+  const answeredSelections = useMemo(() => getAnsweredSelections(result), [result]);
 
   const handleSubmit = useCallback(
     (answers: Record<string, string | string[]>) => {
@@ -207,7 +209,7 @@ interface TabbedQuestionsProps {
   questions: Question[];
   isPending: boolean;
   /** 回答済みの場合、パース結果を渡す（header → label） */
-  answeredSelections?: AnswerSelections;
+  answeredSelections?: AnswerSelectionState;
   onSubmit: (answers: Record<string, string | string[]>) => void;
 }
 

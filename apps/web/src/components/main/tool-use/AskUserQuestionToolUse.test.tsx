@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import i18n from 'i18next';
 import { AskUserQuestionProvider } from '@/contexts/AskUserQuestionContext';
@@ -48,12 +48,18 @@ beforeEach(async () => {
   });
 });
 
-function renderTool(result?: ToolResult) {
+function renderTool({
+  result,
+  toolInput = input,
+}: {
+  result?: ToolResult;
+  toolInput?: typeof input;
+} = {}) {
   return render(
     <TestProviders>
       <AskUserQuestionToolUse
         name="AskUserQuestion"
-        input={input}
+        input={toolInput}
         result={result}
         toolUseId="toolu-1"
       />
@@ -61,12 +67,44 @@ function renderTool(result?: ToolResult) {
   );
 }
 
+function renderPendingTool(result?: ToolResult) {
+  return render(
+    <TestProvidersWithPending pending={true}>
+      <AskUserQuestionToolUse
+        name="AskUserQuestion"
+        input={input}
+        result={result}
+        toolUseId="toolu-1"
+      />
+    </TestProvidersWithPending>
+  );
+}
+
+function TestProvidersWithPending({
+  children,
+  pending,
+}: {
+  children: React.ReactNode;
+  pending: boolean;
+}) {
+  const pendingQuestions = pending ? new Map([['toolu-1', {}]]) : new Map();
+  return (
+    <I18nextProvider i18n={i18n}>
+      <AskUserQuestionProvider value={{ pendingQuestions, submitAnswer: vi.fn() }}>
+        {children}
+      </AskUserQuestionProvider>
+    </I18nextProvider>
+  );
+}
+
 describe('AskUserQuestionToolUse', () => {
   it('restores a known answer from structured tool_use_result data', () => {
     renderTool({
-      content: 'The user answered.',
-      isError: false,
-      toolUseResult: { answers: { Language: 'TypeScript' } },
+      result: {
+        content: 'The user answered.',
+        isError: false,
+        toolUseResult: { answers: { Language: 'TypeScript' } },
+      },
     });
 
     expect(screen.getByRole('button', { name: /TypeScript/ }).className).toContain(
@@ -76,12 +114,99 @@ describe('AskUserQuestionToolUse', () => {
 
   it('restores an unknown answer as Other from structured tool_use_result data', () => {
     renderTool({
-      content: 'The user answered.',
-      isError: false,
-      toolUseResult: { answers: { Language: 'Rust' } },
+      result: {
+        content: 'The user answered.',
+        isError: false,
+        toolUseResult: { answers: { Language: 'Rust' } },
+      },
     });
 
     expect(screen.getByDisplayValue('Rust')).toBeTruthy();
+  });
+
+  it('restores valid entries when structured answers contain malformed extra data', () => {
+    renderTool({
+      result: {
+        content: 'The user answered.',
+        isError: false,
+        toolUseResult: { answers: { Language: 'TypeScript', Confidence: 0.9 } },
+      },
+    });
+
+    expect(screen.getByRole('button', { name: /TypeScript/ }).className).toContain(
+      'border-primary'
+    );
+  });
+
+  it('restores structured answers even when the tool result is an error', () => {
+    renderTool({
+      result: {
+        content: 'Downstream failed.',
+        isError: true,
+        toolUseResult: { answers: { Language: 'Python' } },
+      },
+    });
+
+    expect(screen.getByRole('button', { name: /Python/ }).className).toContain('border-primary');
+  });
+
+  it('does not split comma-containing structured string answers for multi-select questions', () => {
+    renderTool({
+      toolInput: {
+        questions: [
+          {
+            question: 'Which company?',
+            header: 'Company',
+            multiSelect: true,
+            options: [{ label: 'Apple, Inc.', description: 'Company name with comma' }],
+          },
+        ],
+      },
+      result: {
+        content: 'The user answered.',
+        isError: false,
+        toolUseResult: { answers: { Company: 'Apple, Inc.' } },
+      },
+    });
+
+    expect(screen.getByRole('button', { name: /Apple, Inc./ }).className).toContain(
+      'border-primary'
+    );
+  });
+
+  it('shows multi-value arrays on single-select questions without truncating them', () => {
+    renderTool({
+      result: {
+        content: 'The user answered.',
+        isError: false,
+        toolUseResult: { answers: { Language: ['Python', 'TypeScript'] } },
+      },
+    });
+
+    expect(screen.getByDisplayValue('Python,TypeScript')).toBeTruthy();
+  });
+
+  it('does not clear pending selections when an empty answer result arrives', () => {
+    const { rerender } = renderPendingTool();
+
+    fireEvent.click(screen.getByRole('button', { name: /Python/ }));
+
+    rerender(
+      <TestProvidersWithPending pending={false}>
+        <AskUserQuestionToolUse
+          name="AskUserQuestion"
+          input={input}
+          result={{
+            content: 'The user answered.',
+            isError: false,
+            toolUseResult: { answers: {} },
+          }}
+          toolUseId="toolu-1"
+        />
+      </TestProvidersWithPending>
+    );
+
+    expect(screen.getByRole('button', { name: /Python/ }).className).toContain('border-primary');
   });
 
   it('updates the restored selection when the result arrives after initial render', () => {
