@@ -3,21 +3,19 @@
  * workspace-push CLI
  *
  * Workspace REST API を使用してローカルディレクトリを Databricks Workspace にアップロードする。
- * セッション用の ~/.databrickscfg から Service Principal トークンを取得する。
+ * OBO トークンでユーザー権限の Workspace API を呼び出す。
  *
  * Usage:
  *   workspace-push [localDir] [workspacePath]
  *   workspace-push --list [workspacePath]
  *
  * Environment:
- *   DATABRICKS_CONFIG_FILE - Databricks config path (default: ~/.databrickscfg)
- *   DATABRICKS_CONFIG_PROFILE - Databricks config profile (default: DEFAULT)
+ *   DATABRICKS_HOST  - Databricks ホスト (https:// 付きでも可)
+ *   DATABRICKS_TOKEN - OBO トークン
  *   SESSION_WORKSPACE_PATH - デフォルトの Workspace パス
  */
 
 import { fileURLToPath } from 'node:url';
-import { getServicePrincipalToken } from '../lib/databricks-auth.js';
-import { readServicePrincipalConfig } from '../lib/databricks-cli-config.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { normalizeHost } from '../utils/normalize-host.js';
 
@@ -44,14 +42,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return { mode: 'push', localDir, workspacePath };
 }
 
-export async function createClient(): Promise<DatabricksWorkspaceClient> {
-  const config = readServicePrincipalConfig();
-  const token = await getServicePrincipalToken(config.host, config.clientId, config.clientSecret);
+export function createClient(): DatabricksWorkspaceClient {
+  const host = process.env.DATABRICKS_HOST;
+  const token = process.env.DATABRICKS_TOKEN;
+
+  if (!host) {
+    throw new Error('DATABRICKS_HOST environment variable is not set');
+  }
   if (!token) {
-    throw new Error('Service Principal token is not available');
+    throw new Error('DATABRICKS_TOKEN environment variable is not set');
   }
 
-  return new DatabricksWorkspaceClient(normalizeHost(config.host), token);
+  return new DatabricksWorkspaceClient(normalizeHost(host), token);
 }
 
 export async function main(): Promise<void> {

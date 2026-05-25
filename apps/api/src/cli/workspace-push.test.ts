@@ -1,9 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { clearSpTokenCache } from '../lib/databricks-auth.js';
-import { readServicePrincipalConfig } from '../lib/databricks-cli-config.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { parseArgs, createClient } from './workspace-push.js';
 
 describe('workspace-push CLI', () => {
@@ -89,110 +84,43 @@ describe('workspace-push CLI', () => {
 
   describe('createClient', () => {
     const originalEnv = process.env;
-    const originalFetch = global.fetch;
-    let tempDirs: string[] = [];
 
     beforeEach(() => {
-      clearSpTokenCache();
-      vi.restoreAllMocks();
       process.env = { ...originalEnv };
-      tempDirs = [];
     });
 
-    afterEach(async () => {
+    afterEach(() => {
       process.env = originalEnv;
-      global.fetch = originalFetch;
-      await Promise.all(tempDirs.map(dir => rm(dir, { recursive: true, force: true })));
     });
 
-    async function writeConfig(content: string): Promise<string> {
-      const dir = await mkdtemp(path.join(tmpdir(), 'workspace-push-test-'));
-      tempDirs.push(dir);
-      const configPath = path.join(dir, '.databrickscfg');
-      await writeFile(configPath, content, 'utf-8');
-      process.env.DATABRICKS_CONFIG_FILE = configPath;
-      return configPath;
-    }
+    it('DATABRICKS_HOST 未設定でエラーを投げること', () => {
+      delete process.env.DATABRICKS_HOST;
+      process.env.DATABRICKS_TOKEN = 'token';
 
-    it('Databricks config がない場合はエラーを投げること', () => {
-      process.env.HOME = path.join(tmpdir(), 'workspace-push-missing-home');
-      delete process.env.DATABRICKS_CONFIG_FILE;
-
-      expect(() => readServicePrincipalConfig()).toThrow('Databricks config file is not available');
+      expect(() => createClient()).toThrow('DATABRICKS_HOST environment variable is not set');
     });
 
-    it('oauth-m2m 以外の profile を拒否すること', async () => {
-      await writeConfig(`[DEFAULT]
-host = https://host.databricks.com
-auth_type = pat
-client_id = sp-client-id
-client_secret = sp-client-secret
-`);
+    it('DATABRICKS_TOKEN 未設定でエラーを投げること', () => {
+      process.env.DATABRICKS_HOST = 'https://host.databricks.com';
+      delete process.env.DATABRICKS_TOKEN;
 
-      expect(() => readServicePrincipalConfig()).toThrow('must use auth_type = oauth-m2m');
+      expect(() => createClient()).toThrow('DATABRICKS_TOKEN environment variable is not set');
     });
 
-    it('~/.databrickscfg から Service Principal profile を読むこと', async () => {
-      const configPath = await writeConfig(`[DEFAULT]
-host = https://host.databricks.com
-auth_type = oauth-m2m
-client_id = sp-client-id
-client_secret = sp-client-secret
-`);
+    it('正しい環境変数でクライアントを生成すること', () => {
+      process.env.DATABRICKS_HOST = 'https://host.databricks.com';
+      process.env.DATABRICKS_TOKEN = 'test-token';
 
-      expect(readServicePrincipalConfig()).toEqual({
-        host: 'https://host.databricks.com',
-        authType: 'oauth-m2m',
-        clientId: 'sp-client-id',
-        clientSecret: 'sp-client-secret',
-      });
-      expect(process.env.DATABRICKS_CONFIG_FILE).toBe(configPath);
-    });
-
-    it('Service Principal トークンでクライアントを生成すること', async () => {
-      await writeConfig(`[DEFAULT]
-host = https://host.databricks.com
-auth_type = oauth-m2m
-client_id = sp-client-id
-client_secret = sp-client-secret
-`);
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            access_token: 'sp-token',
-            token_type: 'Bearer',
-            expires_in: 3600,
-          }),
-      });
-
-      const client = await createClient();
+      const client = createClient();
 
       expect(client).toBeDefined();
-      expect(global.fetch).toHaveBeenCalledWith(
-        'https://host.databricks.com/oidc/v1/token',
-        expect.any(Object)
-      );
     });
 
-    it('https:// プレフィックスをストリップしてクライアントを生成すること', async () => {
-      await writeConfig(`[DEFAULT]
-host = https://host.databricks.com
-auth_type = oauth-m2m
-client_id = sp-client-id
-client_secret = sp-client-secret
-`);
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            access_token: 'sp-token',
-            token_type: 'Bearer',
-            expires_in: 3600,
-          }),
-      });
+    it('https:// プレフィックスをストリップすること', () => {
+      process.env.DATABRICKS_HOST = 'https://host.databricks.com';
+      process.env.DATABRICKS_TOKEN = 'test-token';
 
-      const client = await createClient();
+      const client = createClient();
 
       // クライアントが正しく生成されることで間接的に検証
       // （内部で https:// を付与するため、二重にならないことが重要）
