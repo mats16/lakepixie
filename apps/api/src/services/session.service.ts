@@ -78,6 +78,7 @@ import {
 interface ActiveSessionQuery {
   abortController: AbortController;
   query: Query;
+  permissionModeBeforePlan?: Exclude<WsPermissionMode, 'plan'>;
 }
 
 /** セッションID → 実行中 SDK query のマッピング（abort / control request 用） */
@@ -96,6 +97,12 @@ const PERMISSION_MODES = new Set<WsPermissionMode>([
   'auto',
 ]);
 const EFFORT_LEVELS = new Set<WsEffortLevel>(['low', 'medium', 'high', 'xhigh', 'max']);
+const LIVE_APPLY_FLAG_EFFORT_LEVELS = new Set<Exclude<WsEffortLevel, 'max'>>([
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+]);
 type EffectiveToolSettings = {
   allowed_tools: string[];
   disallowed_tools: string[];
@@ -107,6 +114,16 @@ function isValidPermissionMode(value: unknown): value is WsPermissionMode {
 
 function isValidEffortLevel(value: unknown): value is WsEffortLevel {
   return typeof value === 'string' && EFFORT_LEVELS.has(value as WsEffortLevel);
+}
+
+function isLiveApplyFlagEffortLevel(
+  value: WsEffortLevel | null | undefined
+): value is Exclude<WsEffortLevel, 'max'> {
+  return (
+    typeof value === 'string' &&
+    value !== 'max' &&
+    LIVE_APPLY_FLAG_EFFORT_LEVELS.has(value as Exclude<WsEffortLevel, 'max'>)
+  );
 }
 
 export class SessionValidationError extends Error {
@@ -328,7 +345,7 @@ async function handleCanUseTool({
       return { behavior: 'deny', message: decision.message };
     }
 
-    await updateSessionContext(fastify, userId, sessionId, { permission_mode: 'auto' });
+    await restorePermissionModeAfterPlan(fastify, userId, sessionId);
     return { behavior: 'allow', updatedInput: input };
   }
 
@@ -902,7 +919,12 @@ async function updateSessionContext(
   fastify: FastifyInstance,
   userId: string,
   sessionId: SessionId,
-  patch: Partial<Pick<SessionContextResponse, 'model' | 'permission_mode' | 'effort_level'>>
+  patch: Partial<
+    Pick<
+      SessionContextResponse,
+      'model' | 'permission_mode' | 'permission_mode_before_plan' | 'effort_level'
+    >
+  >
 ): Promise<SessionContextResponse> {
   return fastify.withUserContext(userId, async tx => {
     const [sessionRow] = await tx
@@ -938,6 +960,36 @@ async function updateSessionContext(
   });
 }
 
+export async function validateSessionModelId(
+  fastify: FastifyInstance,
+  model: string
+): Promise<void> {
+  const allowedModelIds = new Set(await getAllowedModelIds(fastify));
+  if (!allowedModelIds.has(model)) {
+    throw new UserSettingsValidationError('model must be an allowed model id');
+  }
+}
+
+async function restorePermissionModeAfterPlan(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId
+): Promise<void> {
+  const currentContext = await getLatestSessionContext(fastify, userId, sessionId);
+  const activeQuery = activeSessionQueries.get(sessionId.toString());
+  const mode = currentContext.permission_mode_before_plan ?? activeQuery?.permissionModeBeforePlan ?? 'auto';
+
+  await updateSessionContext(fastify, userId, sessionId, {
+    permission_mode: mode,
+    permission_mode_before_plan: undefined,
+  });
+
+  if (activeQuery) {
+    await activeQuery.query.setPermissionMode(mode);
+    activeQuery.permissionModeBeforePlan = undefined;
+  }
+}
+
 /**
  * SDK query() 呼び出し〜バックグラウンドイベント処理のパイプラインパラメータ
  */
@@ -967,7 +1019,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
   let cleanupGitCredential: (() => void) | undefined;
 
   try {
-    const sessionContext = await getLatestSessionContext(fastify, userId, sessionId);
+    const { sessionContext } = params;
     const prompt = singleMessageIterable(
       buildPromptMessage(sessionId, rawPrompt, initialUserEvent)
     );
@@ -1141,7 +1193,14 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       'Claude Agent SDK query iterable created'
     );
 
-    activeSessionQueries.set(sessionId.toString(), { abortController, query: response });
+    activeSessionQueries.set(sessionId.toString(), {
+      abortController,
+      query: response,
+      permissionModeBeforePlan:
+        sessionContext.permission_mode === 'plan'
+          ? (sessionContext.permission_mode_before_plan ?? 'auto')
+          : undefined,
+    });
 
     // バックグラウンド処理開始（await しない）
     processAllEvents(
@@ -1890,11 +1949,27 @@ export async function setSessionPermissionMode(
   sessionId: SessionId,
   mode: WsPermissionMode
 ): Promise<void> {
+  const currentContext = await getLatestSessionContext(fastify, userId, sessionId);
   const activeQuery = activeSessionQueries.get(sessionId.toString());
+  const patch: Partial<
+    Pick<SessionContextResponse, 'permission_mode' | 'permission_mode_before_plan'>
+  > = { permission_mode: mode };
+
+  if (mode === 'plan') {
+    patch.permission_mode_before_plan =
+      currentContext.permission_mode && currentContext.permission_mode !== 'plan'
+        ? currentContext.permission_mode
+        : (currentContext.permission_mode_before_plan ?? 'auto');
+  } else {
+    patch.permission_mode_before_plan = undefined;
+  }
+
+  await updateSessionContext(fastify, userId, sessionId, patch);
   if (activeQuery) {
     await activeQuery.query.setPermissionMode(mode);
+    activeQuery.permissionModeBeforePlan =
+      mode === 'plan' ? patch.permission_mode_before_plan : undefined;
   }
-  await updateSessionContext(fastify, userId, sessionId, { permission_mode: mode });
 }
 
 export async function setSessionModel(
@@ -1903,11 +1978,12 @@ export async function setSessionModel(
   sessionId: SessionId,
   model: string
 ): Promise<void> {
+  await validateSessionModelId(fastify, model);
+  await updateSessionContext(fastify, userId, sessionId, { model });
   const activeQuery = activeSessionQueries.get(sessionId.toString());
   if (activeQuery) {
     await activeQuery.query.setModel(model);
   }
-  await updateSessionContext(fastify, userId, sessionId, { model });
 }
 
 export async function applySessionFlagSettings(
@@ -1916,19 +1992,20 @@ export async function applySessionFlagSettings(
   sessionId: SessionId,
   settings: { effortLevel?: WsEffortLevel | null }
 ): Promise<void> {
-  const activeQuery = activeSessionQueries.get(sessionId.toString());
-  if (activeQuery) {
-    await activeQuery.query.applyFlagSettings(
-      settings as Parameters<Query['applyFlagSettings']>[0]
-    );
+  if (Object.keys(settings).length === 0) {
+    return;
   }
 
   if ('effortLevel' in settings) {
     await updateSessionContext(fastify, userId, sessionId, {
       effort_level: settings.effortLevel ?? null,
     });
-  } else {
-    await getLatestSessionContext(fastify, userId, sessionId);
+  }
+
+  const effortLevel = settings.effortLevel;
+  const activeQuery = activeSessionQueries.get(sessionId.toString());
+  if (activeQuery && isLiveApplyFlagEffortLevel(effortLevel)) {
+    await activeQuery.query.applyFlagSettings({ effortLevel });
   }
 }
 
@@ -1986,10 +2063,7 @@ export async function executeAbort(
   } as SDKResultMessage;
   saveAndBroadcastEvent(fastify, userId, sessionId, resultMessage);
 
-  // 4. セッション状態を idle に更新
-  await fastify.withUserContext(userId, async tx => {
-    await tx.update(sessions).set({ status: 'idle' }).where(eq(sessions.id, sessionId.toUUID()));
-  });
+  // status は processAllEvents の finally で idle に戻す。
 }
 
 export const __testing = {

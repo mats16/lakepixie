@@ -5,12 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 
+export type ExitPlanModeInputDecision =
+  | { kind: 'approve'; approved: true }
+  | { kind: 'reject'; approved: false; message: string }
+  | { kind: 'suggest'; approved: false; message: string };
+
 interface ExitPlanModeInputAreaProps {
   toolUseId: string;
-  onDecision: (
-    toolUseId: string,
-    decision: { approved: true } | { approved: false; message: string }
-  ) => Promise<void> | void;
+  onDecision: (toolUseId: string, decision: ExitPlanModeInputDecision) => Promise<void> | void;
 }
 
 export function ExitPlanModeInputArea({ toolUseId, onDecision }: ExitPlanModeInputAreaProps) {
@@ -20,7 +22,7 @@ export function ExitPlanModeInputArea({ toolUseId, onDecision }: ExitPlanModeInp
   const [isSending, setIsSending] = useState(false);
 
   const submitDecision = useCallback(
-    async (decision: { approved: true } | { approved: false; message: string }) => {
+    async (decision: ExitPlanModeInputDecision) => {
       if (isSending) return;
       setIsSending(true);
       try {
@@ -33,17 +35,21 @@ export function ExitPlanModeInputArea({ toolUseId, onDecision }: ExitPlanModeInp
   );
 
   const approvePlan = useCallback(() => {
-    void submitDecision({ approved: true });
+    void submitDecision({ kind: 'approve', approved: true });
   }, [submitDecision]);
 
   const rejectPlan = useCallback(() => {
-    void submitDecision({ approved: false, message: t('tools.exitPlanRejectMessage') });
+    void submitDecision({
+      kind: 'reject',
+      approved: false,
+      message: t('tools.exitPlanRejectMessage'),
+    });
   }, [submitDecision, t]);
 
   const sendRevision = useCallback(() => {
     const message = revisionMessage.trim();
     if (!message) return;
-    void submitDecision({ approved: false, message });
+    void submitDecision({ kind: 'suggest', approved: false, message });
   }, [revisionMessage, submitDecision]);
 
   return (

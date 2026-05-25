@@ -90,6 +90,7 @@ export interface SessionContextResponse {
   cwd: string;
   model: string;
   permission_mode?: WsPermissionMode;
+  permission_mode_before_plan?: Exclude<WsPermissionMode, 'plan'>;
   effort_level?: WsEffortLevel | null;
   sources: SessionSource[];
   outcomes: ResolvedSessionOutcome[];
@@ -236,6 +237,9 @@ export interface SessionEventCreateRequest {
  */
 export interface SessionEventPostResponse {
   events: Array<SDKUserMessage | WsControlRequest>;
+  response: {
+    subtype: 'success';
+  };
 }
 
 // =====================================================

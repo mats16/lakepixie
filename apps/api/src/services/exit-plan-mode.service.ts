@@ -5,7 +5,6 @@ export type ExitPlanModeDecision = { approved: true } | { approved: false; messa
 
 interface PendingExitPlanMode {
   resolve: (decision: ExitPlanModeDecision) => void;
-  reject: (error: Error) => void;
   timeoutId: ReturnType<typeof setTimeout>;
 }
 
@@ -24,6 +23,10 @@ export function waitForExitPlanModeDecision(
   input: Record<string, unknown>,
   signal?: AbortSignal
 ): Promise<ExitPlanModeDecision> {
+  if (signal?.aborted) {
+    return Promise.reject(new Error('ExitPlanMode aborted'));
+  }
+
   return new Promise<ExitPlanModeDecision>((resolve, reject) => {
     const cleanup = () => {
       clearTimeout(timeoutId);
@@ -41,31 +44,22 @@ export function waitForExitPlanModeDecision(
       reject(new Error('ExitPlanMode aborted'));
     };
     if (signal) {
-      if (signal.aborted) {
-        cleanup();
-        reject(new Error('ExitPlanMode aborted'));
-        return;
-      }
       signal.addEventListener('abort', onAbort, { once: true });
     }
-
-    pendingExitPlanModes.set(toolUseId, {
-      resolve: decision => {
-        cleanup();
-        resolve(decision);
-      },
-      reject: err => {
-        cleanup();
-        reject(err);
-      },
-      timeoutId,
-    });
 
     const request: WsExitPlanModeRequest = {
       type: 'exit_plan_mode',
       tool_use_id: toolUseId,
       input,
     };
+
+    pendingExitPlanModes.set(toolUseId, {
+      resolve: decision => {
+        cleanup();
+        resolve(decision);
+      },
+      timeoutId,
+    });
     broadcastToSession(sessionId, request);
   });
 }

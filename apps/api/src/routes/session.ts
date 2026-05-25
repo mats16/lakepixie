@@ -52,7 +52,9 @@ import {
   setSessionPermissionMode,
   setSessionModel,
   applySessionFlagSettings,
+  validateSessionModelId,
 } from '../services/session.service.js';
+import { UserSettingsValidationError } from '../services/user-settings.service.js';
 import { TelemetryConfigurationError } from '../services/claude-telemetry-env.service.js';
 import { listSessionEvents, getSessionLastEventId } from '../services/session-events.service.js';
 import { wsManager } from '../services/websocket-manager.service.js';
@@ -174,6 +176,7 @@ const EFFORT_LEVELS = new Set<WsEffortLevel>(['low', 'medium', 'high', 'xhigh', 
 
 function getControlErrorStatus(error: unknown): 400 | 404 | 500 {
   if (error instanceof ControlRequestProcessingError) return error.statusCode;
+  if (error instanceof UserSettingsValidationError) return 400;
   if (!(error instanceof Error)) return 500;
   if (error.message === 'Session not found') return 404;
   if (error.message === 'Session is archived') return 400;
@@ -280,11 +283,9 @@ async function processControlRequest(
       throw new ControlRequestProcessingError(400, 'No active query for this session');
     }
 
-    try {
-      await executeAbort(fastify, userId, sessionId);
-    } catch (error) {
-      throw new ControlRequestProcessingError(getControlErrorStatus(error), getErrorMessage(error));
-    }
+    executeAbort(fastify, userId, sessionId).catch(error => {
+      fastify.log.error(error, 'Failed to execute abort after accepting request');
+    });
     return;
   }
 
@@ -319,6 +320,91 @@ async function processControlRequest(
   }
 
   throw new ControlRequestProcessingError(400, 'Unsupported control request');
+}
+
+async function assertValidControlRequestForBatch(
+  fastify: FastifyInstance,
+  controlRequest: WsControlRequest
+): Promise<void> {
+  const payload = controlRequest.request;
+  if (!isObject(payload) || typeof payload.subtype !== 'string') {
+    throw new ControlRequestProcessingError(400, 'Unsupported control request');
+  }
+
+  switch (payload.subtype) {
+    case 'ask_user_question_answer':
+      if (typeof payload.tool_use_id !== 'string' || !payload.tool_use_id) {
+        throw new ControlRequestProcessingError(400, 'tool_use_id must be a non-empty string');
+      }
+      if (!isObject(payload.answers)) {
+        throw new ControlRequestProcessingError(400, 'answers must be an object');
+      }
+      return;
+
+    case 'exit_plan_mode_response': {
+      if (typeof payload.tool_use_id !== 'string' || !payload.tool_use_id) {
+        throw new ControlRequestProcessingError(400, 'tool_use_id must be a non-empty string');
+      }
+      if (typeof payload.approved !== 'boolean') {
+        throw new ControlRequestProcessingError(400, 'approved must be a boolean');
+      }
+      if (payload.message !== undefined && typeof payload.message !== 'string') {
+        throw new ControlRequestProcessingError(400, 'message must be a string');
+      }
+      if (!payload.approved && !payload.message?.trim()) {
+        throw new ControlRequestProcessingError(
+          400,
+          'message must be a non-empty string when approved is false'
+        );
+      }
+      return;
+    }
+
+    case 'abort':
+      return;
+
+    case 'set_permission_mode':
+      if (!isValidPermissionMode(payload.mode)) {
+        throw new ControlRequestProcessingError(400, 'mode is invalid');
+      }
+      return;
+
+    case 'set_model':
+      if (typeof payload.model !== 'string' || payload.model.trim().length === 0) {
+        throw new ControlRequestProcessingError(400, 'model must be a non-empty string');
+      }
+      try {
+        await validateSessionModelId(fastify, payload.model);
+      } catch (error) {
+        throw new ControlRequestProcessingError(
+          getControlErrorStatus(error),
+          getErrorMessage(error)
+        );
+      }
+      return;
+
+    case 'apply_flag_settings':
+      assertValidFlagSettings(payload.settings);
+      return;
+
+    default:
+      throw new ControlRequestProcessingError(400, 'Unsupported control request');
+  }
+}
+
+async function assertValidEventBatch(
+  fastify: FastifyInstance,
+  events: SessionEventCreateRequest['events']
+): Promise<void> {
+  for (const event of events) {
+    if (isControlRequestEvent(event)) {
+      await assertValidControlRequestForBatch(fastify, event);
+      continue;
+    }
+    if (isUserMessageEvent(event)) continue;
+
+    throw new ControlRequestProcessingError(400, 'Only user and control events can be submitted');
+  }
 }
 
 async function handleControlRequest(
@@ -757,6 +843,7 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
     }
 
     try {
+      await assertValidEventBatch(fastify, request.body.events);
       const ctx = createUserContext(fastify, request);
       const acceptedEvents: SessionEventCreateRequest['events'] = [];
 
@@ -779,7 +866,7 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
         );
       }
 
-      return reply.status(202).send({ events: acceptedEvents });
+      return reply.status(202).send({ events: acceptedEvents, response: { subtype: 'success' } });
     } catch (error) {
       if (error instanceof ControlRequestProcessingError) {
         request.log.error(error, 'Failed to process control request');

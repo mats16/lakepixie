@@ -3,7 +3,10 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { isNewSessionNavigationState } from '@/types/navigation';
 import {
+  isSDKUserMessageEvent,
+  isToolResultContentBlock,
   parseGitBranchRevision,
+  type SDKMessage,
   type DatabricksWorkspaceSource,
   type GitRepositoryOutcome,
   type GitRepositorySource,
@@ -16,7 +19,6 @@ import {
   type UserMessageContentBlock,
   type WsAskUserQuestionRequest,
   type WsExitPlanModeRequest,
-  type WsExitPlanModeResponseRequest,
   type WsEffortLevel,
 } from '@repo/types';
 import { MainHeader } from './MainHeader';
@@ -26,7 +28,10 @@ import { WelcomeScreen, type NewSessionParams } from './WelcomeScreen';
 import { SessionNotFound } from './SessionNotFound';
 import { FloatingButtons } from './FloatingButtons';
 import { GitRepositoryStatusBar } from './GitRepositoryStatusBar';
-import { ExitPlanModeInputArea } from './ExitPlanModeInputArea';
+import {
+  ExitPlanModeInputArea,
+  type ExitPlanModeInputDecision,
+} from './ExitPlanModeInputArea';
 import type { ExitPlanModeOptimisticResult } from './tool-use/types';
 import { useSessionEvents } from '@/hooks/useSessionEvents';
 import { useSession } from '@/hooks/useSession';
@@ -90,19 +95,16 @@ function getSessionModelTier(modelId: string | undefined): string | null {
 }
 
 function getExitPlanOptimisticResult(
-  decision: Pick<WsExitPlanModeResponseRequest, 'approved' | 'message'>,
-  rejectMessage: string
+  decision: ExitPlanModeInputDecision
 ): ExitPlanModeOptimisticResult {
-  if (decision.approved) {
-    return { type: 'approved' };
+  switch (decision.kind) {
+    case 'approve':
+      return { type: 'approved' };
+    case 'reject':
+      return { type: 'rejected' };
+    case 'suggest':
+      return { type: 'suggested', message: decision.message.trim() };
   }
-
-  const message = decision.message?.trim() ?? '';
-  if (!message || message === rejectMessage) {
-    return { type: 'rejected' };
-  }
-
-  return { type: 'suggested', message };
 }
 
 function getFloatingButtonsBottomClassName(
@@ -113,6 +115,20 @@ function getFloatingButtonsBottomClassName(
   if (hasActiveExitPlan) return 'pb-[12.5rem]';
   if (hasGitRepositoryStatus) return 'pb-[10.75rem]';
   return undefined;
+}
+
+function getToolResultIds(events: SDKMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const event of events) {
+    if (!isSDKUserMessageEvent(event) || !Array.isArray(event.message.content)) continue;
+
+    for (const block of event.message.content) {
+      if (isToolResultContentBlock(block)) {
+        ids.add(block.tool_use_id);
+      }
+    }
+  }
+  return ids;
 }
 
 export function MainArea({
@@ -239,16 +255,13 @@ export function MainArea({
   );
 
   const submitExitPlanDecision = useCallback(
-    async (
-      toolUseId: string,
-      decision: Pick<WsExitPlanModeResponseRequest, 'approved' | 'message'>
-    ) => {
-      const success = await respondExitPlanMode(toolUseId, decision);
+    async (toolUseId: string, decision: ExitPlanModeInputDecision) => {
+      const responseDecision = decision.approved
+        ? { approved: true as const }
+        : { approved: false as const, message: decision.message };
+      const success = await respondExitPlanMode(toolUseId, responseDecision);
       if (success) {
-        const optimisticResult = getExitPlanOptimisticResult(
-          decision,
-          t('tools.exitPlanRejectMessage')
-        );
+        const optimisticResult = getExitPlanOptimisticResult(decision);
         setOptimisticExitPlanResults(prev => {
           const next = new Map(prev);
           next.set(toolUseId, optimisticResult);
@@ -264,7 +277,7 @@ export function MainArea({
         }
       }
     },
-    [respondExitPlanMode, t]
+    [respondExitPlanMode]
   );
 
   // session が idle に戻ったら pending をクリア
@@ -272,10 +285,27 @@ export function MainArea({
     if (sessionStatus === 'idle' && pendingQuestions.size > 0) {
       setPendingQuestions(new Map());
     }
-    if (sessionStatus === 'idle' && pendingExitPlans.size > 0) {
-      setPendingExitPlans(new Map());
-    }
-  }, [sessionStatus, pendingQuestions.size, pendingExitPlans.size]);
+  }, [sessionStatus, pendingQuestions.size]);
+
+  useEffect(() => {
+    const toolResultIds = getToolResultIds(events);
+    if (toolResultIds.size === 0) return;
+
+    setPendingExitPlans(prev => {
+      const next = new Map(prev);
+      for (const toolUseId of toolResultIds) {
+        next.delete(toolUseId);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+    setOptimisticExitPlanResults(prev => {
+      const next = new Map(prev);
+      for (const toolUseId of toolResultIds) {
+        next.delete(toolUseId);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [events]);
 
   const askUserQuestionCtx = useMemo(
     () => ({ pendingQuestions, submitAnswer }),
@@ -370,7 +400,8 @@ export function MainArea({
   };
 
   const currentSessionModelId = activeSession?.session_context?.model;
-  const selectedSessionModelId = optimisticModelId ?? getSessionModelTier(currentSessionModelId);
+  const selectedSessionModelId =
+    optimisticModelId ?? getSessionModelTier(currentSessionModelId) ?? currentSessionModelId;
   const selectedSessionEffortLevel =
     optimisticEffortLevel ?? activeSession?.session_context?.effort_level ?? 'high';
   const isPlanMode =
@@ -378,14 +409,15 @@ export function MainArea({
 
   useEffect(() => {
     setOptimisticModelId(null);
+  }, [sessionId, currentSessionModelId]);
+
+  useEffect(() => {
     setOptimisticPlanMode(null);
+  }, [sessionId, activeSession?.session_context?.permission_mode]);
+
+  useEffect(() => {
     setOptimisticEffortLevel(null);
-  }, [
-    sessionId,
-    currentSessionModelId,
-    activeSession?.session_context?.permission_mode,
-    activeSession?.session_context?.effort_level,
-  ]);
+  }, [sessionId, activeSession?.session_context?.effort_level]);
 
   const handleSessionModelChange = useCallback(
     async (modelId: string) => {

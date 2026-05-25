@@ -33,6 +33,7 @@ vi.mock('../services/session.service.js', () => ({
   setSessionPermissionMode: vi.fn(),
   setSessionModel: vi.fn(),
   applySessionFlagSettings: vi.fn(),
+  validateSessionModelId: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock session-events service
@@ -476,6 +477,9 @@ describe('session route - invalid session ID handling', () => {
       expect(response.statusCode).toBe(202);
       expect(response.json()).toEqual({
         events: [setModelEvent, setEffortEvent, userEvent],
+        response: {
+          subtype: 'success',
+        },
       });
       expect(setSessionModel).toHaveBeenCalledWith(
         expect.anything(),
@@ -548,7 +552,7 @@ describe('session route - invalid session ID handling', () => {
 
       expect(response.statusCode).toBe(400);
       expect(response.json().message).toBe('settings.effortLevel is invalid');
-      expect(setSessionModel).toHaveBeenCalledTimes(1);
+      expect(setSessionModel).not.toHaveBeenCalled();
       expect(sendMessageToSession).not.toHaveBeenCalled();
     });
 

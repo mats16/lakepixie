@@ -102,12 +102,13 @@ describe('session.service', () => {
     } as unknown as FastifyInstance;
   };
 
-  const createContextUpdateFastify = () => {
+  const createContextUpdateFastify = (contextOverrides: Record<string, unknown> = {}) => {
     const baseContext = {
       cwd: '/home/app/sessions/session-test',
       model: 'claude-sonnet-4-6',
       sources: [],
       outcomes: [],
+      ...contextOverrides,
     };
     const set = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) });
     const tx = {
@@ -127,6 +128,18 @@ describe('session.service', () => {
     };
     const fastify = {
       withUserContext: vi.fn().mockImplementation(async (_userId, callback) => callback(tx)),
+      db: {
+        select: vi.fn().mockReturnValue({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([
+              {
+                key: 'allowed_model_ids',
+                value: JSON.stringify(['claude-opus-4-7', 'claude-sonnet-4-6']),
+              },
+            ]),
+          }),
+        }),
+      },
       log: {
         info: vi.fn(),
         error: vi.fn(),
@@ -378,7 +391,7 @@ describe('session.service', () => {
   });
 
   describe('session control settings', () => {
-    it('stores a model change without validating the model id', async () => {
+    it('stores an allowed model change', async () => {
       const { fastify, set } = createContextUpdateFastify();
       const sessionId = new SessionId();
 
@@ -391,6 +404,17 @@ describe('session.service', () => {
           }),
         })
       );
+    });
+
+    it('rejects a model change to an unallowed model id', async () => {
+      const { fastify, set } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+
+      await expect(setSessionModel(fastify, 'user-123', sessionId, 'gpt-4-evil')).rejects.toThrow(
+        'model must be an allowed model id'
+      );
+
+      expect(set).not.toHaveBeenCalled();
     });
 
     it('stores permission mode and effort level in session context', async () => {
@@ -430,11 +454,42 @@ describe('session.service', () => {
 
       await setSessionModel(fastify, 'user-123', sessionId, 'claude-opus-4-7');
       await setSessionPermissionMode(fastify, 'user-123', sessionId, 'auto');
-      await applySessionFlagSettings(fastify, 'user-123', sessionId, { effortLevel: null });
+      await applySessionFlagSettings(fastify, 'user-123', sessionId, { effortLevel: 'medium' });
 
       expect(queryHandle.setModel).toHaveBeenCalledWith('claude-opus-4-7');
       expect(queryHandle.setPermissionMode).toHaveBeenCalledWith('auto');
-      expect(queryHandle.applyFlagSettings).toHaveBeenCalledWith({ effortLevel: null });
+      expect(queryHandle.applyFlagSettings).toHaveBeenCalledWith({ effortLevel: 'medium' });
+    });
+
+    it('persists max effort without forwarding it to live applyFlagSettings', async () => {
+      const { fastify, set } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+      const queryHandle = {
+        setModel: vi.fn().mockResolvedValue(undefined),
+        setPermissionMode: vi.fn().mockResolvedValue(undefined),
+        applyFlagSettings: vi.fn().mockResolvedValue(undefined),
+      } as unknown as Query;
+      __testing.registerActiveSessionQuery(sessionId, { query: queryHandle });
+
+      await applySessionFlagSettings(fastify, 'user-123', sessionId, { effortLevel: 'max' });
+
+      expect(set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: expect.objectContaining({
+            effort_level: 'max',
+          }),
+        })
+      );
+      expect(queryHandle.applyFlagSettings).not.toHaveBeenCalled();
+    });
+
+    it('ignores empty flag settings', async () => {
+      const { fastify, set } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+
+      await applySessionFlagSettings(fastify, 'user-123', sessionId, {});
+
+      expect(set).not.toHaveBeenCalled();
     });
 
     it('returns updated input for non-interactive tool permissions', async () => {
@@ -460,8 +515,11 @@ describe('session.service', () => {
       });
     });
 
-    it('waits for ExitPlanMode approval and persists auto permission mode', async () => {
-      const { fastify, set } = createContextUpdateFastify();
+    it('waits for ExitPlanMode approval and restores the pre-plan permission mode', async () => {
+      const { fastify, set } = createContextUpdateFastify({
+        permission_mode: 'plan',
+        permission_mode_before_plan: 'acceptEdits',
+      });
       const sessionId = new SessionId();
       const input = { plan: '# Plan' };
 
@@ -486,7 +544,7 @@ describe('session.service', () => {
       expect(set).toHaveBeenCalledWith(
         expect.objectContaining({
           context: expect.objectContaining({
-            permission_mode: 'auto',
+            permission_mode: 'acceptEdits',
           }),
         })
       );
