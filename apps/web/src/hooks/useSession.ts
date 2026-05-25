@@ -19,21 +19,27 @@ export function useSession({ sessionId }: UseSessionOptions): UseSessionReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const activeRequestId = useRef(0);
+  const previousSessionIdRef = useRef<string | null>(null);
 
   const fetchSession = useCallback(async () => {
     const requestId = activeRequestId.current + 1;
     activeRequestId.current = requestId;
 
     if (!sessionId) {
+      previousSessionIdRef.current = null;
       setSession(null);
       setError(null);
       setIsLoading(false);
       return;
     }
 
+    if (previousSessionIdRef.current !== sessionId) {
+      previousSessionIdRef.current = sessionId;
+      setSession(null);
+    }
+
     setIsLoading(true);
     setError(null);
-    setSession(null);
 
     try {
       const response = await sessionService.getSession(sessionId);

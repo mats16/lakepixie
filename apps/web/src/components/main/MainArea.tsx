@@ -15,6 +15,8 @@ import {
   type UserSettingsResponse,
   type UserMessageContentBlock,
   type WsAskUserQuestionRequest,
+  type WsExitPlanModeRequest,
+  type WsEffortLevel,
 } from '@repo/types';
 import { MainHeader } from './MainHeader';
 import { MessageArea } from './MessageArea';
@@ -23,12 +25,16 @@ import { WelcomeScreen, type NewSessionParams } from './WelcomeScreen';
 import { SessionNotFound } from './SessionNotFound';
 import { FloatingButtons } from './FloatingButtons';
 import { GitRepositoryStatusBar } from './GitRepositoryStatusBar';
+import { ExitPlanModeInputArea, type ExitPlanModeInputDecision } from './ExitPlanModeInputArea';
+import type { ExitPlanModeOptimisticResult } from './tool-use/types';
 import { useSessionEvents } from '@/hooks/useSessionEvents';
 import { useSession } from '@/hooks/useSession';
 import { AskUserQuestionProvider } from '@/contexts/AskUserQuestionContext';
 import { sessionService } from '@/services/session.service';
 import { extractTextFromContent } from '@/lib/content-builder';
 import { useUser } from '@/hooks/useUser';
+import { toast } from 'sonner';
+import { SESSION_MODELS } from '@/constants';
 
 function toBranchSlug(value: string): string | null {
   const slug = value
@@ -73,6 +79,38 @@ function getResolvedSessionModelId(
   return modelId;
 }
 
+function getSessionModelTier(modelId: string | undefined): string | null {
+  if (!modelId) return null;
+  const lower = modelId.toLowerCase();
+  if (lower.includes('opus')) return 'opus';
+  if (lower.includes('sonnet')) return 'sonnet';
+  if (lower.includes('haiku')) return 'haiku';
+  return null;
+}
+
+function getExitPlanOptimisticResult(
+  decision: ExitPlanModeInputDecision
+): ExitPlanModeOptimisticResult {
+  switch (decision.kind) {
+    case 'approve':
+      return { type: 'approved' };
+    case 'reject':
+      return { type: 'rejected' };
+    case 'suggest':
+      return { type: 'suggested', message: decision.message.trim() };
+  }
+}
+
+function getFloatingButtonsBottomClassName(
+  hasActiveExitPlan: boolean,
+  hasGitRepositoryStatus: boolean
+): string | undefined {
+  if (hasActiveExitPlan && hasGitRepositoryStatus) return 'pb-[16rem]';
+  if (hasActiveExitPlan) return 'pb-[12.5rem]';
+  if (hasGitRepositoryStatus) return 'pb-[10.75rem]';
+  return undefined;
+}
+
 export function MainArea({
   branchName,
   onSendMessage,
@@ -86,6 +124,10 @@ export function MainArea({
   const { githubAppId, modelSettings } = useUser();
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
   const [gitDiffRefreshKey, setGitDiffRefreshKey] = useState(0);
+  const [sessionControlPending, setSessionControlPending] = useState(false);
+  const [optimisticModelId, setOptimisticModelId] = useState<string | null>(null);
+  const [optimisticPlanMode, setOptimisticPlanMode] = useState<boolean | null>(null);
+  const [optimisticEffortLevel, setOptimisticEffortLevel] = useState<WsEffortLevel | null>(null);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // navigate state から初期メッセージを取得
@@ -99,6 +141,7 @@ export function MainArea({
   const {
     session,
     updateSession,
+    refetch: refetchSession,
     isLoading: isSessionLoading,
     error: sessionLoadError,
   } = useSession({
@@ -117,6 +160,21 @@ export function MainArea({
       return next;
     });
   }, []);
+
+  const [pendingExitPlans, setPendingExitPlans] = useState<Map<string, Record<string, unknown>>>(
+    () => new Map()
+  );
+  const [optimisticExitPlanResults, setOptimisticExitPlanResults] = useState<
+    Map<string, ExitPlanModeOptimisticResult>
+  >(() => new Map());
+  const handleExitPlanMode = useCallback((req: WsExitPlanModeRequest) => {
+    setPendingExitPlans(prev => {
+      const next = new Map(prev);
+      next.set(req.tool_use_id, req.input);
+      return next;
+    });
+  }, []);
+
   const handleGitDiffRefreshNeeded = useCallback(() => {
     if (gitDiffRefreshTimerRef.current) {
       clearTimeout(gitDiffRefreshTimerRef.current);
@@ -136,14 +194,31 @@ export function MainArea({
     };
   }, [sessionId]);
 
-  const { events, isLoading, error, sessionStatus, sendMessage, answerQuestion, abort } =
-    useSessionEvents({
-      sessionId: sessionId ?? null,
-      initialSessionStatus: activeSession?.session_status,
-      initialMessage,
-      onAskUserQuestion: handleAskUserQuestion,
-      onGitDiffRefreshNeeded: handleGitDiffRefreshNeeded,
-    });
+  useEffect(() => {
+    setOptimisticExitPlanResults(new Map());
+  }, [sessionId]);
+
+  const {
+    events,
+    toolResultIds,
+    isLoading,
+    error,
+    sessionStatus,
+    sendMessage,
+    answerQuestion,
+    respondExitPlanMode,
+    abort,
+    setPermissionMode,
+    setModel,
+    setEffortLevel,
+  } = useSessionEvents({
+    sessionId: sessionId ?? null,
+    initialSessionStatus: activeSession?.session_status,
+    initialMessage,
+    onAskUserQuestion: handleAskUserQuestion,
+    onExitPlanMode: handleExitPlanMode,
+    onGitDiffRefreshNeeded: handleGitDiffRefreshNeeded,
+  });
 
   const submitAnswer = useCallback(
     (toolUseId: string, answers: Record<string, string | string[]>) => {
@@ -160,12 +235,57 @@ export function MainArea({
     [answerQuestion]
   );
 
+  const submitExitPlanDecision = useCallback(
+    async (toolUseId: string, decision: ExitPlanModeInputDecision) => {
+      const responseDecision = decision.approved
+        ? { approved: true as const }
+        : { approved: false as const, message: decision.message };
+      const success = await respondExitPlanMode(toolUseId, responseDecision);
+      if (success) {
+        const optimisticResult = getExitPlanOptimisticResult(decision);
+        setOptimisticExitPlanResults(prev => {
+          const next = new Map(prev);
+          next.set(toolUseId, optimisticResult);
+          return next;
+        });
+        setPendingExitPlans(prev => {
+          const next = new Map(prev);
+          next.delete(toolUseId);
+          return next;
+        });
+        if (decision.approved) {
+          setOptimisticPlanMode(false);
+        }
+      }
+    },
+    [respondExitPlanMode]
+  );
+
   // session が idle に戻ったら pending をクリア
   useEffect(() => {
     if (sessionStatus === 'idle' && pendingQuestions.size > 0) {
       setPendingQuestions(new Map());
     }
   }, [sessionStatus, pendingQuestions.size]);
+
+  useEffect(() => {
+    if (toolResultIds.size === 0) return;
+
+    setPendingExitPlans(prev => {
+      const next = new Map(prev);
+      for (const toolUseId of toolResultIds) {
+        next.delete(toolUseId);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+    setOptimisticExitPlanResults(prev => {
+      const next = new Map(prev);
+      for (const toolUseId of toolResultIds) {
+        next.delete(toolUseId);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [toolResultIds]);
 
   const askUserQuestionCtx = useMemo(
     () => ({ pendingQuestions, submitAnswer }),
@@ -176,8 +296,16 @@ export function MainArea({
   // ただし AskUserQuestion の回答待ち中は除外
   const isAgentThinking = useMemo(() => {
     if (pendingQuestions.size > 0) return false;
+    if (pendingExitPlans.size > 0) return false;
     return sessionStatus === 'init' || sessionStatus === 'running';
-  }, [sessionStatus, pendingQuestions.size]);
+  }, [sessionStatus, pendingQuestions.size, pendingExitPlans.size]);
+
+  const activeExitPlan = useMemo(() => {
+    const firstPendingPlan = pendingExitPlans.entries().next().value;
+    if (!firstPendingPlan) return null;
+    const [toolUseId] = firstPendingPlan;
+    return { toolUseId };
+  }, [pendingExitPlans]);
 
   // init 中の準備処理表示。Git repository は clone、Workspace は sync として見せる。
   const syncingKind = useMemo((): 'workspace' | 'git' | null => {
@@ -231,6 +359,11 @@ export function MainArea({
   // フローティングボタンを表示するかどうか
   const hasFloatingButtons = !!databricksAppsOutcome || !!databricksWorkspaceOutcome;
   const hasFloatingControls = hasFloatingButtons || !!gitRepositoryStatus;
+  const floatingButtonsBottomClassName = getFloatingButtonsBottomClassName(
+    !!activeExitPlan,
+    !!gitRepositoryStatus
+  );
+  const gitStatusBottomClassName = activeExitPlan ? 'pb-[12.5rem]' : undefined;
 
   const handleSend = (content: UserMessageContentBlock[]) => {
     onSendMessage?.(content);
@@ -246,11 +379,106 @@ export function MainArea({
     onSessionArchived?.(sessionId);
   };
 
+  const currentSessionModelId = activeSession?.session_context?.model;
+  const selectedSessionModelId =
+    optimisticModelId ?? getSessionModelTier(currentSessionModelId) ?? currentSessionModelId;
+  const selectedSessionEffortLevel =
+    optimisticEffortLevel ?? activeSession?.session_context?.effort_level ?? 'high';
+  const isPlanMode =
+    optimisticPlanMode ?? activeSession?.session_context?.permission_mode === 'plan';
+  const modeBeforePlan = activeSession?.session_context?.permission_mode_before_plan ?? 'auto';
+
+  useEffect(() => {
+    setOptimisticModelId(null);
+  }, [sessionId, currentSessionModelId]);
+
+  useEffect(() => {
+    setOptimisticPlanMode(null);
+  }, [sessionId, activeSession?.session_context?.permission_mode]);
+
+  useEffect(() => {
+    setOptimisticEffortLevel(null);
+  }, [sessionId, activeSession?.session_context?.effort_level]);
+
+  const handleSessionModelChange = useCallback(
+    async (modelId: string) => {
+      if (!sessionId || modelId === selectedSessionModelId) return;
+      const previousModelId = selectedSessionModelId ?? null;
+      const resolvedModelId = getResolvedSessionModelId(modelId, modelSettings);
+      setSessionControlPending(true);
+      setOptimisticModelId(modelId);
+      try {
+        const success = await setModel(resolvedModelId);
+        if (!success) {
+          setOptimisticModelId(previousModelId);
+          toast.error(t('main.modelChangeError'));
+          return;
+        }
+        await refetchSession();
+      } catch {
+        setOptimisticModelId(previousModelId);
+        toast.error(t('main.modelChangeError'));
+      } finally {
+        setSessionControlPending(false);
+      }
+    },
+    [modelSettings, refetchSession, selectedSessionModelId, sessionId, setModel, t]
+  );
+
+  const handleSessionEffortChange = useCallback(
+    async (effortLevel: WsEffortLevel) => {
+      if (!sessionId || effortLevel === selectedSessionEffortLevel) return;
+      const previousEffortLevel = selectedSessionEffortLevel;
+      setSessionControlPending(true);
+      setOptimisticEffortLevel(effortLevel);
+      try {
+        const success = await setEffortLevel(effortLevel);
+        if (!success) {
+          setOptimisticEffortLevel(previousEffortLevel);
+          toast.error(t('main.effortChangeError'));
+          return;
+        }
+        await refetchSession();
+      } catch {
+        setOptimisticEffortLevel(previousEffortLevel);
+        toast.error(t('main.effortChangeError'));
+      } finally {
+        setSessionControlPending(false);
+      }
+    },
+    [refetchSession, selectedSessionEffortLevel, sessionId, setEffortLevel, t]
+  );
+
+  const handlePlanModeChange = useCallback(
+    async (enabled: boolean) => {
+      if (!sessionId || enabled === isPlanMode) return;
+      const previousPlanMode = isPlanMode;
+      setSessionControlPending(true);
+      setOptimisticPlanMode(enabled);
+      try {
+        const success = await setPermissionMode(enabled ? 'plan' : modeBeforePlan);
+        if (!success) {
+          setOptimisticPlanMode(previousPlanMode);
+          toast.error(t('main.planModeChangeError'));
+          return;
+        }
+        await refetchSession();
+      } catch {
+        setOptimisticPlanMode(previousPlanMode);
+        toast.error(t('main.planModeChangeError'));
+      } finally {
+        setSessionControlPending(false);
+      }
+    },
+    [isPlanMode, modeBeforePlan, refetchSession, sessionId, setPermissionMode, t]
+  );
+
   const handleNewSession = async ({
     content,
     modelId,
+    effortLevel,
     enableDatabricksSqlWrite,
-    enableDatabricksApps,
+    isPlanMode,
     sourceType,
     gitRepository,
     gitRepositoryBranch,
@@ -312,10 +540,6 @@ export function MainArea({
         });
       }
 
-      if (enableDatabricksApps) {
-        outcomes.push({ type: 'databricks_apps' });
-      }
-
       const request: SessionCreateRequest = {
         title: titleResult?.title ?? undefined,
         events: [
@@ -335,6 +559,9 @@ export function MainArea({
         ],
         session_context: {
           model: getResolvedSessionModelId(modelId, modelSettings),
+          permission_mode: isPlanMode ? 'plan' : 'auto',
+          permission_mode_before_plan: isPlanMode ? 'auto' : undefined,
+          effort_level: effortLevel,
           sources,
           outcomes,
           allowed_tools: allowedTools,
@@ -407,21 +634,43 @@ export function MainArea({
           error={error}
           isAgentThinking={isAgentThinking}
           syncingKind={syncingKind}
-          hasFloatingButton={hasFloatingControls}
+          hasFloatingButton={hasFloatingControls || !!activeExitPlan}
+          optimisticExitPlanResults={optimisticExitPlanResults}
         />
-        <InputArea
-          sessionId={sessionId}
-          onSend={handleSend}
-          onAbort={abort}
-          isAgentThinking={isAgentThinking}
-          disabled={activeSession?.session_status === 'archived'}
-        />
+        {activeExitPlan ? (
+          <ExitPlanModeInputArea
+            toolUseId={activeExitPlan.toolUseId}
+            onDecision={submitExitPlanDecision}
+          />
+        ) : (
+          <InputArea
+            sessionId={sessionId}
+            onSend={handleSend}
+            onAbort={abort}
+            isAgentThinking={isAgentThinking}
+            disabled={activeSession?.session_status === 'archived'}
+            currentModelId={selectedSessionModelId ?? undefined}
+            modelOptions={SESSION_MODELS}
+            modelControlDisabled={
+              sessionControlPending || activeSession?.session_status === 'archived'
+            }
+            currentEffortLevel={selectedSessionEffortLevel}
+            effortControlDisabled={
+              sessionControlPending || activeSession?.session_status === 'archived'
+            }
+            isPlanMode={isPlanMode}
+            planModeDisabled={sessionControlPending || activeSession?.session_status === 'archived'}
+            onModelChange={handleSessionModelChange}
+            onEffortChange={handleSessionEffortChange}
+            onPlanModeChange={handlePlanModeChange}
+          />
+        )}
         {hasFloatingButtons && (
           <FloatingButtons
             sessionId={sessionId}
             showAppButton={!!databricksAppsOutcome}
             workspacePath={databricksWorkspaceOutcome?.path}
-            bottomClassName={gitRepositoryStatus ? 'pb-[10.75rem]' : undefined}
+            bottomClassName={floatingButtonsBottomClassName}
           />
         )}
         {gitRepositoryStatus && (
@@ -434,6 +683,7 @@ export function MainArea({
             baseBranch={gitRepositoryStatus.baseBranch}
             sessionTitle={activeSession?.title ?? undefined}
             diffRefreshKey={gitDiffRefreshKey}
+            bottomClassName={gitStatusBottomClassName}
           />
         )}
       </div>

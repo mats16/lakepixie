@@ -16,6 +16,11 @@ export interface ToolUseBlockProps extends BaseToolUseProps {
   toolResultMap: Map<string, ToolResult>;
 }
 
+export type ExitPlanModeOptimisticResult =
+  | { type: 'approved' }
+  | { type: 'rejected' }
+  | { type: 'suggested'; message: string };
+
 export interface DiffLine {
   type: 'added' | 'removed' | 'unchanged';
   content: string;

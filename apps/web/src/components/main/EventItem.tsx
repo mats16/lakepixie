@@ -18,6 +18,7 @@ import {
   type ToolResult,
   type ToolUseBlock as ToolUseBlockType,
 } from '@/lib/message-utils';
+import type { ExitPlanModeOptimisticResult } from './tool-use/types';
 
 // XSS対策: 許可されたメディアタイプのホワイトリスト
 const ALLOWED_IMAGE_MEDIA_TYPES = new Set([
@@ -61,6 +62,7 @@ interface EventItemProps {
   event: SDKMessage;
   toolResultMap: Map<string, ToolResult>;
   childEventsMap: Map<string, SDKMessage[]>;
+  optimisticExitPlanResults?: Map<string, ExitPlanModeOptimisticResult>;
 }
 
 interface TextContent {
@@ -86,7 +88,12 @@ interface ParsedMessage {
   contents: ContentBlock[];
 }
 
-export function EventItem({ event, toolResultMap, childEventsMap }: EventItemProps) {
+export function EventItem({
+  event,
+  toolResultMap,
+  childEventsMap,
+  optimisticExitPlanResults,
+}: EventItemProps) {
   const parsed = useMemo((): ParsedMessage | null => {
     // user メッセージ
     if (isSDKUserMessageEvent(event)) {
@@ -249,6 +256,7 @@ export function EventItem({ event, toolResultMap, childEventsMap }: EventItemPro
                 name={content.toolUse.name}
                 input={content.toolUse.input}
                 result={content.result}
+                optimisticExitPlanResult={optimisticExitPlanResults?.get(content.toolUse.id)}
                 childEvents={childEventsMap.get(content.toolUse.id)}
                 toolResultMap={toolResultMap}
               />

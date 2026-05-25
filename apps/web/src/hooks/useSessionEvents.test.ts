@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SDKMessage } from '@repo/types';
-import { shouldRefreshGitDiffForEvent } from './useSessionEvents';
+import { getToolResultIdsFromEvent, shouldRefreshGitDiffForEvent } from './useSessionEvents';
 
 describe('shouldRefreshGitDiffForEvent', () => {
   it('detects user tool_result events from the agent stream', () => {
@@ -42,5 +42,23 @@ describe('shouldRefreshGitDiffForEvent', () => {
         },
       })
     ).toBe(false);
+  });
+});
+
+describe('getToolResultIdsFromEvent', () => {
+  it('extracts tool_result ids from one event without scanning session history', () => {
+    const event = {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'done' },
+          { type: 'tool_result', tool_use_id: 'toolu-1', content: 'ok' },
+          { type: 'tool_result', tool_use_id: 'toolu-2', content: 'ok' },
+        ],
+      },
+    } satisfies SDKMessage;
+
+    expect(getToolResultIdsFromEvent(event)).toEqual(['toolu-1', 'toolu-2']);
   });
 });

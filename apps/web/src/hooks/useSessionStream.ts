@@ -6,6 +6,10 @@ import type {
   WsConnectedMessage,
   WsControlRequest,
   WsAskUserQuestionRequest,
+  WsExitPlanModeRequest,
+  WsExitPlanModeResponseRequest,
+  WsEffortLevel,
+  WsPermissionMode,
   UserMessageContentBlock,
 } from '@repo/types';
 import { sessionService } from '@/services/session.service';
@@ -16,6 +20,7 @@ interface UseSessionStreamOptions {
   onEvent?: (event: SDKMessage) => void;
   onConnected?: (message: WsConnectedMessage) => void;
   onAskUserQuestion?: (request: WsAskUserQuestionRequest) => void;
+  onExitPlanMode?: (request: WsExitPlanModeRequest) => void;
   onError?: (error: Error) => void;
 }
 
@@ -30,7 +35,14 @@ interface UseSessionStreamReturn {
     toolUseId: string,
     answers: Record<string, string | string[]>
   ) => Promise<boolean>;
+  respondExitPlanMode: (
+    toolUseId: string,
+    decision: Pick<WsExitPlanModeResponseRequest, 'approved' | 'message'>
+  ) => Promise<boolean>;
   abort: () => Promise<boolean>;
+  setPermissionMode: (mode: WsPermissionMode) => Promise<boolean>;
+  setModel: (model: string) => Promise<boolean>;
+  setEffortLevel: (effortLevel: WsEffortLevel) => Promise<boolean>;
 }
 
 function parseServerMessage(event: MessageEvent<string>): WsServerMessage | null {
@@ -48,6 +60,7 @@ export function useSessionStream({
   onEvent,
   onConnected,
   onAskUserQuestion,
+  onExitPlanMode,
   onError,
 }: UseSessionStreamOptions): UseSessionStreamReturn {
   const [isConnected, setIsConnected] = useState(false);
@@ -61,11 +74,13 @@ export function useSessionStream({
   const onEventRef = useRef(onEvent);
   const onConnectedRef = useRef(onConnected);
   const onAskUserQuestionRef = useRef(onAskUserQuestion);
+  const onExitPlanModeRef = useRef(onExitPlanMode);
   const onErrorRef = useRef(onError);
 
   onEventRef.current = onEvent;
   onConnectedRef.current = onConnected;
   onAskUserQuestionRef.current = onAskUserQuestion;
+  onExitPlanModeRef.current = onExitPlanMode;
   onErrorRef.current = onError;
 
   const handleMessage = useCallback((event: MessageEvent<string>) => {
@@ -85,6 +100,8 @@ export function useSessionStream({
       // with any future server-pushed control acknowledgements.
     } else if (message.type === 'ask_user_question') {
       onAskUserQuestionRef.current?.(message as WsAskUserQuestionRequest);
+    } else if (message.type === 'exit_plan_mode') {
+      onExitPlanModeRef.current?.(message as WsExitPlanModeRequest);
     } else if (message.type === 'error') {
       const errorMessage = (message as { message: string }).message;
       const nextError = new Error(errorMessage);
@@ -127,7 +144,13 @@ export function useSessionStream({
       waiters.forEach(resolve => resolve());
     };
 
-    for (const name of ['connected', 'message', 'ask_user_question', 'control_response']) {
+    for (const name of [
+      'connected',
+      'message',
+      'ask_user_question',
+      'exit_plan_mode',
+      'control_response',
+    ]) {
       eventSource.addEventListener(name, event => {
         handleMessage(event as MessageEvent<string>);
       });
@@ -229,7 +252,9 @@ export function useSessionStream({
 
       try {
         const response = await sessionService.sendControlRequest(sessionId, msg);
-        return 'response' in response && response.response.subtype === 'success';
+        return response.events.some(
+          event => event.type === 'control_request' && event.request_id === requestId
+        );
       } catch (err) {
         const nextError = err instanceof Error ? err : new Error('Failed to send control request');
         setError(nextError);
@@ -250,8 +275,41 @@ export function useSessionStream({
     [sendControlRequest]
   );
 
+  const respondExitPlanMode = useCallback(
+    (
+      toolUseId: string,
+      decision: Pick<WsExitPlanModeResponseRequest, 'approved' | 'message'>
+    ): Promise<boolean> =>
+      sendControlRequest({
+        subtype: 'exit_plan_mode_response',
+        tool_use_id: toolUseId,
+        ...decision,
+      }),
+    [sendControlRequest]
+  );
+
   const abort = useCallback(
     (): Promise<boolean> => sendControlRequest({ subtype: 'abort' }),
+    [sendControlRequest]
+  );
+
+  const setPermissionMode = useCallback(
+    (mode: WsPermissionMode): Promise<boolean> =>
+      sendControlRequest({ subtype: 'set_permission_mode', mode }),
+    [sendControlRequest]
+  );
+
+  const setModel = useCallback(
+    (model: string): Promise<boolean> => sendControlRequest({ subtype: 'set_model', model }),
+    [sendControlRequest]
+  );
+
+  const setEffortLevel = useCallback(
+    (effortLevel: WsEffortLevel): Promise<boolean> =>
+      sendControlRequest({
+        subtype: 'apply_flag_settings',
+        settings: { effortLevel },
+      }),
     [sendControlRequest]
   );
 
@@ -263,6 +321,10 @@ export function useSessionStream({
     connect,
     sendMessage,
     answerQuestion,
+    respondExitPlanMode,
     abort,
+    setPermissionMode,
+    setModel,
+    setEffortLevel,
   };
 }

@@ -5,6 +5,12 @@ import requestDecoratorPlugin from '../plugins/request-decorator.js';
 import sessionRoute from './session.js';
 import { SessionId } from '../models/session.model.js';
 import { getLocalGitDiffSummary } from '../services/local-git.service.js';
+import {
+  sendMessageToSession,
+  setSessionModel,
+  setSessionPermissionMode,
+  applySessionFlagSettings,
+} from '../services/session.service.js';
 import { validatePathWithinBase } from '../utils/path-validation.js';
 
 // Mock session service
@@ -24,6 +30,10 @@ vi.mock('../services/session.service.js', () => ({
   canAbortSession: vi.fn(),
   executeAbort: vi.fn(),
   broadcastToSession: vi.fn(),
+  setSessionPermissionMode: vi.fn(),
+  setSessionModel: vi.fn(),
+  applySessionFlagSettings: vi.fn(),
+  validateSessionModelId: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock session-events service
@@ -397,6 +407,246 @@ describe('session route - invalid session ID handling', () => {
       expect(response.statusCode).toBe(404);
       const body = response.json();
       expect(body.error).toBe('NotFound');
+    });
+  });
+
+  describe('POST /sessions/:session_id/events', () => {
+    it('should reject the legacy direct event body', async () => {
+      await registerPlugins();
+      const sessionId = new SessionId().toString();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/sessions/${sessionId}/events`,
+        headers: TEST_USER_HEADERS,
+        payload: {
+          type: 'control_request',
+          request_id: 'set-model-1',
+          request: {
+            subtype: 'set_model',
+            model: 'claude-opus-4-7',
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toBe('events must be a non-empty array');
+    });
+
+    it('should process multiple events and echo the accepted events', async () => {
+      await registerPlugins();
+      const sessionId = new SessionId().toString();
+      const setModelEvent = {
+        type: 'control_request',
+        request_id: 'set-model-1',
+        request: {
+          subtype: 'set_model',
+          model: 'claude-opus-4-7',
+        },
+      };
+      const setEffortEvent = {
+        type: 'control_request',
+        request_id: 'set-effort-1',
+        request: {
+          subtype: 'apply_flag_settings',
+          settings: {
+            effortLevel: 'max',
+          },
+        },
+      };
+      const userEvent = {
+        type: 'user',
+        uuid: crypto.randomUUID(),
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: 'hello',
+        },
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/sessions/${sessionId}/events`,
+        headers: TEST_USER_HEADERS,
+        payload: {
+          events: [setModelEvent, setEffortEvent, userEvent],
+        },
+      });
+
+      expect(response.statusCode).toBe(202);
+      expect(response.json()).toEqual({
+        events: [setModelEvent, setEffortEvent, userEvent],
+        response: {
+          subtype: 'success',
+        },
+      });
+      expect(setSessionModel).toHaveBeenCalledWith(
+        expect.anything(),
+        'test-user-id',
+        expect.any(SessionId),
+        'claude-opus-4-7'
+      );
+      expect(applySessionFlagSettings).toHaveBeenCalledWith(
+        expect.anything(),
+        'test-user-id',
+        expect.any(SessionId),
+        { effortLevel: 'max' }
+      );
+      expect(sendMessageToSession).toHaveBeenCalledWith(
+        expect.anything(),
+        'test-user-id',
+        expect.any(SessionId),
+        userEvent,
+        expect.anything()
+      );
+      expect(vi.mocked(setSessionModel).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(applySessionFlagSettings).mock.invocationCallOrder[0]
+      );
+      expect(vi.mocked(applySessionFlagSettings).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(sendMessageToSession).mock.invocationCallOrder[0]
+      );
+    });
+
+    it('should stop processing when a batch event fails validation', async () => {
+      await registerPlugins();
+      const sessionId = new SessionId().toString();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/sessions/${sessionId}/events`,
+        headers: TEST_USER_HEADERS,
+        payload: {
+          events: [
+            {
+              type: 'control_request',
+              request_id: 'set-model-1',
+              request: {
+                subtype: 'set_model',
+                model: 'claude-opus-4-7',
+              },
+            },
+            {
+              type: 'control_request',
+              request_id: 'set-effort-1',
+              request: {
+                subtype: 'apply_flag_settings',
+                settings: {
+                  effortLevel: 'extreme',
+                },
+              },
+            },
+            {
+              type: 'user',
+              uuid: crypto.randomUUID(),
+              session_id: sessionId,
+              parent_tool_use_id: null,
+              message: {
+                role: 'user',
+                content: 'should not run',
+              },
+            },
+          ],
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toBe('settings.effortLevel is invalid');
+      expect(setSessionModel).not.toHaveBeenCalled();
+      expect(sendMessageToSession).not.toHaveBeenCalled();
+    });
+
+    it('should reject malformed user events before applying earlier controls', async () => {
+      await registerPlugins();
+      const sessionId = new SessionId().toString();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/sessions/${sessionId}/events`,
+        headers: TEST_USER_HEADERS,
+        payload: {
+          events: [
+            {
+              type: 'control_request',
+              request_id: 'set-model-1',
+              request: {
+                subtype: 'set_model',
+                model: 'claude-opus-4-7',
+              },
+            },
+            {
+              type: 'user',
+              uuid: crypto.randomUUID(),
+              session_id: sessionId,
+              parent_tool_use_id: null,
+              message: {
+                role: 'user',
+              },
+            },
+          ],
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toBe('message.content must be a non-empty string or array');
+      expect(setSessionModel).not.toHaveBeenCalled();
+      expect(sendMessageToSession).not.toHaveBeenCalled();
+    });
+
+    it('should reject invalid permission modes', async () => {
+      await registerPlugins();
+      const sessionId = new SessionId().toString();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/sessions/${sessionId}/events`,
+        headers: TEST_USER_HEADERS,
+        payload: {
+          events: [
+            {
+              type: 'control_request',
+              request_id: 'set-perm-1',
+              request: {
+                subtype: 'set_permission_mode',
+                mode: 'planning',
+              },
+            },
+          ],
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toBe('mode is invalid');
+      expect(setSessionPermissionMode).not.toHaveBeenCalled();
+    });
+
+    it('should reject ExitPlanMode revision responses without a message', async () => {
+      await registerPlugins();
+      const sessionId = new SessionId().toString();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/sessions/${sessionId}/events`,
+        headers: TEST_USER_HEADERS,
+        payload: {
+          events: [
+            {
+              type: 'control_request',
+              request_id: 'exit-plan-1',
+              request: {
+                subtype: 'exit_plan_mode_response',
+                tool_use_id: 'toolu-exit-plan',
+                approved: false,
+              },
+            },
+          ],
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toBe(
+        'message must be a non-empty string when approved is false'
+      );
     });
   });
 });

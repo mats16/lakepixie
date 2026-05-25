@@ -3,6 +3,10 @@ import type {
   SDKMessage,
   SDKUserMessage,
   WsAskUserQuestionRequest,
+  WsExitPlanModeRequest,
+  WsExitPlanModeResponseRequest,
+  WsEffortLevel,
+  WsPermissionMode,
   UserMessageContentBlock,
   SessionStatus,
 } from '@repo/types';
@@ -23,12 +27,15 @@ interface UseSessionEventsOptions {
   initialMessage?: SDKUserMessage;
   /** AskUserQuestion リクエスト受信時のコールバック */
   onAskUserQuestion?: (request: WsAskUserQuestionRequest) => void;
+  /** ExitPlanMode リクエスト受信時のコールバック */
+  onExitPlanMode?: (request: WsExitPlanModeRequest) => void;
   /** Agent の tool_result / result 受信時に git diff を再取得するためのコールバック */
   onGitDiffRefreshNeeded?: () => void;
 }
 
 interface UseSessionEventsReturn {
   events: SDKMessage[];
+  toolResultIds: ReadonlySet<string>;
   isLoading: boolean;
   isConnected: boolean;
   error: Error | null;
@@ -39,7 +46,14 @@ interface UseSessionEventsReturn {
     toolUseId: string,
     answers: Record<string, string | string[]>
   ) => Promise<boolean>;
+  respondExitPlanMode: (
+    toolUseId: string,
+    decision: Pick<WsExitPlanModeResponseRequest, 'approved' | 'message'>
+  ) => Promise<boolean>;
   abort: () => Promise<boolean>;
+  setPermissionMode: (mode: WsPermissionMode) => Promise<boolean>;
+  setModel: (model: string) => Promise<boolean>;
+  setEffortLevel: (effortLevel: WsEffortLevel) => Promise<boolean>;
 }
 
 export function shouldRefreshGitDiffForEvent(event: SDKMessage): boolean {
@@ -51,11 +65,33 @@ export function shouldRefreshGitDiffForEvent(event: SDKMessage): boolean {
   );
 }
 
+export function getToolResultIdsFromEvent(event: SDKMessage): string[] {
+  if (!isSDKUserMessageEvent(event) || !Array.isArray(event.message.content)) return [];
+  const ids: string[] = [];
+  for (const block of event.message.content) {
+    if (isToolResultContentBlock(block)) {
+      ids.push(block.tool_use_id);
+    }
+  }
+  return ids;
+}
+
+function mergeToolResultIds(prev: ReadonlySet<string>, ids: Iterable<string>): ReadonlySet<string> {
+  let next: Set<string> | null = null;
+  for (const id of ids) {
+    if (prev.has(id)) continue;
+    next ??= new Set(prev);
+    next.add(id);
+  }
+  return next ?? prev;
+}
+
 export function useSessionEvents({
   sessionId,
   initialSessionStatus,
   initialMessage,
   onAskUserQuestion,
+  onExitPlanMode,
   onGitDiffRefreshNeeded,
 }: UseSessionEventsOptions): UseSessionEventsReturn {
   const [events, setEvents] = useState<SDKMessage[]>([]);
@@ -63,6 +99,7 @@ export function useSessionEvents({
   const [error, setError] = useState<Error | null>(null);
   const [shouldAutoConnect, setShouldAutoConnect] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
+  const [toolResultIds, setToolResultIds] = useState<ReadonlySet<string>>(() => new Set());
   const seenUuidsRef = useRef<Set<string>>(new Set());
 
   // initialSessionStatus が変わったら sessionStatus を更新
@@ -104,6 +141,9 @@ export function useSessionEvents({
             seenUuidsRef.current.add(e.uuid as string);
           }
         });
+        setToolResultIds(prev =>
+          mergeToolResultIds(prev, allEvents.flatMap(getToolResultIdsFromEvent))
+        );
 
         // events をマージ（重複排除）
         setEvents(prev => {
@@ -116,6 +156,7 @@ export function useSessionEvents({
             }
             return true;
           });
+          if (newEvents.length === 0) return prev;
           return [...prev, ...newEvents];
         });
 
@@ -145,6 +186,11 @@ export function useSessionEvents({
         onGitDiffRefreshNeeded?.();
       }
 
+      const nextToolResultIds = getToolResultIdsFromEvent(event);
+      if (nextToolResultIds.length > 0) {
+        setToolResultIds(prev => mergeToolResultIds(prev, nextToolResultIds));
+      }
+
       setEvents(prev => [...prev, event]);
 
       // result イベント受信時に sessionStatus を idle に更新
@@ -165,18 +211,24 @@ export function useSessionEvents({
     error: streamError,
     sendMessage,
     answerQuestion,
+    respondExitPlanMode,
     abort,
+    setPermissionMode,
+    setModel,
+    setEffortLevel,
   } = useSessionStream({
     sessionId,
     autoConnect: shouldAutoConnect,
     onEvent: handleEvent,
     onAskUserQuestion,
+    onExitPlanMode,
   });
 
   // セッション ID が変わったら過去イベントを取得
   useEffect(() => {
     if (sessionId) {
       setEvents([]);
+      setToolResultIds(new Set());
       seenUuidsRef.current.clear();
 
       // 初期メッセージがある場合は即座に追加
@@ -185,6 +237,7 @@ export function useSessionEvents({
           seenUuidsRef.current.add(initialMessage.uuid);
         }
         setEvents([initialMessage]);
+        setToolResultIds(new Set(getToolResultIdsFromEvent(initialMessage)));
       }
 
       loadPastEvents(sessionId);
@@ -193,12 +246,17 @@ export function useSessionEvents({
 
   return {
     events,
+    toolResultIds,
     isLoading,
     isConnected,
     error: error ?? streamError,
     sessionStatus,
     sendMessage,
     answerQuestion,
+    respondExitPlanMode,
     abort,
+    setPermissionMode,
+    setModel,
+    setEffortLevel,
   };
 }

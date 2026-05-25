@@ -7,6 +7,8 @@ import type {
   WsControlRequest,
   WsControlResponse,
   WsAskUserQuestionRequest,
+  WsExitPlanModeRequest,
+  WsExitPlanModeResponseRequest,
   UserMessageContentBlock,
 } from '@repo/types';
 import {
@@ -21,6 +23,7 @@ interface UseSessionWebSocketOptions {
   onEvent?: (event: SDKMessage) => void;
   onConnected?: (message: WsConnectedMessage) => void;
   onAskUserQuestion?: (request: WsAskUserQuestionRequest) => void;
+  onExitPlanMode?: (request: WsExitPlanModeRequest) => void;
   onError?: (error: Error) => void;
 }
 
@@ -35,6 +38,10 @@ interface UseSessionWebSocketReturn {
     toolUseId: string,
     answers: Record<string, string | string[]>
   ) => Promise<boolean>;
+  respondExitPlanMode: (
+    toolUseId: string,
+    decision: Pick<WsExitPlanModeResponseRequest, 'approved' | 'message'>
+  ) => Promise<boolean>;
   abort: () => Promise<boolean>;
 }
 
@@ -47,6 +54,7 @@ export function useSessionWebSocket({
   onEvent,
   onConnected,
   onAskUserQuestion,
+  onExitPlanMode,
   onError,
 }: UseSessionWebSocketOptions): UseSessionWebSocketReturn {
   const [isConnected, setIsConnected] = useState(false);
@@ -65,12 +73,14 @@ export function useSessionWebSocket({
   const onEventRef = useRef(onEvent);
   const onConnectedRef = useRef(onConnected);
   const onAskUserQuestionRef = useRef(onAskUserQuestion);
+  const onExitPlanModeRef = useRef(onExitPlanMode);
   const onErrorRef = useRef(onError);
 
   // 毎レンダリングで ref を更新
   onEventRef.current = onEvent;
   onConnectedRef.current = onConnected;
   onAskUserQuestionRef.current = onAskUserQuestion;
+  onExitPlanModeRef.current = onExitPlanMode;
   onErrorRef.current = onError;
 
   const connect = useCallback(() => {
@@ -140,6 +150,8 @@ export function useSessionWebSocket({
         } else if (message.type === 'ask_user_question') {
           // AskUserQuestion リクエスト
           onAskUserQuestionRef.current?.(message as WsAskUserQuestionRequest);
+        } else if (message.type === 'exit_plan_mode') {
+          onExitPlanModeRef.current?.(message as WsExitPlanModeRequest);
         } else if ('session_id' in message) {
           // SDKMessage - ref 経由で最新のコールバックを呼び出す
           onEventRef.current?.(message as SDKMessage);
@@ -284,6 +296,19 @@ export function useSessionWebSocket({
     [sendControlRequest]
   );
 
+  const respondExitPlanMode = useCallback(
+    (
+      toolUseId: string,
+      decision: Pick<WsExitPlanModeResponseRequest, 'approved' | 'message'>
+    ): Promise<boolean> =>
+      sendControlRequest({
+        subtype: 'exit_plan_mode_response',
+        tool_use_id: toolUseId,
+        ...decision,
+      }),
+    [sendControlRequest]
+  );
+
   // Agent を abort する
   const abort = useCallback(
     (): Promise<boolean> => sendControlRequest({ subtype: 'abort' }),
@@ -298,6 +323,7 @@ export function useSessionWebSocket({
     connect,
     sendMessage,
     answerQuestion,
+    respondExitPlanMode,
     abort,
   };
 }

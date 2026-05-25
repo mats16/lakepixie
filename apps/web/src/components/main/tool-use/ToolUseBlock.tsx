@@ -5,14 +5,16 @@ import { ReadToolUse } from './ReadToolUse';
 import { TodoWriteToolUse } from './TodoWriteToolUse';
 import { AskUserQuestionToolUse } from './AskUserQuestionToolUse';
 import { TaskToolUse } from './TaskToolUse';
+import { ExitPlanModeToolUse } from './ExitPlanModeToolUse';
 import { DefaultToolUse } from './DefaultToolUse';
-import type { ToolResult } from './types';
+import type { ExitPlanModeOptimisticResult, ToolResult } from './types';
 
 interface ToolUseBlockProps {
   toolUseId?: string;
   name: string;
   input: Record<string, unknown>;
   result?: ToolResult;
+  optimisticExitPlanResult?: ExitPlanModeOptimisticResult;
   childEvents?: SDKMessage[];
   toolResultMap: Map<string, ToolResult>;
 }
@@ -22,6 +24,7 @@ export function ToolUseBlock({
   name,
   input,
   result,
+  optimisticExitPlanResult,
   childEvents,
   toolResultMap,
 }: ToolUseBlockProps) {
@@ -41,6 +44,16 @@ export function ToolUseBlock({
     case 'AskUserQuestion':
       return (
         <AskUserQuestionToolUse name={name} input={input} result={result} toolUseId={toolUseId} />
+      );
+
+    case 'ExitPlanMode':
+      return (
+        <ExitPlanModeToolUse
+          name={name}
+          input={input}
+          result={result}
+          optimisticResult={optimisticExitPlanResult}
+        />
       );
 
     case 'Task':
