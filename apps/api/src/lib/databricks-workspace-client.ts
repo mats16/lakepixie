@@ -1,7 +1,7 @@
 /**
  * Databricks Workspace REST API クライアント
  *
- * OBO トークンを使用して Workspace API を直接呼び出す。
+ * Bearer トークンを使用して Workspace API を直接呼び出す。
  * CLI の export-dir / import-dir 相当の機能を提供する。
  */
 

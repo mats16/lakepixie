@@ -3,20 +3,21 @@
  * workspace-push CLI
  *
  * Workspace REST API を使用してローカルディレクトリを Databricks Workspace にアップロードする。
- * OBO トークンのスコープで `databricks workspace import-dir` が動作しないため、
- * REST API 経由で同等の機能を提供する。
+ * セッション用の ~/.databrickscfg から Service Principal トークンを取得する。
  *
  * Usage:
  *   workspace-push [localDir] [workspacePath]
  *   workspace-push --list [workspacePath]
  *
  * Environment:
- *   DATABRICKS_HOST  - Databricks ホスト (https:// 付きでも可)
- *   DATABRICKS_TOKEN - OBO トークン
+ *   DATABRICKS_CONFIG_FILE - Databricks config path (default: ~/.databrickscfg)
+ *   DATABRICKS_CONFIG_PROFILE - Databricks config profile (default: DEFAULT)
  *   SESSION_WORKSPACE_PATH - デフォルトの Workspace パス
  */
 
 import { fileURLToPath } from 'node:url';
+import { getServicePrincipalToken } from '../lib/databricks-auth.js';
+import { readServicePrincipalConfig } from '../lib/databricks-cli-config.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { normalizeHost } from '../utils/normalize-host.js';
 
@@ -43,18 +44,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return { mode: 'push', localDir, workspacePath };
 }
 
-export function createClient(): DatabricksWorkspaceClient {
-  const host = process.env.DATABRICKS_HOST;
-  const token = process.env.DATABRICKS_TOKEN;
-
-  if (!host) {
-    throw new Error('DATABRICKS_HOST environment variable is not set');
-  }
+export async function createClient(): Promise<DatabricksWorkspaceClient> {
+  const config = readServicePrincipalConfig();
+  const token = await getServicePrincipalToken(config.host, config.clientId, config.clientSecret);
   if (!token) {
-    throw new Error('DATABRICKS_TOKEN environment variable is not set');
+    throw new Error('Service Principal token is not available');
   }
 
-  return new DatabricksWorkspaceClient(normalizeHost(host), token);
+  return new DatabricksWorkspaceClient(normalizeHost(config.host), token);
 }
 
 export async function main(): Promise<void> {
@@ -67,7 +64,7 @@ export async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const client = createClient();
+  const client = await createClient();
 
   if (parsed.mode === 'list') {
     const objects = await client.list(parsed.workspacePath);

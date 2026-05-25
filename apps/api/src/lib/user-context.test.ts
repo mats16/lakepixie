@@ -166,38 +166,6 @@ describe('UserContext', () => {
     });
   });
 
-  describe('getOboCliEnv', () => {
-    it('should return OBO CLI env vars when OBO token is present', () => {
-      const fastify = createMockFastify();
-      const request = createMockRequest({ oboAccessToken: 'obo-token-abc' });
-
-      const ctx = new UserContext(fastify, request);
-
-      expect(ctx.getOboCliEnv()).toEqual({
-        DATABRICKS_HOST: 'https://example.databricks.com',
-        DATABRICKS_TOKEN: 'obo-token-abc',
-      });
-    });
-
-    it('should throw when OBO token is empty', () => {
-      const fastify = createMockFastify();
-      const request = createMockRequest({ oboAccessToken: '' });
-
-      const ctx = new UserContext(fastify, request);
-
-      expect(() => ctx.getOboCliEnv()).toThrow('OBO access token is not available');
-    });
-
-    it('should throw when OBO token is not set', () => {
-      const fastify = createMockFastify();
-      const request = createMockRequest({ oboAccessToken: undefined });
-
-      const ctx = new UserContext(fastify, request);
-
-      expect(() => ctx.getOboCliEnv()).toThrow('OBO access token is not available');
-    });
-  });
-
   describe('createUserContext', () => {
     it('should create a new UserContext instance', () => {
       const fastify = createMockFastify();
