@@ -1485,7 +1485,9 @@ export async function createSession(
     model: resolvedModelId,
     permission_mode: permissionMode,
     permission_mode_before_plan:
-      permissionMode === 'plan' ? (session_context.permission_mode_before_plan ?? 'auto') : undefined,
+      permissionMode === 'plan'
+        ? (session_context.permission_mode_before_plan ?? 'auto')
+        : undefined,
     effort_level: session_context.effort_level ?? null,
     sources: session_context.sources,
     outcomes: resolvedOutcomes,

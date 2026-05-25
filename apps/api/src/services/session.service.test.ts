@@ -473,9 +473,9 @@ describe('session.service', () => {
       } as unknown as Query;
       __testing.registerActiveSessionQuery(sessionId, { query: queryHandle });
 
-      await expect(setSessionPermissionMode(fastify, 'user-123', sessionId, 'plan')).rejects.toThrow(
-        'SDK permission update failed'
-      );
+      await expect(
+        setSessionPermissionMode(fastify, 'user-123', sessionId, 'plan')
+      ).rejects.toThrow('SDK permission update failed');
 
       expect(set).toHaveBeenNthCalledWith(
         1,
