@@ -61,21 +61,6 @@ export class UserContext {
     const token = this.request.ctx?.user.oboAccessToken;
     return token && token !== '' ? token : undefined;
   }
-
-  /**
-   * OBO トークンで Databricks CLI を実行するための環境変数を返す
-   * OBO トークンが無ければ例外を投げる（呼び出し側で 401 に変換する想定）
-   */
-  getOboCliEnv(): { DATABRICKS_HOST: string; DATABRICKS_TOKEN: string } {
-    const token = this.oboAccessToken;
-    if (!token) {
-      throw new Error('OBO access token is not available');
-    }
-    return {
-      DATABRICKS_HOST: `https://${this.fastify.config.DATABRICKS_HOST}`,
-      DATABRICKS_TOKEN: token,
-    };
-  }
 }
 
 /**

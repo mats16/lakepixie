@@ -58,7 +58,7 @@ export function buildClaudeTelemetryEnv(params: ClaudeTelemetryEnvParams): Recor
 
   if (!params.databricksClientId || !params.databricksClientSecret) {
     throw new TelemetryConfigurationError(
-      'Claude Code telemetry requires DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET because otelHeadersHelper uses Databricks service principal authentication.'
+      'Claude Code telemetry requires DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET because otelHeadersHelper uses Databricks service principal authentication from ~/.databrickscfg.'
     );
   }
 

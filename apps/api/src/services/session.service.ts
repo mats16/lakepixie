@@ -43,6 +43,7 @@ import { fromUUID } from 'typeid-js';
 import { DatabricksAppsClient } from '../lib/databricks-apps-client.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { getAuthProvider } from '../lib/databricks-auth.js';
+import { DATABRICKS_CONFIG_PROFILE, writeDatabricksConfig } from '../lib/databricks-cli-config.js';
 import { getAllowedModelIds, getAppSettings } from './admin.service.js';
 import { writeHelperScripts } from './helper-scripts.service.js';
 import { buildClaudeTelemetryEnv } from './claude-telemetry-env.service.js';
@@ -891,9 +892,15 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       requestedDisallowedTools: sessionContext.disallowed_tools,
     });
 
-    // ヘルパースクリプトを配置（apiKeyHelper / otelHeadersHelper）
+    // Databricks CLI / helper が SP 権限で動作するように設定ファイルを配置
     const claudeNativePackage = getClaudeNativePackageName();
     const pathToClaudeCodeExecutable = resolveClaudeCodeExecutable(claudeNativePackage);
+    const databricksConfigFile = await writeDatabricksConfig(userHome, {
+      host: fastify.config.DATABRICKS_HOST,
+      clientId: fastify.config.DATABRICKS_CLIENT_ID,
+      clientSecret: fastify.config.DATABRICKS_CLIENT_SECRET,
+    });
+    // ヘルパースクリプトを配置（apiKeyHelper / otelHeadersHelper）
     const helperPaths = await writeHelperScripts(userHome);
     if (gitSource) {
       cleanupGitCredential = await configureGitCredentialHelper(
@@ -981,12 +988,11 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
             'thinking,adaptive_thinking,effort,interleaved_thinking',
           ANTHROPIC_CUSTOM_HEADERS: 'x-databricks-use-coding-agent-mode: true',
           CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
-          // Databricks CLI と Claude Code モデル認証: OBO トークンを使用
+          // Databricks CLI は ~/.databrickscfg の SP 認証、workspace-push は OBO token を使用
           DATABRICKS_HOST: `https://${fastify.config.DATABRICKS_HOST}`,
+          DATABRICKS_CONFIG_FILE: databricksConfigFile,
+          DATABRICKS_CONFIG_PROFILE,
           DATABRICKS_TOKEN: oboToken ?? '',
-          // SP 認証情報: OTel ヘッダーヘルパーが OAuth トークン取得に使用
-          DATABRICKS_CLIENT_ID: fastify.config.DATABRICKS_CLIENT_ID,
-          DATABRICKS_CLIENT_SECRET: fastify.config.DATABRICKS_CLIENT_SECRET,
           ...claudeTelemetryEnv,
         },
       },

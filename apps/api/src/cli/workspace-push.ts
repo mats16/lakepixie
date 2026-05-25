@@ -3,8 +3,8 @@
  * workspace-push CLI
  *
  * Workspace REST API を使用してローカルディレクトリを Databricks Workspace にアップロードする。
- * OBO トークンのスコープで `databricks workspace import-dir` が動作しないため、
- * REST API 経由で同等の機能を提供する。
+ * Databricks CLI は jobs 等の OBO scope 外操作のため SP 認証を使う。
+ * 一方で workspace への反映はユーザー権限で行う必要があるため、この CLI は OBO トークンで Workspace API を呼び出す。
  *
  * Usage:
  *   workspace-push [localDir] [workspacePath]
@@ -67,7 +67,7 @@ export async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const client = createClient();
+  const client = await createClient();
 
   if (parsed.mode === 'list') {
     const objects = await client.list(parsed.workspacePath);
