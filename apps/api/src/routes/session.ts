@@ -35,7 +35,13 @@ import type {
   GitRepositoryOutcome,
   GitRepositorySource,
 } from '@repo/types';
-import { isAuthError, parseGitBranchRevision } from '@repo/types';
+import {
+  isAuthError,
+  isImageContentBlock,
+  isTextContentBlock,
+  isToolResultContentBlock,
+  parseGitBranchRevision,
+} from '@repo/types';
 import { resolveUserAnswer } from '../services/ask-user-question.service.js';
 import { resolveExitPlanModeDecision } from '../services/exit-plan-mode.service.js';
 import {
@@ -227,7 +233,8 @@ async function processControlRequest(
   fastify: FastifyInstance,
   userId: string,
   sessionId: SessionId,
-  controlRequest: WsControlRequest
+  controlRequest: WsControlRequest,
+  options: { allowedModelIds?: ReadonlySet<string> } = {}
 ): Promise<void> {
   if (!isObject(controlRequest.request) || typeof controlRequest.request.subtype !== 'string') {
     throw new ControlRequestProcessingError(400, 'Unsupported control request');
@@ -305,7 +312,13 @@ async function processControlRequest(
       ) {
         throw new ControlRequestProcessingError(400, 'model must be a non-empty string');
       }
-      await setSessionModel(fastify, userId, sessionId, controlRequest.request.model);
+      if (options.allowedModelIds) {
+        await setSessionModel(fastify, userId, sessionId, controlRequest.request.model, {
+          allowedModelIds: options.allowedModelIds,
+        });
+      } else {
+        await setSessionModel(fastify, userId, sessionId, controlRequest.request.model);
+      }
       return;
     }
 
@@ -324,7 +337,8 @@ async function processControlRequest(
 
 async function assertValidControlRequestForBatch(
   fastify: FastifyInstance,
-  controlRequest: WsControlRequest
+  controlRequest: WsControlRequest,
+  context: EventBatchValidationContext
 ): Promise<void> {
   const payload = controlRequest.request;
   if (!isObject(payload) || typeof payload.subtype !== 'string') {
@@ -374,7 +388,11 @@ async function assertValidControlRequestForBatch(
         throw new ControlRequestProcessingError(400, 'model must be a non-empty string');
       }
       try {
-        await validateSessionModelId(fastify, payload.model);
+        context.allowedModelIds = await validateSessionModelId(
+          fastify,
+          payload.model,
+          context.allowedModelIds
+        );
       } catch (error) {
         throw new ControlRequestProcessingError(
           getControlErrorStatus(error),
@@ -392,19 +410,54 @@ async function assertValidControlRequestForBatch(
   }
 }
 
+interface EventBatchValidationContext {
+  allowedModelIds?: ReadonlySet<string>;
+}
+
+function isValidUserMessageContent(content: unknown): boolean {
+  if (typeof content === 'string') return content.trim().length > 0;
+  if (!Array.isArray(content) || content.length === 0) return false;
+
+  return content.every(block => {
+    if (isTextContentBlock(block) || isImageContentBlock(block)) return true;
+    if (!isToolResultContentBlock(block)) return false;
+    return typeof block.content === 'string';
+  });
+}
+
+function assertValidUserMessageEvent(event: SDKUserMessage): void {
+  if (!isObject(event.message)) {
+    throw new ControlRequestProcessingError(400, 'message must be an object');
+  }
+  if (event.message.role !== 'user') {
+    throw new ControlRequestProcessingError(400, 'message.role must be user');
+  }
+  if (!isValidUserMessageContent(event.message.content)) {
+    throw new ControlRequestProcessingError(
+      400,
+      'message.content must be a non-empty string or array'
+    );
+  }
+}
+
 async function assertValidEventBatch(
   fastify: FastifyInstance,
   events: SessionEventCreateRequest['events']
-): Promise<void> {
+): Promise<EventBatchValidationContext> {
+  const context: EventBatchValidationContext = {};
   for (const event of events) {
     if (isControlRequestEvent(event)) {
-      await assertValidControlRequestForBatch(fastify, event);
+      await assertValidControlRequestForBatch(fastify, event, context);
       continue;
     }
-    if (isUserMessageEvent(event)) continue;
+    if (isUserMessageEvent(event)) {
+      assertValidUserMessageEvent(event);
+      continue;
+    }
 
     throw new ControlRequestProcessingError(400, 'Only user and control events can be submitted');
   }
+  return context;
 }
 
 async function handleControlRequest(
@@ -843,13 +896,13 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
     }
 
     try {
-      await assertValidEventBatch(fastify, request.body.events);
+      const validationContext = await assertValidEventBatch(fastify, request.body.events);
       const ctx = createUserContext(fastify, request);
       const acceptedEvents: SessionEventCreateRequest['events'] = [];
 
       for (const event of request.body.events) {
         if (isControlRequestEvent(event)) {
-          await processControlRequest(fastify, user.id, sessionId, event);
+          await processControlRequest(fastify, user.id, sessionId, event, validationContext);
           acceptedEvents.push(event);
           continue;
         }

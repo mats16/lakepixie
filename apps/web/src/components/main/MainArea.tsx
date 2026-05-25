@@ -3,10 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { isNewSessionNavigationState } from '@/types/navigation';
 import {
-  isSDKUserMessageEvent,
-  isToolResultContentBlock,
   parseGitBranchRevision,
-  type SDKMessage,
   type DatabricksWorkspaceSource,
   type GitRepositoryOutcome,
   type GitRepositorySource,
@@ -114,20 +111,6 @@ function getFloatingButtonsBottomClassName(
   return undefined;
 }
 
-function getToolResultIds(events: SDKMessage[]): Set<string> {
-  const ids = new Set<string>();
-  for (const event of events) {
-    if (!isSDKUserMessageEvent(event) || !Array.isArray(event.message.content)) continue;
-
-    for (const block of event.message.content) {
-      if (isToolResultContentBlock(block)) {
-        ids.add(block.tool_use_id);
-      }
-    }
-  }
-  return ids;
-}
-
 export function MainArea({
   branchName,
   onSendMessage,
@@ -217,6 +200,7 @@ export function MainArea({
 
   const {
     events,
+    toolResultIds,
     isLoading,
     error,
     sessionStatus,
@@ -285,7 +269,6 @@ export function MainArea({
   }, [sessionStatus, pendingQuestions.size]);
 
   useEffect(() => {
-    const toolResultIds = getToolResultIds(events);
     if (toolResultIds.size === 0) return;
 
     setPendingExitPlans(prev => {
@@ -302,7 +285,7 @@ export function MainArea({
       }
       return next.size === prev.size ? prev : next;
     });
-  }, [events]);
+  }, [toolResultIds]);
 
   const askUserQuestionCtx = useMemo(
     () => ({ pendingQuestions, submitAnswer }),
@@ -403,6 +386,7 @@ export function MainArea({
     optimisticEffortLevel ?? activeSession?.session_context?.effort_level ?? 'high';
   const isPlanMode =
     optimisticPlanMode ?? activeSession?.session_context?.permission_mode === 'plan';
+  const modeBeforePlan = activeSession?.session_context?.permission_mode_before_plan ?? 'auto';
 
   useEffect(() => {
     setOptimisticModelId(null);
@@ -472,7 +456,7 @@ export function MainArea({
       setSessionControlPending(true);
       setOptimisticPlanMode(enabled);
       try {
-        const success = await setPermissionMode(enabled ? 'plan' : 'auto');
+        const success = await setPermissionMode(enabled ? 'plan' : modeBeforePlan);
         if (!success) {
           setOptimisticPlanMode(previousPlanMode);
           toast.error(t('main.planModeChangeError'));
@@ -486,7 +470,7 @@ export function MainArea({
         setSessionControlPending(false);
       }
     },
-    [isPlanMode, refetchSession, sessionId, setPermissionMode, t]
+    [isPlanMode, modeBeforePlan, refetchSession, sessionId, setPermissionMode, t]
   );
 
   const handleNewSession = async ({
@@ -576,6 +560,7 @@ export function MainArea({
         session_context: {
           model: getResolvedSessionModelId(modelId, modelSettings),
           permission_mode: isPlanMode ? 'plan' : 'auto',
+          permission_mode_before_plan: isPlanMode ? 'auto' : undefined,
           effort_level: effortLevel,
           sources,
           outcomes,

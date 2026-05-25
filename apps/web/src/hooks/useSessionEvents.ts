@@ -35,6 +35,7 @@ interface UseSessionEventsOptions {
 
 interface UseSessionEventsReturn {
   events: SDKMessage[];
+  toolResultIds: ReadonlySet<string>;
   isLoading: boolean;
   isConnected: boolean;
   error: Error | null;
@@ -64,6 +65,27 @@ export function shouldRefreshGitDiffForEvent(event: SDKMessage): boolean {
   );
 }
 
+export function getToolResultIdsFromEvent(event: SDKMessage): string[] {
+  if (!isSDKUserMessageEvent(event) || !Array.isArray(event.message.content)) return [];
+  const ids: string[] = [];
+  for (const block of event.message.content) {
+    if (isToolResultContentBlock(block)) {
+      ids.push(block.tool_use_id);
+    }
+  }
+  return ids;
+}
+
+function mergeToolResultIds(prev: ReadonlySet<string>, ids: Iterable<string>): ReadonlySet<string> {
+  let next: Set<string> | null = null;
+  for (const id of ids) {
+    if (prev.has(id)) continue;
+    next ??= new Set(prev);
+    next.add(id);
+  }
+  return next ?? prev;
+}
+
 export function useSessionEvents({
   sessionId,
   initialSessionStatus,
@@ -77,6 +99,7 @@ export function useSessionEvents({
   const [error, setError] = useState<Error | null>(null);
   const [shouldAutoConnect, setShouldAutoConnect] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
+  const [toolResultIds, setToolResultIds] = useState<ReadonlySet<string>>(() => new Set());
   const seenUuidsRef = useRef<Set<string>>(new Set());
 
   // initialSessionStatus が変わったら sessionStatus を更新
@@ -118,6 +141,9 @@ export function useSessionEvents({
             seenUuidsRef.current.add(e.uuid as string);
           }
         });
+        setToolResultIds(prev =>
+          mergeToolResultIds(prev, allEvents.flatMap(getToolResultIdsFromEvent))
+        );
 
         // events をマージ（重複排除）
         setEvents(prev => {
@@ -160,6 +186,11 @@ export function useSessionEvents({
         onGitDiffRefreshNeeded?.();
       }
 
+      const nextToolResultIds = getToolResultIdsFromEvent(event);
+      if (nextToolResultIds.length > 0) {
+        setToolResultIds(prev => mergeToolResultIds(prev, nextToolResultIds));
+      }
+
       setEvents(prev => [...prev, event]);
 
       // result イベント受信時に sessionStatus を idle に更新
@@ -197,6 +228,7 @@ export function useSessionEvents({
   useEffect(() => {
     if (sessionId) {
       setEvents([]);
+      setToolResultIds(new Set());
       seenUuidsRef.current.clear();
 
       // 初期メッセージがある場合は即座に追加
@@ -205,6 +237,7 @@ export function useSessionEvents({
           seenUuidsRef.current.add(initialMessage.uuid);
         }
         setEvents([initialMessage]);
+        setToolResultIds(new Set(getToolResultIdsFromEvent(initialMessage)));
       }
 
       loadPastEvents(sessionId);
@@ -213,6 +246,7 @@ export function useSessionEvents({
 
   return {
     events,
+    toolResultIds,
     isLoading,
     isConnected,
     error: error ?? streamError,

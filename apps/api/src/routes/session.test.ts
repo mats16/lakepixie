@@ -556,6 +556,43 @@ describe('session route - invalid session ID handling', () => {
       expect(sendMessageToSession).not.toHaveBeenCalled();
     });
 
+    it('should reject malformed user events before applying earlier controls', async () => {
+      await registerPlugins();
+      const sessionId = new SessionId().toString();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/sessions/${sessionId}/events`,
+        headers: TEST_USER_HEADERS,
+        payload: {
+          events: [
+            {
+              type: 'control_request',
+              request_id: 'set-model-1',
+              request: {
+                subtype: 'set_model',
+                model: 'claude-opus-4-7',
+              },
+            },
+            {
+              type: 'user',
+              uuid: crypto.randomUUID(),
+              session_id: sessionId,
+              parent_tool_use_id: null,
+              message: {
+                role: 'user',
+              },
+            },
+          ],
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toBe('message.content must be a non-empty string or array');
+      expect(setSessionModel).not.toHaveBeenCalled();
+      expect(sendMessageToSession).not.toHaveBeenCalled();
+    });
+
     it('should reject invalid permission modes', async () => {
       await registerPlugins();
       const sessionId = new SessionId().toString();

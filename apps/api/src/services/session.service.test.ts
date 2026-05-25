@@ -461,6 +461,41 @@ describe('session.service', () => {
       expect(queryHandle.applyFlagSettings).toHaveBeenCalledWith({ effortLevel: 'medium' });
     });
 
+    it('rolls back persisted permission mode when the active SDK update fails', async () => {
+      const { fastify, set } = createContextUpdateFastify({
+        permission_mode: 'acceptEdits',
+      });
+      const sessionId = new SessionId();
+      const queryHandle = {
+        setModel: vi.fn().mockResolvedValue(undefined),
+        setPermissionMode: vi.fn().mockRejectedValue(new Error('SDK permission update failed')),
+        applyFlagSettings: vi.fn().mockResolvedValue(undefined),
+      } as unknown as Query;
+      __testing.registerActiveSessionQuery(sessionId, { query: queryHandle });
+
+      await expect(setSessionPermissionMode(fastify, 'user-123', sessionId, 'plan')).rejects.toThrow(
+        'SDK permission update failed'
+      );
+
+      expect(set).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          context: expect.objectContaining({
+            permission_mode: 'plan',
+            permission_mode_before_plan: 'acceptEdits',
+          }),
+        })
+      );
+      expect(set).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          context: expect.objectContaining({
+            permission_mode: 'acceptEdits',
+          }),
+        })
+      );
+    });
+
     it('persists max effort without forwarding it to live applyFlagSettings', async () => {
       const { fastify, set } = createContextUpdateFastify();
       const sessionId = new SessionId();

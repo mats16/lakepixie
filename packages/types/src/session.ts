@@ -73,6 +73,7 @@ import type { WsControlRequest, WsEffortLevel, WsPermissionMode } from './websoc
 export interface SessionCreateContext {
   model: string;
   permission_mode?: WsPermissionMode;
+  permission_mode_before_plan?: Exclude<WsPermissionMode, 'plan'>;
   effort_level?: WsEffortLevel | null;
   sources: SessionSource[];
   outcomes: SessionOutcome[];

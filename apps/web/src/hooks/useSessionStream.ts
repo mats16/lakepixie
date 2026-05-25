@@ -252,11 +252,8 @@ export function useSessionStream({
 
       try {
         const response = await sessionService.sendControlRequest(sessionId, msg);
-        return (
-          response.response.subtype === 'success' &&
-          response.events.some(
-            event => event.type === 'control_request' && event.request_id === requestId
-          )
+        return response.events.some(
+          event => event.type === 'control_request' && event.request_id === requestId
         );
       } catch (err) {
         const nextError = err instanceof Error ? err : new Error('Failed to send control request');

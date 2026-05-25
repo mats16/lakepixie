@@ -962,11 +962,31 @@ async function updateSessionContext(
 
 export async function validateSessionModelId(
   fastify: FastifyInstance,
-  model: string
-): Promise<void> {
-  const allowedModelIds = new Set(await getAllowedModelIds(fastify));
-  if (!allowedModelIds.has(model)) {
+  model: string,
+  allowedModelIds?: ReadonlySet<string>
+): Promise<ReadonlySet<string>> {
+  const modelIds = allowedModelIds ?? new Set(await getAllowedModelIds(fastify));
+  if (!modelIds.has(model)) {
     throw new UserSettingsValidationError('model must be an allowed model id');
+  }
+  return modelIds;
+}
+
+async function rollbackSessionContext(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId,
+  patch: Partial<
+    Pick<SessionContextResponse, 'model' | 'permission_mode' | 'permission_mode_before_plan'>
+  >
+): Promise<void> {
+  try {
+    await updateSessionContext(fastify, userId, sessionId, patch);
+  } catch (error) {
+    fastify.log.error(
+      { err: toLogError(error), sessionId: sessionId.toString(), userId },
+      'Failed to roll back session context after SDK control failure'
+    );
   }
 }
 
@@ -986,8 +1006,16 @@ async function restorePermissionModeAfterPlan(
   });
 
   if (activeQuery) {
-    await activeQuery.query.setPermissionMode(mode);
-    activeQuery.permissionModeBeforePlan = undefined;
+    try {
+      await activeQuery.query.setPermissionMode(mode);
+      activeQuery.permissionModeBeforePlan = undefined;
+    } catch (error) {
+      await rollbackSessionContext(fastify, userId, sessionId, {
+        permission_mode: currentContext.permission_mode,
+        permission_mode_before_plan: currentContext.permission_mode_before_plan,
+      });
+      throw error;
+    }
   }
 }
 
@@ -1368,6 +1396,13 @@ export async function createSession(
   ) {
     throw new SessionValidationError('session_context.permission_mode is invalid');
   }
+  const permissionModeBeforePlan = session_context.permission_mode_before_plan as unknown;
+  if (
+    permissionModeBeforePlan !== undefined &&
+    (!isValidPermissionMode(permissionModeBeforePlan) || permissionModeBeforePlan === 'plan')
+  ) {
+    throw new SessionValidationError('session_context.permission_mode_before_plan is invalid');
+  }
   if (
     session_context.effort_level !== undefined &&
     session_context.effort_level !== null &&
@@ -1442,12 +1477,15 @@ export async function createSession(
     requestedAllowedTools: session_context.allowed_tools,
     requestedDisallowedTools: session_context.disallowed_tools,
   });
+  const permissionMode = session_context.permission_mode ?? 'auto';
   const sessionContext: SessionContextResponse = {
     allowed_tools: sessionToolSettings.allowed_tools,
     disallowed_tools: sessionToolSettings.disallowed_tools,
     cwd,
     model: resolvedModelId,
-    permission_mode: session_context.permission_mode ?? 'auto',
+    permission_mode: permissionMode,
+    permission_mode_before_plan:
+      permissionMode === 'plan' ? (session_context.permission_mode_before_plan ?? 'auto') : undefined,
     effort_level: session_context.effort_level ?? null,
     sources: session_context.sources,
     outcomes: resolvedOutcomes,
@@ -1967,9 +2005,19 @@ export async function setSessionPermissionMode(
 
   await updateSessionContext(fastify, userId, sessionId, patch);
   if (activeQuery) {
-    await activeQuery.query.setPermissionMode(mode);
-    activeQuery.permissionModeBeforePlan =
-      mode === 'plan' ? patch.permission_mode_before_plan : undefined;
+    const previousActivePermissionModeBeforePlan = activeQuery.permissionModeBeforePlan;
+    try {
+      await activeQuery.query.setPermissionMode(mode);
+      activeQuery.permissionModeBeforePlan =
+        mode === 'plan' ? patch.permission_mode_before_plan : undefined;
+    } catch (error) {
+      activeQuery.permissionModeBeforePlan = previousActivePermissionModeBeforePlan;
+      await rollbackSessionContext(fastify, userId, sessionId, {
+        permission_mode: currentContext.permission_mode,
+        permission_mode_before_plan: currentContext.permission_mode_before_plan,
+      });
+      throw error;
+    }
   }
 }
 
@@ -1977,9 +2025,10 @@ export async function setSessionModel(
   fastify: FastifyInstance,
   userId: string,
   sessionId: SessionId,
-  model: string
+  model: string,
+  options: { allowedModelIds?: ReadonlySet<string> } = {}
 ): Promise<void> {
-  await validateSessionModelId(fastify, model);
+  await validateSessionModelId(fastify, model, options.allowedModelIds);
   await updateSessionContext(fastify, userId, sessionId, { model });
   const activeQuery = activeSessionQueries.get(sessionId.toString());
   if (activeQuery) {
@@ -2087,6 +2136,7 @@ export const __testing = {
     activeSessionQueries.set(sessionId.toString(), {
       abortController: activeQuery.abortController ?? new AbortController(),
       query: activeQuery.query,
+      permissionModeBeforePlan: activeQuery.permissionModeBeforePlan,
     });
   },
 };
