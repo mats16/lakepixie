@@ -85,6 +85,23 @@ async function writeDatabricksConfigFixture(dir: string): Promise<void> {
   );
 }
 
+async function writeFailingAwkCommand(dir: string): Promise<string> {
+  const binDir = path.join(dir, 'bin');
+  await mkdir(binDir);
+  const awkPath = path.join(binDir, 'awk');
+
+  await writeFile(
+    awkPath,
+    `#!/bin/sh
+exit 1
+`,
+    { encoding: 'utf-8' }
+  );
+  await chmod(awkPath, 0o755);
+
+  return binDir;
+}
+
 describe('buildDatabricksConfigContent', () => {
   it('creates a DEFAULT oauth-m2m profile with normalized host', () => {
     expect(
@@ -139,10 +156,16 @@ describe('getDatabricksConfigPath', () => {
 });
 
 describe('API_KEY_HELPER_SCRIPT', () => {
-  it('exits when config value command substitutions fail', () => {
-    expect(API_KEY_HELPER_SCRIPT).toContain(
-      'host="$(require_databricks_config_value "host")" || exit 1'
-    );
+  it('exits when config value command substitutions fail', async () => {
+    await expect(
+      runApiKeyHelper(async dir => {
+        const binDir = await writeFailingAwkCommand(dir);
+        await writeDatabricksConfigFixture(dir);
+        return { PATH: `${binDir}:${process.env.PATH ?? ''}` };
+      })
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining('Missing host in DEFAULT profile'),
+    });
   });
 
   it('returns a Service Principal token from ~/.databrickscfg', async () => {

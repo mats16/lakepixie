@@ -3,7 +3,8 @@
  * workspace-push CLI
  *
  * Workspace REST API を使用してローカルディレクトリを Databricks Workspace にアップロードする。
- * OBO トークンでユーザー権限の Workspace API を呼び出す。
+ * Databricks CLI は jobs 等の OBO scope 外操作のため SP 認証を使う。
+ * 一方で workspace への反映はユーザー権限で行う必要があるため、この CLI は OBO トークンで Workspace API を呼び出す。
  *
  * Usage:
  *   workspace-push [localDir] [workspacePath]
