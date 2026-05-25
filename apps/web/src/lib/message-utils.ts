@@ -11,6 +11,7 @@ import { TOOL_NAMES_OMIT_INPUT_SUMMARY } from './tool-constants';
 export interface ToolResult {
   content: string;
   isError: boolean;
+  toolUseResult?: unknown;
 }
 
 export interface ToolUseBlock {
@@ -42,6 +43,7 @@ export function extractToolResults(events: SDKMessage[]): Map<string, ToolResult
                 ? JSON.stringify(block.content)
                 : '',
           isError: block.is_error ?? false,
+          toolUseResult: (event as { tool_use_result?: unknown }).tool_use_result,
         });
       }
     }

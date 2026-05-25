@@ -3,6 +3,7 @@ import type { SDKMessage } from '@repo/types';
 export interface ToolResult {
   content: string;
   isError: boolean;
+  toolUseResult?: unknown;
 }
 
 export interface BaseToolUseProps {
