@@ -977,7 +977,8 @@ async function restorePermissionModeAfterPlan(
 ): Promise<void> {
   const currentContext = await getLatestSessionContext(fastify, userId, sessionId);
   const activeQuery = activeSessionQueries.get(sessionId.toString());
-  const mode = currentContext.permission_mode_before_plan ?? activeQuery?.permissionModeBeforePlan ?? 'auto';
+  const mode =
+    currentContext.permission_mode_before_plan ?? activeQuery?.permissionModeBeforePlan ?? 'auto';
 
   await updateSessionContext(fastify, userId, sessionId, {
     permission_mode: mode,

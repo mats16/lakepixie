@@ -870,12 +870,7 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
     } catch (error) {
       if (error instanceof ControlRequestProcessingError) {
         request.log.error(error, 'Failed to process control request');
-        return sendError(
-          reply,
-          error.statusCode,
-          getApiErrorName(error.statusCode),
-          error.message
-        );
+        return sendError(reply, error.statusCode, getApiErrorName(error.statusCode), error.message);
       }
 
       request.log.error(error, 'Failed to send message to session');

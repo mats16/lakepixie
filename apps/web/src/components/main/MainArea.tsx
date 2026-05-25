@@ -28,10 +28,7 @@ import { WelcomeScreen, type NewSessionParams } from './WelcomeScreen';
 import { SessionNotFound } from './SessionNotFound';
 import { FloatingButtons } from './FloatingButtons';
 import { GitRepositoryStatusBar } from './GitRepositoryStatusBar';
-import {
-  ExitPlanModeInputArea,
-  type ExitPlanModeInputDecision,
-} from './ExitPlanModeInputArea';
+import { ExitPlanModeInputArea, type ExitPlanModeInputDecision } from './ExitPlanModeInputArea';
 import type { ExitPlanModeOptimisticResult } from './tool-use/types';
 import { useSessionEvents } from '@/hooks/useSessionEvents';
 import { useSession } from '@/hooks/useSession';
