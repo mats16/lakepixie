@@ -1,8 +1,7 @@
 import { readdir, readFile, writeFile, rm, stat, cp } from 'node:fs/promises';
-import { join, basename, isAbsolute } from 'node:path';
+import { join, basename, dirname, isAbsolute } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
 import { spawnAsync } from '../utils/spawn.js';
 import yaml from 'js-yaml';
 import type {
@@ -19,7 +18,6 @@ import type { UserContext } from '../lib/user-context.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { ensureDirectory, removeDirectory } from '../utils/directory.js';
 import { validatePathWithinBase } from '../utils/path-validation.js';
-import { createGitHubGitAuthEnvironment } from './github-app-auth.service.js';
 
 /**
  * サービス層用のシンプルなロガー
@@ -570,13 +568,121 @@ async function copySkillFromDir(
   return null;
 }
 
+async function getSkillImportDestinationPath(
+  skillsDir: string,
+  tempDir: string,
+  importPath: string
+): Promise<string | null> {
+  if (isAbsolute(importPath)) {
+    throw new Error(`Security error: Absolute import path is not allowed: ${importPath}`);
+  }
+
+  const sourcePath = await validatePathWithinBase(join(tempDir, importPath), tempDir);
+
+  let sourceStats;
+  try {
+    sourceStats = await stat(sourcePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+
+  if (sourceStats.isDirectory()) {
+    return join(skillsDir, basename(importPath));
+  }
+
+  if (sourceStats.isFile() && basename(importPath) === SKILL_FILE) {
+    return join(skillsDir, basename(join(importPath, '..')));
+  }
+
+  return null;
+}
+
+interface ImportDestinationSnapshot {
+  destinationPath: string;
+  backupPath: string;
+  existed: boolean;
+  isDirectory: boolean;
+}
+
+async function createImportDestinationSnapshot(
+  destinationPath: string,
+  backupRoot: string,
+  index: number
+): Promise<ImportDestinationSnapshot> {
+  const backupPath = join(backupRoot, String(index));
+
+  try {
+    const destinationStats = await stat(destinationPath);
+    const isDirectory = destinationStats.isDirectory();
+    await cp(destinationPath, backupPath, {
+      recursive: isDirectory,
+      force: true,
+    });
+    return {
+      destinationPath,
+      backupPath,
+      existed: true,
+      isDirectory,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return {
+        destinationPath,
+        backupPath,
+        existed: false,
+        isDirectory: false,
+      };
+    }
+    throw error;
+  }
+}
+
+async function rollbackImportDestinations(snapshots: ImportDestinationSnapshot[]): Promise<void> {
+  for (let index = snapshots.length - 1; index >= 0; index -= 1) {
+    const snapshot = snapshots[index];
+    await rm(snapshot.destinationPath, { recursive: true, force: true });
+
+    if (!snapshot.existed) continue;
+
+    await ensureDirectory(dirname(snapshot.destinationPath));
+    await cp(snapshot.backupPath, snapshot.destinationPath, {
+      recursive: snapshot.isDirectory,
+      force: true,
+    });
+  }
+}
+
+async function getUniqueSkillImportDestinationPaths(
+  skillsDir: string,
+  tempDir: string,
+  paths: string[]
+): Promise<Array<string | null>> {
+  const destinationPaths: Array<string | null> = [];
+  const seenDestinationPaths = new Set<string>();
+
+  for (const importPath of paths) {
+    const destinationPath = await getSkillImportDestinationPath(skillsDir, tempDir, importPath);
+    if (destinationPath) {
+      if (seenDestinationPaths.has(destinationPath)) {
+        throw new Error(`Duplicate import target detected: ${basename(destinationPath)}`);
+      }
+      seenDestinationPaths.add(destinationPath);
+    }
+    destinationPaths.push(destinationPath);
+  }
+
+  return destinationPaths;
+}
+
 /**
  * Git リポジトリからスキルをインポート（複数パス対応、sparse-checkout で効率化）
  */
 export async function importSkillsFromGit(
   ctx: UserContext,
-  request: SkillImportRequest,
-  fastify?: FastifyInstance
+  request: SkillImportRequest
 ): Promise<SkillInfo[]> {
   const { repository_url, paths, branch = 'main' } = request;
   const skillsDir = getSkillsDir(ctx);
@@ -595,28 +701,21 @@ export async function importSkillsFromGit(
   try {
     // 1. git clone（blobless clone + no-checkout で最小限のメタデータのみ取得）
     // spawn を使用してコマンドインジェクションを防止
-    const gitAuth = fastify
-      ? await createGitHubGitAuthEnvironment(fastify, repository_url, 'read')
-      : null;
-    try {
-      await spawnAsync(
-        'git',
-        [
-          'clone',
-          '--filter=blob:none',
-          '--no-checkout',
-          '--depth',
-          '1',
-          '--branch',
-          branch,
-          repository_url,
-          tempDir,
-        ],
-        { timeout: 60000, env: gitAuth?.env } // 60秒タイムアウト
-      );
-    } finally {
-      await gitAuth?.cleanup();
-    }
+    await spawnAsync(
+      'git',
+      [
+        'clone',
+        '--filter=blob:none',
+        '--no-checkout',
+        '--depth',
+        '1',
+        '--branch',
+        branch,
+        repository_url,
+        tempDir,
+      ],
+      { timeout: 60000 } // 60秒タイムアウト
+    );
 
     // 2. sparse-checkout を設定して必要なパスのみをチェックアウト
     try {
@@ -646,12 +745,29 @@ export async function importSkillsFromGit(
 
     await ensureDirectory(skillsDir);
 
-    // 4. 各パスを並列でコピー
-    const results = await Promise.all(
-      paths.map(importPath => copySkillFromDir(skillsDir, tempDir, importPath, importMetadata))
-    );
+    const destinationPaths = await getUniqueSkillImportDestinationPaths(skillsDir, tempDir, paths);
 
-    return results.filter((skill): skill is SkillInfo => skill !== null);
+    const backupRoot = join(tempDir, '.ccbricks-import-backups');
+    await ensureDirectory(backupRoot);
+
+    const snapshots: ImportDestinationSnapshot[] = [];
+    const results: SkillInfo[] = [];
+    try {
+      for (const [index, importPath] of paths.entries()) {
+        const destinationPath = destinationPaths[index];
+        if (destinationPath) {
+          snapshots.push(await createImportDestinationSnapshot(destinationPath, backupRoot, index));
+        }
+
+        const result = await copySkillFromDir(skillsDir, tempDir, importPath, importMetadata);
+        if (result) results.push(result);
+      }
+    } catch (error) {
+      await rollbackImportDestinations(snapshots);
+      throw error;
+    }
+
+    return results;
   } finally {
     // 5. 一時ディレクトリを削除
     await removeDirectory(tempDir);
@@ -815,4 +931,5 @@ export const __testing = {
   validateSkillName,
   getWorkspaceSkillsPath,
   copySkillFromDir,
+  getSkillImportDestinationPath,
 };

@@ -1,8 +1,7 @@
 import { readdir, readFile, writeFile, rm, stat, cp } from 'node:fs/promises';
-import { join, basename, extname, isAbsolute } from 'node:path';
+import { join, basename, dirname, extname, isAbsolute } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
 import { spawnAsync } from '../utils/spawn.js';
 import yaml from 'js-yaml';
 import type {
@@ -19,7 +18,6 @@ import type { UserContext } from '../lib/user-context.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { ensureDirectory, removeDirectory } from '../utils/directory.js';
 import { validatePathWithinBase } from '../utils/path-validation.js';
-import { createGitHubGitAuthEnvironment } from './github-app-auth.service.js';
 
 /**
  * サービス層用のシンプルなロガー
@@ -552,13 +550,123 @@ async function copyAgentFromDir(
   return null;
 }
 
+async function getAgentImportDestinationPath(
+  agentsDir: string,
+  tempDir: string,
+  importPath: string
+): Promise<string | null> {
+  if (isAbsolute(importPath)) {
+    throw new Error(`Security error: Absolute import path is not allowed: ${importPath}`);
+  }
+
+  const sourcePath = await validatePathWithinBase(join(tempDir, importPath), tempDir);
+
+  let sourceStats;
+  try {
+    sourceStats = await stat(sourcePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+
+  if (sourceStats.isFile() && extname(sourcePath) === '.md') {
+    return join(agentsDir, `${basename(sourcePath, '.md')}.md`);
+  }
+
+  if (sourceStats.isDirectory()) {
+    const entries = await readdir(sourcePath, { withFileTypes: true });
+    const agentFile = entries.find(entry => entry.isFile() && extname(entry.name) === '.md');
+    return agentFile ? join(agentsDir, agentFile.name) : null;
+  }
+
+  return null;
+}
+
+interface ImportDestinationSnapshot {
+  destinationPath: string;
+  backupPath: string;
+  existed: boolean;
+  isDirectory: boolean;
+}
+
+async function createImportDestinationSnapshot(
+  destinationPath: string,
+  backupRoot: string,
+  index: number
+): Promise<ImportDestinationSnapshot> {
+  const backupPath = join(backupRoot, String(index));
+
+  try {
+    const destinationStats = await stat(destinationPath);
+    const isDirectory = destinationStats.isDirectory();
+    await cp(destinationPath, backupPath, {
+      recursive: isDirectory,
+      force: true,
+    });
+    return {
+      destinationPath,
+      backupPath,
+      existed: true,
+      isDirectory,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return {
+        destinationPath,
+        backupPath,
+        existed: false,
+        isDirectory: false,
+      };
+    }
+    throw error;
+  }
+}
+
+async function rollbackImportDestinations(snapshots: ImportDestinationSnapshot[]): Promise<void> {
+  for (let index = snapshots.length - 1; index >= 0; index -= 1) {
+    const snapshot = snapshots[index];
+    await rm(snapshot.destinationPath, { recursive: true, force: true });
+
+    if (!snapshot.existed) continue;
+
+    await ensureDirectory(dirname(snapshot.destinationPath));
+    await cp(snapshot.backupPath, snapshot.destinationPath, {
+      recursive: snapshot.isDirectory,
+      force: true,
+    });
+  }
+}
+
+async function getUniqueAgentImportDestinationPaths(
+  agentsDir: string,
+  tempDir: string,
+  paths: string[]
+): Promise<Array<string | null>> {
+  const destinationPaths: Array<string | null> = [];
+  const seenDestinationPaths = new Set<string>();
+
+  for (const importPath of paths) {
+    const destinationPath = await getAgentImportDestinationPath(agentsDir, tempDir, importPath);
+    if (destinationPath) {
+      if (seenDestinationPaths.has(destinationPath)) {
+        throw new Error(`Duplicate import target detected: ${basename(destinationPath)}`);
+      }
+      seenDestinationPaths.add(destinationPath);
+    }
+    destinationPaths.push(destinationPath);
+  }
+
+  return destinationPaths;
+}
+
 /**
  * Git リポジトリからエージェントをインポート（複数パス対応、sparse-checkout で効率化）
  */
 export async function importAgentsFromGit(
   ctx: UserContext,
-  request: AgentImportRequest,
-  fastify?: FastifyInstance
+  request: AgentImportRequest
 ): Promise<AgentInfo[]> {
   const { repository_url, paths, branch = 'main' } = request;
   const agentsDir = getAgentsDir(ctx);
@@ -577,28 +685,21 @@ export async function importAgentsFromGit(
   try {
     // 1. git clone（blobless clone + no-checkout で最小限のメタデータのみ取得）
     // spawn を使用してコマンドインジェクションを防止
-    const gitAuth = fastify
-      ? await createGitHubGitAuthEnvironment(fastify, repository_url, 'read')
-      : null;
-    try {
-      await spawnAsync(
-        'git',
-        [
-          'clone',
-          '--filter=blob:none',
-          '--no-checkout',
-          '--depth',
-          '1',
-          '--branch',
-          branch,
-          repository_url,
-          tempDir,
-        ],
-        { timeout: 60000, env: gitAuth?.env } // 60秒タイムアウト
-      );
-    } finally {
-      await gitAuth?.cleanup();
-    }
+    await spawnAsync(
+      'git',
+      [
+        'clone',
+        '--filter=blob:none',
+        '--no-checkout',
+        '--depth',
+        '1',
+        '--branch',
+        branch,
+        repository_url,
+        tempDir,
+      ],
+      { timeout: 60000 } // 60秒タイムアウト
+    );
 
     // 2. sparse-checkout を設定して必要なパスのみをチェックアウト
     try {
@@ -628,12 +729,29 @@ export async function importAgentsFromGit(
 
     await ensureDirectory(agentsDir);
 
-    // 4. 各パスを並列でコピー
-    const results = await Promise.all(
-      paths.map(importPath => copyAgentFromDir(agentsDir, tempDir, importPath, importMetadata))
-    );
+    const destinationPaths = await getUniqueAgentImportDestinationPaths(agentsDir, tempDir, paths);
 
-    return results.filter((agent): agent is AgentInfo => agent !== null);
+    const backupRoot = join(tempDir, '.ccbricks-import-backups');
+    await ensureDirectory(backupRoot);
+
+    const snapshots: ImportDestinationSnapshot[] = [];
+    const results: AgentInfo[] = [];
+    try {
+      for (const [index, importPath] of paths.entries()) {
+        const destinationPath = destinationPaths[index];
+        if (destinationPath) {
+          snapshots.push(await createImportDestinationSnapshot(destinationPath, backupRoot, index));
+        }
+
+        const result = await copyAgentFromDir(agentsDir, tempDir, importPath, importMetadata);
+        if (result) results.push(result);
+      }
+    } catch (error) {
+      await rollbackImportDestinations(snapshots);
+      throw error;
+    }
+
+    return results;
   } finally {
     // 5. 一時ディレクトリを削除
     await removeDirectory(tempDir);
@@ -800,4 +918,5 @@ export const __testing = {
   getWorkspaceAgentsPath,
   mergeAndWriteAgentMetadata,
   copyAgentFromDir,
+  getAgentImportDestinationPath,
 };
