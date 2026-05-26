@@ -196,11 +196,15 @@ function findDatabricksWorkspaceOutcome(
   );
 }
 
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some(char => char.charCodeAt(0) <= 31);
+}
+
 function assertValidDatabricksWorkspacePath(workspacePath: string): void {
   if (
     !workspacePath.startsWith('/') ||
-    workspacePath.includes('..') ||
-    workspacePath.includes('\0')
+    workspacePath.split('/').some(segment => segment === '..') ||
+    hasControlCharacter(workspacePath)
   ) {
     throw new SessionAppCreateError(400, 'Databricks Workspace path is invalid');
   }
@@ -2017,28 +2021,44 @@ async function appendDatabricksAppsOutcome(
   sessionId: SessionId,
   context: SessionContextResponse,
   appName: string
-): Promise<void> {
-  const existingAppsOutcome = findDatabricksAppsOutcome(context);
-  if (existingAppsOutcome) {
-    if (existingAppsOutcome.name !== appName) {
-      throw new SessionAppCreateError(
-        400,
-        `Session already has Databricks Apps outcome '${existingAppsOutcome.name}'`
-      );
+): Promise<{ canNotifyAgent: boolean }> {
+  return fastify.withUserContext(userId, async tx => {
+    const rows = await tx
+      .select({
+        status: sessions.status,
+        context: sessions.context,
+      })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId.toUUID()))
+      .limit(1);
+    const row = rows[0] ?? null;
+    if (!row) {
+      throw new SessionAppCreateError(404, 'Session not found');
     }
-    return;
-  }
 
-  const nextContext: SessionContextResponse = {
-    ...context,
-    outcomes: [...context.outcomes, { type: 'databricks_apps', name: appName }],
-  };
+    const currentContext = (row.context as SessionContextResponse | null) ?? context;
+    const existingAppsOutcome = findDatabricksAppsOutcome(currentContext);
+    if (existingAppsOutcome) {
+      if (existingAppsOutcome.name !== appName) {
+        throw new SessionAppCreateError(
+          400,
+          `Session already has Databricks Apps outcome '${existingAppsOutcome.name}'`
+        );
+      }
+      return { canNotifyAgent: row.status === 'idle' || row.status === 'error' };
+    }
 
-  await fastify.withUserContext(userId, async tx => {
+    const nextContext: SessionContextResponse = {
+      ...currentContext,
+      outcomes: [...currentContext.outcomes, { type: 'databricks_apps', name: appName }],
+    };
+
     await tx
       .update(sessions)
       .set({ context: nextContext, updatedAt: new Date() })
       .where(eq(sessions.id, sessionId.toUUID()));
+
+    return { canNotifyAgent: row.status === 'idle' || row.status === 'error' };
   });
 }
 
@@ -2148,7 +2168,16 @@ export async function createDatabricksAppForSession(params: {
     },
   ]);
 
-  const appsClient = DatabricksAppsClient.fromToken(fastify.config.DATABRICKS_HOST, oboToken);
+  const appsClient = new DatabricksAppsClient({
+    host: fastify.config.DATABRICKS_HOST,
+    getToken: async () => {
+      const currentOboToken = ctx.oboAccessToken;
+      if (!currentOboToken) {
+        throw new SessionAppCreateError(401, 'OBO access token is required to create an app');
+      }
+      return currentOboToken;
+    },
+  });
   await createOrReuseDatabricksApp(appsClient, appName, appDescription);
   await appsClient.updatePermissions(appName, [
     {
@@ -2157,31 +2186,45 @@ export async function createDatabricksAppForSession(params: {
     },
   ]);
 
-  await appendDatabricksAppsOutcome(fastify, userId, sessionId, sessionContext, appName);
+  const { canNotifyAgent } = await appendDatabricksAppsOutcome(
+    fastify,
+    userId,
+    sessionId,
+    sessionContext,
+    appName
+  );
 
   let notificationStatus: SessionAppNotificationStatus = 'sent';
-  try {
-    const notifySession = await getSession(fastify, userId, sessionId);
-    if (!notifySession?.session_context) {
-      throw new Error('Session context not found after app creation');
-    }
-    await sendMessageToSession(
-      fastify,
-      userId,
-      sessionId,
-      createAppCreateNotificationMessage({
-        sessionId,
-        appName,
-        workspacePath,
-      }),
-      ctx
-    );
-  } catch (error) {
+  if (!canNotifyAgent) {
     notificationStatus = 'failed';
-    fastify.log.error(
-      { err: toLogError(error), sessionId: sessionId.toString(), appName },
-      'Failed to notify agent after Databricks App creation'
+    fastify.log.warn(
+      { sessionId: sessionId.toString(), appName },
+      'Skipped Databricks App deployment notification because session is not idle'
     );
+  } else {
+    try {
+      const notifySession = await getSession(fastify, userId, sessionId);
+      if (!notifySession?.session_context) {
+        throw new Error('Session context not found after app creation');
+      }
+      await sendMessageToSession(
+        fastify,
+        userId,
+        sessionId,
+        createAppCreateNotificationMessage({
+          sessionId,
+          appName,
+          workspacePath,
+        }),
+        ctx
+      );
+    } catch (error) {
+      notificationStatus = 'failed';
+      fastify.log.error(
+        { err: toLogError(error), sessionId: sessionId.toString(), appName },
+        'Failed to notify agent after Databricks App creation'
+      );
+    }
   }
 
   const session = await getSession(fastify, userId, sessionId);

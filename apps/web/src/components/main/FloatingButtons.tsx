@@ -56,13 +56,18 @@ function getAppStateStyle(state: string | undefined): AppStateStyle {
 }
 
 const STABLE_STATES = new Set<string>(['RUNNING', 'CRASHED', 'UNAVAILABLE']);
+const DEFAULT_APPS_CONSOLE_URL_TEMPLATE = '/apps-v2/app/:appName/overview';
 
 function normalizeDatabricksHost(host: string): string {
   return host.replace(/^https?:\/\//, '').replace(/\/+$/, '');
 }
 
 function buildAppOverviewUrl(host: string, appName: string): string {
-  return `https://${normalizeDatabricksHost(host)}/apps-v2/app/${encodeURIComponent(appName)}/overview`;
+  const template =
+    import.meta.env.VITE_DATABRICKS_APPS_CONSOLE_URL_TEMPLATE?.trim() ||
+    DEFAULT_APPS_CONSOLE_URL_TEMPLATE;
+  const path = template.replace(':appName', encodeURIComponent(appName));
+  return `https://${normalizeDatabricksHost(host)}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
 function getWorkspaceDisplayName(path: string): string {
@@ -158,10 +163,13 @@ export function FloatingButtons({
       });
   }, [workspacePath]);
 
-  const style = getAppStateStyle(appInfo?.app_status?.state ?? 'UNKNOWN');
+  const appState = appInfo?.app_status?.state ?? 'UNKNOWN';
+  const style = getAppStateStyle(appState);
   const canOpenDeployedApp = !!appInfo?.url;
   const canOpenConsole = !!appInfo?.name && !!databricksHost;
   const appActionsDisabled = !canOpenDeployedApp && !canOpenConsole;
+  const appButtonLabel =
+    appState === 'UNKNOWN' ? t('databricksApp.app') : `${t('databricksApp.app')} (${appState})`;
 
   const handleOpenApp = () => {
     if (appInfo?.url) {
@@ -258,7 +266,8 @@ export function FloatingButtons({
                 className="h-6 min-w-0 gap-1.5 rounded-none px-2 py-0 text-xs leading-none"
                 onClick={handleOpenApp}
                 disabled={!canOpenDeployedApp}
-                title={t('databricksApp.app')}
+                aria-label={appButtonLabel}
+                title={appButtonLabel}
               >
                 <Rocket className={cn('h-4 w-4 shrink-0', style.iconClass)} />
                 <span className="truncate leading-none">{t('databricksApp.app')}</span>

@@ -340,6 +340,7 @@
     "createShort": "App を作成",
     "creating": "Databricks App を作成中",
     "createSuccess": "Databricks App を作成し、Agent にデプロイを依頼しました",
+    "createNotificationFailed": "Databricks App は作成されましたが、Agent への通知に失敗しました。Agent に手動でデプロイを依頼してください。",
     "createError": "Databricks App の作成に失敗しました",
     "deploy": "Databricks Apps にデプロイ",
     "deployShort": "Apps へデプロイ",
@@ -347,7 +348,6 @@
     "deploySuccess": "Databricks Apps へのデプロイを開始しました",
     "deployError": "Databricks Apps へのデプロイに失敗しました",
     "missingAppYamlWarning": "Databricks App を作成するには app.yaml を追加してください。",
-    "enableApps": "Databricks App を作成",
     "workspaceOpenError": "ワークスペースを開けませんでした"
   },
   "gitStatus": {

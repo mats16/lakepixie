@@ -507,7 +507,7 @@ export function MainArea({
     return () => {
       cancelled = true;
     };
-  }, [databricksAppsOutcome, databricksWorkspaceOutcome?.path, events.length, sessionId]);
+  }, [databricksAppsOutcome, databricksWorkspaceOutcome?.path, sessionId]);
 
   const handleCreateApp = useCallback(async () => {
     const workspacePath = databricksWorkspaceOutcome?.path;
@@ -515,14 +515,18 @@ export function MainArea({
 
     setIsCreatingApp(true);
     try {
-      await sessionService.createSessionApp(sessionId, {
+      const result = await sessionService.createSessionApp(sessionId, {
         context: buildAppCreateContext({
           sessionTitle: activeSession?.title,
           workspacePath,
         }),
       });
       await refetchSession();
-      toast.success(t('databricksApp.createSuccess'));
+      if (result.notification_status === 'failed') {
+        toast.warning(t('databricksApp.createNotificationFailed'));
+      } else {
+        toast.success(t('databricksApp.createSuccess'));
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : t('databricksApp.createError');
       toast.error(message);

@@ -58,4 +58,25 @@ describe('DatabricksAppsClient', () => {
     );
     expect(options.method).toBe('POST');
   });
+
+  it('ignores 404 when deleting an app', async () => {
+    fetchSpy.mockResolvedValueOnce(createMockResponse(404, { error_code: 'NOT_FOUND' }));
+
+    await expect(client.delete('missing-app')).resolves.toBeUndefined();
+
+    const [url, options] = fetchSpy.mock.calls[0] as [URL, RequestInit];
+    expect(url.toString()).toBe('https://test-workspace.databricks.com/api/2.0/apps/missing-app');
+    expect(options.method).toBe('DELETE');
+  });
+
+  it('rejects deployment responses without deployment_id', async () => {
+    fetchSpy.mockResolvedValueOnce(createMockResponse(200, { status: { state: 'PENDING' } }));
+
+    await expect(
+      client.deploy('test-app', {
+        sourceCodePath: '/Workspace/Users/test/app',
+        mode: 'SNAPSHOT',
+      })
+    ).rejects.toThrow("missing 'deployment_id' field");
+  });
 });

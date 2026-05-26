@@ -59,6 +59,20 @@ function parseDatabricksApp(data: unknown): DatabricksApp {
   return data as DatabricksApp;
 }
 
+function parseAppDeployment(data: unknown): AppDeployment {
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    typeof (data as Record<string, unknown>).deployment_id !== 'string'
+  ) {
+    throw new DatabricksApiError(
+      502,
+      "Invalid response from Databricks Apps API: missing 'deployment_id' field"
+    );
+  }
+  return data as AppDeployment;
+}
+
 export class DatabricksAppsClient {
   private readonly host: string;
   private readonly getToken: () => Promise<string>;
@@ -70,6 +84,10 @@ export class DatabricksAppsClient {
     this.getToken = () => authProvider.getToken();
   }
 
+  /**
+   * Use only for short-lived operations where the caller guarantees token lifetime.
+   * Longer orchestration should pass a token provider so each request can obtain a fresh token.
+   */
   static fromToken(host: string, token: string): DatabricksAppsClient {
     return new DatabricksAppsClient({
       host,
@@ -159,7 +177,7 @@ export class DatabricksAppsClient {
         mode: options.mode,
       },
     });
-    return (await response.json()) as AppDeployment;
+    return parseAppDeployment(await response.json());
   }
 
   async updatePermissions(
@@ -179,6 +197,6 @@ export class DatabricksAppsClient {
    * @param appName - アプリ名
    */
   async delete(appName: string): Promise<void> {
-    await this.request('DELETE', appPath(appName));
+    await this.request('DELETE', appPath(appName), { allowedErrorStatuses: [404] });
   }
 }

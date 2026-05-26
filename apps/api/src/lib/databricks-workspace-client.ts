@@ -223,7 +223,7 @@ export class DatabricksWorkspaceClient {
     await this.throwIfNotOk(response, 'get-status');
 
     const data = (await response.json()) as WorkspaceObject;
-    if (!data.object_id) {
+    if (typeof data.object_id !== 'number') {
       throw new DatabricksApiError(
         502,
         `Workspace get-status failed: missing object_id for ${path}`

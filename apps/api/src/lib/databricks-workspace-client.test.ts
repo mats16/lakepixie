@@ -217,6 +217,20 @@ describe('DatabricksWorkspaceClient', () => {
       expect(url).toContain('/api/2.0/workspace/get-status');
       expect(url).toContain('path=%2FWorkspace%2FUsers%2Ftest%2Fapp');
     });
+
+    it('object_id 0 を有効な ID として扱うこと', async () => {
+      fetchSpy.mockResolvedValueOnce(
+        createMockResponse(200, {
+          path: '/Workspace/Users/test/root',
+          object_type: 'DIRECTORY',
+          object_id: 0,
+        })
+      );
+
+      const result = await client.getStatus('/Workspace/Users/test/root');
+
+      expect(result.object_id).toBe(0);
+    });
   });
 
   describe('updateDirectoryPermissions', () => {

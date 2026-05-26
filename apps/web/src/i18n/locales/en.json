@@ -340,6 +340,7 @@
     "createShort": "Create App",
     "creating": "Creating Databricks App",
     "createSuccess": "Databricks App created and Agent was asked to deploy it",
+    "createNotificationFailed": "Databricks App was created, but Agent notification failed. Ask the Agent to deploy it manually.",
     "createError": "Failed to create Databricks App",
     "deploy": "Deploy to Databricks Apps",
     "deployShort": "Deploy to Apps",
@@ -347,7 +348,6 @@
     "deploySuccess": "Databricks Apps deployment started",
     "deployError": "Failed to deploy to Databricks Apps",
     "missingAppYamlWarning": "Add app.yaml before creating a Databricks App.",
-    "enableApps": "Create Databricks App",
     "workspaceOpenError": "Failed to open workspace"
   },
   "gitStatus": {
