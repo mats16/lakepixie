@@ -197,7 +197,10 @@ function findDatabricksWorkspaceOutcome(
 }
 
 function hasControlCharacter(value: string): boolean {
-  return Array.from(value).some(char => char.charCodeAt(0) <= 31);
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) <= 31) return true;
+  }
+  return false;
 }
 
 function assertValidDatabricksWorkspacePath(workspacePath: string): void {
@@ -208,6 +211,10 @@ function assertValidDatabricksWorkspacePath(workspacePath: string): void {
   ) {
     throw new SessionAppCreateError(400, 'Databricks Workspace path is invalid');
   }
+}
+
+function canNotifyAgentAfterAppCreation(status: string): boolean {
+  return status === 'idle' || status === 'error';
 }
 
 function getSupportedClaudeArch(): SupportedClaudeArch {
@@ -2038,6 +2045,7 @@ async function appendDatabricksAppsOutcome(
 
     const currentContext = (row.context as SessionContextResponse | null) ?? context;
     const existingAppsOutcome = findDatabricksAppsOutcome(currentContext);
+    const canNotifyAgent = canNotifyAgentAfterAppCreation(row.status);
     if (existingAppsOutcome) {
       if (existingAppsOutcome.name !== appName) {
         throw new SessionAppCreateError(
@@ -2045,7 +2053,7 @@ async function appendDatabricksAppsOutcome(
           `Session already has Databricks Apps outcome '${existingAppsOutcome.name}'`
         );
       }
-      return { canNotifyAgent: row.status === 'idle' || row.status === 'error' };
+      return { canNotifyAgent };
     }
 
     const nextContext: SessionContextResponse = {
@@ -2058,7 +2066,7 @@ async function appendDatabricksAppsOutcome(
       .set({ context: nextContext, updatedAt: new Date() })
       .where(eq(sessions.id, sessionId.toUUID()));
 
-    return { canNotifyAgent: row.status === 'idle' || row.status === 'error' };
+    return { canNotifyAgent };
   });
 }
 

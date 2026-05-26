@@ -62,12 +62,16 @@ function normalizeDatabricksHost(host: string): string {
   return host.replace(/^https?:\/\//, '').replace(/\/+$/, '');
 }
 
+function withLeadingSlash(path: string): string {
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
 function buildAppOverviewUrl(host: string, appName: string): string {
   const template =
     import.meta.env.VITE_DATABRICKS_APPS_CONSOLE_URL_TEMPLATE?.trim() ||
     DEFAULT_APPS_CONSOLE_URL_TEMPLATE;
   const path = template.replace(':appName', encodeURIComponent(appName));
-  return `https://${normalizeDatabricksHost(host)}${path.startsWith('/') ? path : `/${path}`}`;
+  return `https://${normalizeDatabricksHost(host)}${withLeadingSlash(path)}`;
 }
 
 function getWorkspaceDisplayName(path: string): string {
