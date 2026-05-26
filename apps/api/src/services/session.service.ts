@@ -155,6 +155,16 @@ interface QueuedUserMessageResume {
 type SupportedClaudeArch = 'x64' | 'arm64';
 type LinuxLibc = 'glibc' | 'musl';
 
+interface CreateDatabricksAppForSessionParams {
+  fastify: FastifyInstance;
+  userId: string;
+  sessionId: SessionId;
+  context: string;
+  ctx: UserContext;
+}
+
+const databricksAppCreateLocks = new Set<string>();
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -215,6 +225,17 @@ function assertValidDatabricksWorkspacePath(workspacePath: string): void {
 
 function canNotifyAgentAfterAppCreation(status: string): boolean {
   return status === 'idle' || status === 'error';
+}
+
+function acquireDatabricksAppCreateLock(sessionId: SessionId): () => void {
+  const key = sessionId.toString();
+  if (databricksAppCreateLocks.has(key)) {
+    throw new SessionAppCreateError(409, 'Databricks App creation is already in progress');
+  }
+  databricksAppCreateLocks.add(key);
+  return () => {
+    databricksAppCreateLocks.delete(key);
+  };
 }
 
 function getSupportedClaudeArch(): SupportedClaudeArch {
@@ -2070,13 +2091,20 @@ async function appendDatabricksAppsOutcome(
   });
 }
 
-export async function createDatabricksAppForSession(params: {
-  fastify: FastifyInstance;
-  userId: string;
-  sessionId: SessionId;
-  context: string;
-  ctx: UserContext;
-}): Promise<SessionAppCreateResponse> {
+export async function createDatabricksAppForSession(
+  params: CreateDatabricksAppForSessionParams
+): Promise<SessionAppCreateResponse> {
+  const releaseLock = acquireDatabricksAppCreateLock(params.sessionId);
+  try {
+    return await createDatabricksAppForSessionUnlocked(params);
+  } finally {
+    releaseLock();
+  }
+}
+
+async function createDatabricksAppForSessionUnlocked(
+  params: CreateDatabricksAppForSessionParams
+): Promise<SessionAppCreateResponse> {
   const { fastify, userId, sessionId, ctx } = params;
   const createContext = params.context.trim();
   if (!createContext) {
@@ -2466,6 +2494,8 @@ export const __testing = {
   validateSparseCheckoutPath,
   handleCanUseTool,
   clearActiveSessionQueries: () => activeSessionQueries.clear(),
+  clearDatabricksAppCreateLocks: () => databricksAppCreateLocks.clear(),
+  acquireDatabricksAppCreateLock,
   registerActiveSessionQuery: (
     sessionId: SessionId,
     activeQuery: Partial<ActiveSessionQuery> & { query: Query }

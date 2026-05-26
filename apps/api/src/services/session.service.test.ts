@@ -153,6 +153,7 @@ describe('session.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     __testing.clearActiveSessionQueries();
+    __testing.clearDatabricksAppCreateLocks();
     exitPlanModeTesting.clearPendingExitPlanModes();
     mockSpawn.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & {
@@ -165,6 +166,21 @@ describe('session.service', () => {
       child.kill = vi.fn();
       queueMicrotask(() => child.emit('close', 0));
       return child;
+    });
+  });
+
+  describe('Databricks App creation lock', () => {
+    it('rejects concurrent creation for the same session until the lock is released', () => {
+      const sessionId = new SessionId();
+      const release = __testing.acquireDatabricksAppCreateLock(sessionId);
+
+      expect(() => __testing.acquireDatabricksAppCreateLock(sessionId)).toThrow(
+        'Databricks App creation is already in progress'
+      );
+
+      release();
+      const releaseAfterRetry = __testing.acquireDatabricksAppCreateLock(sessionId);
+      releaseAfterRetry();
     });
   });
 

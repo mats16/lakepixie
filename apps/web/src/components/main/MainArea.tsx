@@ -142,6 +142,7 @@ export function MainArea({
   const [optimisticEffortLevel, setOptimisticEffortLevel] = useState<WsEffortLevel | null>(null);
   const [isCreatingApp, setIsCreatingApp] = useState(false);
   const [hasAppYaml, setHasAppYaml] = useState<boolean | null>(null);
+  const [isCheckingAppYaml, setIsCheckingAppYaml] = useState(false);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // navigate state から初期メッセージを取得
@@ -491,17 +492,22 @@ export function MainArea({
     const workspacePath = databricksWorkspaceOutcome?.path;
     if (!sessionId || !workspacePath || databricksAppsOutcome) {
       setHasAppYaml(null);
+      setIsCheckingAppYaml(false);
       return;
     }
 
     let cancelled = false;
+    setIsCheckingAppYaml(true);
     sessionService
       .getAppCreatePrerequisites(sessionId)
       .then(result => {
         if (!cancelled) setHasAppYaml(result.has_app_yaml);
       })
       .catch(() => {
-        if (!cancelled) setHasAppYaml(false);
+        if (!cancelled) setHasAppYaml(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsCheckingAppYaml(false);
       });
 
     return () => {
@@ -744,7 +750,8 @@ export function MainArea({
             onCreateApp={handleCreateApp}
             isCreatingApp={isCreatingApp}
             createAppDisabled={
-              hasAppYaml !== true ||
+              isCheckingAppYaml ||
+              hasAppYaml === false ||
               isAgentThinking ||
               sessionControlPending ||
               activeSession?.session_status === 'archived'
