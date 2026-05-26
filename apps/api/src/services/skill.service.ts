@@ -2,7 +2,6 @@ import { readdir, readFile, writeFile, rm, stat, cp } from 'node:fs/promises';
 import { join, basename, isAbsolute } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
 import { spawnAsync } from '../utils/spawn.js';
 import yaml from 'js-yaml';
 import type {
@@ -19,7 +18,6 @@ import type { UserContext } from '../lib/user-context.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { ensureDirectory, removeDirectory } from '../utils/directory.js';
 import { validatePathWithinBase } from '../utils/path-validation.js';
-import { createGitHubGitAuthEnvironment } from './github-app-auth.service.js';
 
 /**
  * サービス層用のシンプルなロガー
@@ -575,8 +573,7 @@ async function copySkillFromDir(
  */
 export async function importSkillsFromGit(
   ctx: UserContext,
-  request: SkillImportRequest,
-  fastify?: FastifyInstance
+  request: SkillImportRequest
 ): Promise<SkillInfo[]> {
   const { repository_url, paths, branch = 'main' } = request;
   const skillsDir = getSkillsDir(ctx);
@@ -595,28 +592,21 @@ export async function importSkillsFromGit(
   try {
     // 1. git clone（blobless clone + no-checkout で最小限のメタデータのみ取得）
     // spawn を使用してコマンドインジェクションを防止
-    const gitAuth = fastify
-      ? await createGitHubGitAuthEnvironment(fastify, repository_url, 'read')
-      : null;
-    try {
-      await spawnAsync(
-        'git',
-        [
-          'clone',
-          '--filter=blob:none',
-          '--no-checkout',
-          '--depth',
-          '1',
-          '--branch',
-          branch,
-          repository_url,
-          tempDir,
-        ],
-        { timeout: 60000, env: gitAuth?.env } // 60秒タイムアウト
-      );
-    } finally {
-      await gitAuth?.cleanup();
-    }
+    await spawnAsync(
+      'git',
+      [
+        'clone',
+        '--filter=blob:none',
+        '--no-checkout',
+        '--depth',
+        '1',
+        '--branch',
+        branch,
+        repository_url,
+        tempDir,
+      ],
+      { timeout: 60000 } // 60秒タイムアウト
+    );
 
     // 2. sparse-checkout を設定して必要なパスのみをチェックアウト
     try {

@@ -261,15 +261,11 @@ const userAgentsRoute: FastifyPluginAsync = async fastify => {
 
     try {
       const ctx = createUserContext(fastify, request);
-      const importedAgents = await importAgentsFromGit(
-        ctx,
-        {
-          repository_url,
-          paths,
-          branch: branch ?? 'main',
-        },
-        fastify
-      );
+      const importedAgents = await importAgentsFromGit(ctx, {
+        repository_url,
+        paths,
+        branch: branch ?? 'main',
+      });
 
       return reply.status(201).send({
         success: true,

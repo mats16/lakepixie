@@ -1,9 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { __testing } from './skill.service.js';
+import type { UserContext } from '../lib/user-context.js';
+
+const mockSpawnAsync = vi.hoisted(() => vi.fn());
+
+vi.mock('../utils/spawn.js', () => ({
+  spawnAsync: mockSpawnAsync,
+}));
+
+import { __testing, importSkillsFromGit } from './skill.service.js';
 
 const {
   parseSkillFile,
@@ -327,6 +335,69 @@ description: Test
       const result = getWorkspaceSkillsPath('user.name-123');
 
       expect(result).toBe('/Workspace/Users/user.name-123/.assistant/skills');
+    });
+  });
+
+  describe('importSkillsFromGit', () => {
+    beforeEach(() => {
+      mockSpawnAsync.mockReset();
+      mockSpawnAsync.mockResolvedValue({ stdout: '', stderr: '' });
+    });
+
+    it('clones without passing authentication environment variables', async () => {
+      const userHome = join(tmpdir(), `test-skill-import-user-${randomUUID()}`);
+      const validSkillContent = `---
+name: test-skill
+description: A test skill
+metadata:
+  version: "1.0.0"
+---
+
+# Test Skill
+`;
+
+      mockSpawnAsync.mockImplementation(async (_command: string, args: string[]) => {
+        if (args[0] === 'clone') {
+          const tempDir = args.at(-1);
+          if (typeof tempDir !== 'string') {
+            throw new Error('Clone destination was not provided');
+          }
+          const skillDir = join(tempDir, 'skills', 'test-skill');
+          await mkdir(skillDir, { recursive: true });
+          await writeFile(join(skillDir, 'SKILL.md'), validSkillContent);
+        }
+        return { stdout: '', stderr: '' };
+      });
+
+      try {
+        const result = await importSkillsFromGit({ userHome } as unknown as UserContext, {
+          repository_url: 'https://github.com/acme/public-skills.git',
+          paths: ['skills/test-skill'],
+          branch: 'main',
+        });
+
+        expect(result).toHaveLength(1);
+        expect(result[0]?.name).toBe('test-skill');
+        expect(mockSpawnAsync).toHaveBeenNthCalledWith(
+          1,
+          'git',
+          [
+            'clone',
+            '--filter=blob:none',
+            '--no-checkout',
+            '--depth',
+            '1',
+            '--branch',
+            'main',
+            'https://github.com/acme/public-skills.git',
+            expect.any(String),
+          ],
+          { timeout: 60000 }
+        );
+        expect(mockSpawnAsync.mock.calls[0]?.[2]).not.toHaveProperty('env');
+      } finally {
+        await rm(userHome, { recursive: true, force: true });
+      }
     });
   });
 
