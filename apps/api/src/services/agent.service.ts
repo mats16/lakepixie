@@ -600,15 +600,16 @@ async function createImportDestinationSnapshot(
 
   try {
     const destinationStats = await stat(destinationPath);
+    const isDirectory = destinationStats.isDirectory();
     await cp(destinationPath, backupPath, {
-      recursive: destinationStats.isDirectory(),
+      recursive: isDirectory,
       force: true,
     });
     return {
       destinationPath,
       backupPath,
       existed: true,
-      isDirectory: destinationStats.isDirectory(),
+      isDirectory,
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -623,21 +624,41 @@ async function createImportDestinationSnapshot(
   }
 }
 
-async function rollbackImportDestinations(
-  snapshots: ImportDestinationSnapshot[]
-): Promise<void> {
+async function rollbackImportDestinations(snapshots: ImportDestinationSnapshot[]): Promise<void> {
   for (let index = snapshots.length - 1; index >= 0; index -= 1) {
     const snapshot = snapshots[index];
     await rm(snapshot.destinationPath, { recursive: true, force: true });
 
-    if (snapshot.existed) {
-      await ensureDirectory(dirname(snapshot.destinationPath));
-      await cp(snapshot.backupPath, snapshot.destinationPath, {
-        recursive: snapshot.isDirectory,
-        force: true,
-      });
-    }
+    if (!snapshot.existed) continue;
+
+    await ensureDirectory(dirname(snapshot.destinationPath));
+    await cp(snapshot.backupPath, snapshot.destinationPath, {
+      recursive: snapshot.isDirectory,
+      force: true,
+    });
   }
+}
+
+async function getUniqueAgentImportDestinationPaths(
+  agentsDir: string,
+  tempDir: string,
+  paths: string[]
+): Promise<Array<string | null>> {
+  const destinationPaths: Array<string | null> = [];
+  const seenDestinationPaths = new Set<string>();
+
+  for (const importPath of paths) {
+    const destinationPath = await getAgentImportDestinationPath(agentsDir, tempDir, importPath);
+    if (destinationPath) {
+      if (seenDestinationPaths.has(destinationPath)) {
+        throw new Error(`Duplicate import target detected: ${basename(destinationPath)}`);
+      }
+      seenDestinationPaths.add(destinationPath);
+    }
+    destinationPaths.push(destinationPath);
+  }
+
+  return destinationPaths;
 }
 
 /**
@@ -708,18 +729,7 @@ export async function importAgentsFromGit(
 
     await ensureDirectory(agentsDir);
 
-    const destinationPaths: Array<string | null> = [];
-    const seenDestinationPaths = new Set<string>();
-    for (const importPath of paths) {
-      const destinationPath = await getAgentImportDestinationPath(agentsDir, tempDir, importPath);
-      if (destinationPath) {
-        if (seenDestinationPaths.has(destinationPath)) {
-          throw new Error(`Duplicate import target detected: ${basename(destinationPath)}`);
-        }
-        seenDestinationPaths.add(destinationPath);
-      }
-      destinationPaths.push(destinationPath);
-    }
+    const destinationPaths = await getUniqueAgentImportDestinationPaths(agentsDir, tempDir, paths);
 
     const backupRoot = join(tempDir, '.ccbricks-import-backups');
     await ensureDirectory(backupRoot);
