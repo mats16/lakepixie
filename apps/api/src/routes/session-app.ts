@@ -1,17 +1,46 @@
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
-import type { ResolvedDatabricksAppsOutcome } from '@repo/types';
+import path from 'node:path';
+import { access } from 'node:fs/promises';
+import type {
+  ApiError,
+  ResolvedDatabricksAppsOutcome,
+  SessionAppCreatePrerequisitesResponse,
+  SessionAppCreateRequest,
+  SessionAppCreateResponse,
+} from '@repo/types';
 import { SessionId } from '../models/session.model.js';
-import { getSession } from '../services/session.service.js';
+import {
+  createDatabricksAppForSession,
+  getSession,
+  SessionAppCreateError,
+} from '../services/session.service.js';
 import { DatabricksAppsClient, DatabricksApiError } from '../lib/databricks-apps-client.js';
 import { getAuthProvider } from '../lib/databricks-auth.js';
+import { createUserContext } from '../lib/user-context.js';
+import { validatePathWithinBase } from '../utils/path-validation.js';
 
 function sendError(
   reply: FastifyReply,
-  statusCode: 401 | 404 | 500,
+  statusCode: 400 | 401 | 404 | 409 | 500,
   error: string,
   message: string
 ): ReturnType<FastifyReply['send']> {
   return reply.status(statusCode).send({ error, message, statusCode });
+}
+
+function getErrorName(statusCode: 400 | 401 | 404 | 409 | 500): string {
+  switch (statusCode) {
+    case 400:
+      return 'BadRequest';
+    case 401:
+      return 'Unauthorized';
+    case 404:
+      return 'NotFound';
+    case 409:
+      return 'Conflict';
+    case 500:
+      return 'InternalServerError';
+  }
 }
 
 function parseSessionId(sessionIdStr: string): SessionId | null {
@@ -23,6 +52,80 @@ function parseSessionId(sessionIdStr: string): SessionId | null {
 }
 
 const sessionAppRoute: FastifyPluginAsync = async fastify => {
+  fastify.get<{
+    Params: { session_id: string };
+    Reply: SessionAppCreatePrerequisitesResponse | ApiError;
+  }>('/sessions/:session_id/app/create-prerequisites', async (request, reply) => {
+    const { user } = request.ctx!;
+
+    if (!user.id) {
+      return sendError(reply, 401, 'Unauthorized', 'User ID not found in request context');
+    }
+
+    const sessionId = parseSessionId(request.params.session_id);
+    if (!sessionId) {
+      return sendError(reply, 404, 'NotFound', 'Session not found');
+    }
+
+    const session = await getSession(fastify, user.id, sessionId);
+    if (!session?.session_context) {
+      return sendError(reply, 404, 'NotFound', 'Session not found');
+    }
+
+    try {
+      const sessionsBaseDir = path.join(fastify.config.CCBRICKS_BASE_DIR, 'sessions');
+      const cwd = await validatePathWithinBase(session.session_context.cwd, sessionsBaseDir);
+      await access(path.join(cwd, 'app.yaml'));
+      return reply.send({ has_app_yaml: true });
+    } catch {
+      return reply.send({ has_app_yaml: false });
+    }
+  });
+
+  fastify.post<{
+    Params: { session_id: string };
+    Body: SessionAppCreateRequest;
+    Reply: SessionAppCreateResponse | ApiError;
+  }>('/sessions/:session_id/app/create', async (request, reply) => {
+    const { user } = request.ctx!;
+
+    if (!user.id) {
+      return sendError(reply, 401, 'Unauthorized', 'User ID not found in request context');
+    }
+
+    const sessionId = parseSessionId(request.params.session_id);
+    if (!sessionId) {
+      return sendError(reply, 404, 'NotFound', 'Session not found');
+    }
+
+    if (!request.body || typeof request.body.context !== 'string') {
+      return sendError(reply, 400, 'BadRequest', 'context is required');
+    }
+
+    try {
+      const ctx = createUserContext(fastify, request);
+      const result = await createDatabricksAppForSession({
+        fastify,
+        userId: user.id,
+        sessionId,
+        context: request.body.context,
+        ctx,
+      });
+      return reply.status(201).send(result);
+    } catch (error) {
+      if (error instanceof SessionAppCreateError) {
+        return sendError(reply, error.statusCode, getErrorName(error.statusCode), error.message);
+      }
+      if (error instanceof DatabricksApiError) {
+        request.log.error(error, 'Failed to create Databricks App');
+        return sendError(reply, 500, 'InternalServerError', error.message);
+      }
+      request.log.error(error, 'Failed to create Databricks App');
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return sendError(reply, 500, 'InternalServerError', message);
+    }
+  });
+
   /**
    * GET /sessions/:session_id/app
    * セッションに関連付けられた Databricks App の情報を取得

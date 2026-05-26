@@ -12,6 +12,9 @@ import type {
   GenerateTitleRequest,
   GenerateTitleResponse,
   GitRepositoryDiffResponse,
+  SessionAppCreatePrerequisitesResponse,
+  SessionAppCreateRequest,
+  SessionAppCreateResponse,
   SDKUserMessage,
   WsControlRequest,
 } from '@repo/types';
@@ -78,6 +81,14 @@ export const sessionService = {
     return apiClient<GitRepositoryDiffResponse>(`/api/sessions/${sessionId}/git-diff`);
   },
 
+  async getAppCreatePrerequisites(
+    sessionId: string
+  ): Promise<SessionAppCreatePrerequisitesResponse> {
+    return apiClient<SessionAppCreatePrerequisitesResponse>(
+      `/api/sessions/${sessionId}/app/create-prerequisites`
+    );
+  },
+
   async sendMessage(sessionId: string, message: SDKUserMessage): Promise<SessionEventPostResponse> {
     return apiClient<SessionEventPostResponse>(`/api/sessions/${sessionId}/events`, {
       method: 'POST',
@@ -106,6 +117,16 @@ export const sessionService = {
     return apiClient<SessionArchiveResponse>(`/api/sessions/${sessionId}/archive`, {
       method: 'POST',
       body: JSON.stringify({}),
+    });
+  },
+
+  async createSessionApp(
+    sessionId: string,
+    request: SessionAppCreateRequest
+  ): Promise<SessionAppCreateResponse> {
+    return apiClient<SessionAppCreateResponse>(`/api/sessions/${sessionId}/app/create`, {
+      method: 'POST',
+      body: JSON.stringify(request),
     });
   },
 };

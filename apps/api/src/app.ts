@@ -10,6 +10,7 @@ import userRoute from './routes/user.js';
 import appSettingsRoute from './routes/app-settings.js';
 import sessionRoute from './routes/session.js';
 import sessionAppRoute from './routes/session-app.js';
+import appNameRoute from './routes/app-name.js';
 import titleRoute from './routes/title.js';
 import workspaceRoute from './routes/workspace.js';
 import reposRoute from './routes/repos.js';
@@ -57,6 +58,7 @@ export async function build() {
   await app.register(userRoute, { prefix: '/api' });
   await app.register(sessionRoute, { prefix: '/api' });
   await app.register(sessionAppRoute, { prefix: '/api' });
+  await app.register(appNameRoute, { prefix: '/api' });
   await app.register(titleRoute, { prefix: '/api' });
   await app.register(workspaceRoute, { prefix: '/api/databricks' });
   await app.register(reposRoute, { prefix: '/api/databricks' });

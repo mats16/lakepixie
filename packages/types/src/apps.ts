@@ -27,7 +27,7 @@ export interface AppDeployment {
  * App Compute Status
  */
 export interface AppComputeStatus {
-  state?: 'STARTING' | 'RUNNING' | 'STOPPING' | 'STOPPED' | 'ERROR';
+  state?: string;
   message?: string;
 }
 
@@ -66,3 +66,53 @@ export interface DatabricksApp {
  * GET /api/sessions/:session_id/app のレスポンス型
  */
 export type SessionAppResponse = DatabricksApp;
+
+/**
+ * GET /api/sessions/:session_id/app/create-prerequisites のレスポンス型
+ */
+export interface SessionAppCreatePrerequisitesResponse {
+  has_app_yaml: boolean;
+}
+
+export type SessionAppDeployPrerequisitesResponse = SessionAppCreatePrerequisitesResponse;
+
+/**
+ * POST /api/generate_app_name のリクエスト型
+ */
+export interface GenerateAppNameRequest {
+  context: string;
+}
+
+/**
+ * POST /api/generate_app_name のレスポンス型
+ */
+export interface GenerateAppNameResponse {
+  name: string;
+}
+
+export interface GenerateAppMetadataResponse {
+  name: string;
+  description: string;
+}
+
+/**
+ * POST /api/sessions/:session_id/app/create のリクエスト型
+ */
+export interface SessionAppCreateRequest {
+  context: string;
+}
+
+export type SessionAppPermissionStatus = 'granted';
+export type SessionAppNotificationStatus = 'sent' | 'failed';
+
+/**
+ * POST /api/sessions/:session_id/app/create のレスポンス型
+ */
+export interface SessionAppCreateResponse {
+  session: import('./session.js').SessionResponse;
+  name: string;
+  description: string;
+  workspace_path: string;
+  sp_permission_status: SessionAppPermissionStatus;
+  notification_status: SessionAppNotificationStatus;
+}

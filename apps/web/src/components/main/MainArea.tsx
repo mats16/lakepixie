@@ -111,6 +111,18 @@ function getFloatingButtonsBottomClassName(
   return undefined;
 }
 
+function buildAppCreateContext(params: {
+  sessionTitle?: string | null;
+  workspacePath: string;
+}): string {
+  return [
+    params.sessionTitle ? `Session title: ${params.sessionTitle}` : null,
+    `Workspace path: ${params.workspacePath}`,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join('\n');
+}
+
 export function MainArea({
   branchName,
   onSendMessage,
@@ -128,6 +140,9 @@ export function MainArea({
   const [optimisticModelId, setOptimisticModelId] = useState<string | null>(null);
   const [optimisticPlanMode, setOptimisticPlanMode] = useState<boolean | null>(null);
   const [optimisticEffortLevel, setOptimisticEffortLevel] = useState<WsEffortLevel | null>(null);
+  const [isCreatingApp, setIsCreatingApp] = useState(false);
+  const [hasAppYaml, setHasAppYaml] = useState<boolean | null>(null);
+  const [isCheckingAppYaml, setIsCheckingAppYaml] = useState(false);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // navigate state から初期メッセージを取得
@@ -473,6 +488,67 @@ export function MainArea({
     [isPlanMode, modeBeforePlan, refetchSession, sessionId, setPermissionMode, t]
   );
 
+  useEffect(() => {
+    const workspacePath = databricksWorkspaceOutcome?.path;
+    if (!sessionId || !workspacePath || databricksAppsOutcome) {
+      setHasAppYaml(null);
+      setIsCheckingAppYaml(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsCheckingAppYaml(true);
+    sessionService
+      .getAppCreatePrerequisites(sessionId)
+      .then(result => {
+        if (!cancelled) setHasAppYaml(result.has_app_yaml);
+      })
+      .catch(() => {
+        if (!cancelled) setHasAppYaml(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsCheckingAppYaml(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [databricksAppsOutcome, databricksWorkspaceOutcome?.path, sessionId]);
+
+  const handleCreateApp = useCallback(async () => {
+    const workspacePath = databricksWorkspaceOutcome?.path;
+    if (!sessionId || !workspacePath || isCreatingApp || hasAppYaml === false) return;
+
+    setIsCreatingApp(true);
+    try {
+      const result = await sessionService.createSessionApp(sessionId, {
+        context: buildAppCreateContext({
+          sessionTitle: activeSession?.title,
+          workspacePath,
+        }),
+      });
+      await refetchSession();
+      if (result.notification_status === 'failed') {
+        toast.warning(t('databricksApp.createNotificationFailed'));
+      } else {
+        toast.success(t('databricksApp.createSuccess'));
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('databricksApp.createError');
+      toast.error(message);
+    } finally {
+      setIsCreatingApp(false);
+    }
+  }, [
+    activeSession?.title,
+    databricksWorkspaceOutcome?.path,
+    hasAppYaml,
+    isCreatingApp,
+    refetchSession,
+    sessionId,
+    t,
+  ]);
+
   const handleNewSession = async ({
     content,
     modelId,
@@ -671,6 +747,18 @@ export function MainArea({
             showAppButton={!!databricksAppsOutcome}
             workspacePath={databricksWorkspaceOutcome?.path}
             bottomClassName={floatingButtonsBottomClassName}
+            onCreateApp={handleCreateApp}
+            isCreatingApp={isCreatingApp}
+            createAppDisabled={
+              isCheckingAppYaml ||
+              hasAppYaml === false ||
+              isAgentThinking ||
+              sessionControlPending ||
+              activeSession?.session_status === 'archived'
+            }
+            createAppTooltip={
+              hasAppYaml === false ? t('databricksApp.missingAppYamlWarning') : undefined
+            }
           />
         )}
         {gitRepositoryStatus && (

@@ -333,8 +333,21 @@
   "databricksApp": {
     "workspace": "ワークスペース",
     "app": "アプリ",
-    "logs": "ログ",
-    "enableApps": "Databricks Apps にデプロイ",
+    "logs": "ログを表示",
+    "console": "コンソール",
+    "actions": "アプリ操作",
+    "create": "Databricks App を作成",
+    "createShort": "App を作成",
+    "creating": "Databricks App を作成中",
+    "createSuccess": "Databricks App を作成し、Agent にデプロイを依頼しました",
+    "createNotificationFailed": "Databricks App は作成されましたが、Agent への通知に失敗しました。Agent に手動でデプロイを依頼してください。",
+    "createError": "Databricks App の作成に失敗しました",
+    "deploy": "Databricks Apps にデプロイ",
+    "deployShort": "Apps へデプロイ",
+    "deploying": "Databricks Apps にデプロイ中",
+    "deploySuccess": "Databricks Apps へのデプロイを開始しました",
+    "deployError": "Databricks Apps へのデプロイに失敗しました",
+    "missingAppYamlWarning": "Databricks App を作成するには app.yaml を追加してください。",
     "workspaceOpenError": "ワークスペースを開けませんでした"
   },
   "gitStatus": {

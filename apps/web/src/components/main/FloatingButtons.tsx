@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Rocket, Folder, Settings, Logs, Loader2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Rocket, Folder, Settings, Logs, Loader2, ChevronDown } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { APP_STATUS_POLLING_INTERVAL_MS, APP_STATUS_POLLING_STABLE_INTERVAL_MS } from '@/constants';
 import { useUser } from '@/hooks/useUser';
@@ -15,41 +21,33 @@ interface FloatingButtonsProps {
   /** Workspace パス - ボタン表示は path の有無で判定 */
   workspacePath?: string;
   bottomClassName?: string;
+  onCreateApp?: () => void;
+  isCreatingApp?: boolean;
+  createAppDisabled?: boolean;
+  createAppTooltip?: string;
 }
 
 type AppStateType = 'RUNNING' | 'DEPLOYING' | 'CRASHED' | 'UNAVAILABLE' | 'UNKNOWN';
 
 interface AppStateStyle {
   iconClass: string;
-  badgeVariant: 'default' | 'secondary' | 'destructive' | 'outline';
-  badgeClass: string;
 }
 
 const APP_STATE_STYLES: Record<AppStateType, AppStateStyle> = {
   RUNNING: {
     iconClass: 'text-green-500',
-    badgeVariant: 'default',
-    badgeClass: 'bg-green-500 hover:bg-green-500',
   },
   DEPLOYING: {
     iconClass: 'text-yellow-500 animate-spin',
-    badgeVariant: 'secondary',
-    badgeClass: 'bg-yellow-500 hover:bg-yellow-500 text-black',
   },
   CRASHED: {
     iconClass: 'text-red-500',
-    badgeVariant: 'destructive',
-    badgeClass: 'bg-red-500 hover:bg-red-500',
   },
   UNAVAILABLE: {
     iconClass: 'text-red-500',
-    badgeVariant: 'destructive',
-    badgeClass: 'bg-red-500 hover:bg-red-500',
   },
   UNKNOWN: {
     iconClass: 'text-foreground',
-    badgeVariant: 'secondary',
-    badgeClass: '',
   },
 };
 
@@ -58,6 +56,29 @@ function getAppStateStyle(state: string | undefined): AppStateStyle {
 }
 
 const STABLE_STATES = new Set<string>(['RUNNING', 'CRASHED', 'UNAVAILABLE']);
+const DEFAULT_APPS_CONSOLE_URL_TEMPLATE = '/apps-v2/app/:appName/overview';
+
+function normalizeDatabricksHost(host: string): string {
+  return host.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+}
+
+function withLeadingSlash(path: string): string {
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
+function buildAppOverviewUrl(host: string, appName: string): string {
+  const template =
+    import.meta.env.VITE_DATABRICKS_APPS_CONSOLE_URL_TEMPLATE?.trim() ||
+    DEFAULT_APPS_CONSOLE_URL_TEMPLATE;
+  const path = template.replace(':appName', encodeURIComponent(appName));
+  return `https://${normalizeDatabricksHost(host)}${withLeadingSlash(path)}`;
+}
+
+function getWorkspaceDisplayName(path: string): string {
+  const trimmed = path.replace(/\/+$/, '');
+  const parts = trimmed.split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
 
 function getPollingInterval(state: string | undefined): number {
   return state && STABLE_STATES.has(state)
@@ -70,8 +91,13 @@ export function FloatingButtons({
   showAppButton,
   workspacePath,
   bottomClassName = 'pb-[7.5rem]',
+  onCreateApp,
+  isCreatingApp = false,
+  createAppDisabled = false,
+  createAppTooltip,
 }: FloatingButtonsProps) {
   const showWorkspaceButton = !!workspacePath;
+  const showCreateButton = showWorkspaceButton && !showAppButton && !!onCreateApp;
   const { t } = useTranslation();
   const { databricksHost } = useUser();
   const [appInfo, setAppInfo] = useState<DatabricksApp | null>(null);
@@ -79,6 +105,7 @@ export function FloatingButtons({
   const workspaceObjectIdRef = useRef<number | undefined>(undefined);
   const fetchAppInfoRef = useRef<() => Promise<void>>(undefined);
   const appStateRef = useRef<string | undefined>(undefined);
+  const workspaceDisplayName = workspacePath ? getWorkspaceDisplayName(workspacePath) : '';
 
   const fetchAppInfo = useCallback(async () => {
     if (!showAppButton) return;
@@ -142,6 +169,11 @@ export function FloatingButtons({
 
   const appState = appInfo?.app_status?.state ?? 'UNKNOWN';
   const style = getAppStateStyle(appState);
+  const canOpenDeployedApp = !!appInfo?.url;
+  const canOpenConsole = !!appInfo?.name && !!databricksHost;
+  const appActionsDisabled = !canOpenDeployedApp && !canOpenConsole;
+  const appButtonLabel =
+    appState === 'UNKNOWN' ? t('databricksApp.app') : `${t('databricksApp.app')} (${appState})`;
 
   const handleOpenApp = () => {
     if (appInfo?.url) {
@@ -157,8 +189,7 @@ export function FloatingButtons({
 
   const handleOpenConsole = () => {
     if (appInfo?.name && databricksHost) {
-      const consoleUrl = `https://${databricksHost}/apps/${appInfo.name}`;
-      window.open(consoleUrl, '_blank');
+      window.open(buildAppOverviewUrl(databricksHost, appInfo.name), '_blank');
     }
   };
 
@@ -222,52 +253,80 @@ export function FloatingButtons({
               ) : (
                 <Folder className="h-4 w-4 shrink-0 text-foreground" />
               )}
-              <span className="min-w-0 truncate text-sm font-medium">{workspacePath}</span>
+              <span className="min-w-0 truncate text-sm font-medium">{workspaceDisplayName}</span>
             </button>
           )}
 
           {showAppButton && (
             <div
               className={cn(
-                'flex min-w-0 items-center gap-2 overflow-hidden',
+                'flex shrink-0 overflow-hidden rounded-md border shadow-sm',
                 showWorkspaceButton ? 'max-w-[42%] shrink-0' : 'ml-auto'
               )}
             >
-              <button
+              <Button
                 type="button"
-                className="flex min-w-0 items-center gap-1 hover:opacity-70 disabled:opacity-50"
+                variant="ghost"
+                className="h-6 min-w-0 gap-1.5 rounded-none px-2 py-0 text-xs leading-none"
                 onClick={handleOpenApp}
-                disabled={!appInfo?.url}
+                disabled={!canOpenDeployedApp}
+                aria-label={appButtonLabel}
+                title={appButtonLabel}
               >
                 <Rocket className={cn('h-4 w-4 shrink-0', style.iconClass)} />
-                <span className="truncate text-sm font-medium">{t('databricksApp.app')}</span>
-              </button>
-              <Badge
-                variant={style.badgeVariant}
-                className={cn('shrink-0 text-xs px-1.5 py-0', style.badgeClass)}
-              >
-                {appState}
-              </Badge>
-              <span className="shrink-0 text-muted-foreground">|</span>
-              <button
-                type="button"
-                className="flex min-w-0 items-center gap-1 hover:opacity-70 disabled:opacity-50"
-                onClick={handleOpenLogs}
-                disabled={!appInfo?.url}
-              >
-                <Logs className="h-4 w-4 shrink-0 text-foreground" />
-                <span className="truncate text-sm font-medium">{t('databricksApp.logs')}</span>
-              </button>
-              <span className="shrink-0 text-muted-foreground">|</span>
-              <button
-                type="button"
-                className="shrink-0 hover:opacity-70 disabled:opacity-50"
-                onClick={handleOpenConsole}
-                disabled={!appInfo?.name}
-              >
-                <Settings className="h-4 w-4 text-foreground" />
-              </button>
+                <span className="truncate leading-none">{t('databricksApp.app')}</span>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 rounded-none border-l py-0"
+                    disabled={appActionsDisabled}
+                    aria-label={t('databricksApp.actions')}
+                    title={t('databricksApp.actions')}
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={handleOpenLogs} disabled={!canOpenDeployedApp}>
+                    <Logs className="h-4 w-4" />
+                    {t('databricksApp.logs')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleOpenConsole} disabled={!canOpenConsole}>
+                    <Settings className="h-4 w-4" />
+                    {t('databricksApp.console')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
+          )}
+
+          {showCreateButton && (
+            <span
+              className="flex shrink-0 overflow-hidden rounded-md border shadow-sm"
+              title={
+                createAppTooltip ??
+                t(isCreatingApp ? 'databricksApp.creating' : 'databricksApp.create')
+              }
+            >
+              <button
+                type="button"
+                className="inline-flex h-6 shrink-0 items-center gap-1.5 px-2 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={onCreateApp}
+                disabled={isCreatingApp || createAppDisabled}
+                aria-label={t(isCreatingApp ? 'databricksApp.creating' : 'databricksApp.create')}
+              >
+                {isCreatingApp ? (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin text-foreground" />
+                ) : (
+                  <Rocket className="h-3 w-3 shrink-0 text-foreground" />
+                )}
+                <span className="whitespace-nowrap">{t('databricksApp.createShort')}</span>
+              </button>
+            </span>
           )}
         </div>
       </div>
