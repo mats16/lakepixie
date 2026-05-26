@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -393,14 +393,7 @@ description: Test
   });
 
   describe('importAgentsFromGit', () => {
-    beforeEach(() => {
-      mockSpawnAsync.mockReset();
-      mockSpawnAsync.mockResolvedValue({ stdout: '', stderr: '' });
-    });
-
-    it('clones without passing authentication environment variables', async () => {
-      const userHome = join(tmpdir(), `test-agent-import-user-${randomUUID()}`);
-      const validAgentContent = `---
+    const validAgentContent = `---
 name: test-agent
 description: A test agent
 metadata:
@@ -410,17 +403,30 @@ metadata:
 # Test Agent
 `;
 
+    beforeEach(() => {
+      mockSpawnAsync.mockReset();
+      mockSpawnAsync.mockResolvedValue({ stdout: '', stderr: '' });
+    });
+
+    function mockCloneRepository(populate: (tempDir: string) => Promise<void>): void {
       mockSpawnAsync.mockImplementation(async (_command: string, args: string[]) => {
         if (args[0] === 'clone') {
           const tempDir = args.at(-1);
           if (typeof tempDir !== 'string') {
             throw new Error('Clone destination was not provided');
           }
-          const agentDir = join(tempDir, 'agents');
-          await mkdir(agentDir, { recursive: true });
-          await writeFile(join(agentDir, 'test-agent.md'), validAgentContent);
+          await populate(tempDir);
         }
         return { stdout: '', stderr: '' };
+      });
+    }
+
+    it('clones without passing authentication environment variables', async () => {
+      const userHome = join(tmpdir(), `test-agent-import-user-${randomUUID()}`);
+      mockCloneRepository(async tempDir => {
+        const agentDir = join(tempDir, 'agents');
+        await mkdir(agentDir, { recursive: true });
+        await writeFile(join(agentDir, 'test-agent.md'), validAgentContent);
       });
 
       try {
@@ -448,7 +454,62 @@ metadata:
           ],
           { timeout: 60000 }
         );
-        expect(mockSpawnAsync.mock.calls[0]?.[2]).not.toHaveProperty('env');
+        for (const [, , options] of mockSpawnAsync.mock.calls) {
+          expect(options).not.toHaveProperty('env');
+        }
+      } finally {
+        await rm(userHome, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects imports that resolve to the same agent file', async () => {
+      const userHome = join(tmpdir(), `test-agent-import-user-${randomUUID()}`);
+      mockCloneRepository(async tempDir => {
+        await mkdir(join(tempDir, 'dir1'), { recursive: true });
+        await mkdir(join(tempDir, 'dir2'), { recursive: true });
+        await writeFile(join(tempDir, 'dir1', 'duplicate.md'), validAgentContent);
+        await writeFile(join(tempDir, 'dir2', 'duplicate.md'), validAgentContent);
+      });
+
+      try {
+        await expect(
+          importAgentsFromGit({ userHome } as unknown as UserContext, {
+            repository_url: 'https://github.com/acme/public-agents.git',
+            paths: ['dir1/duplicate.md', 'dir2/duplicate.md'],
+            branch: 'main',
+          })
+        ).rejects.toThrow('Duplicate import target detected: duplicate.md');
+      } finally {
+        await rm(userHome, { recursive: true, force: true });
+      }
+    });
+
+    it('rolls back copied agent files when a later copy fails', async () => {
+      const userHome = join(tmpdir(), `test-agent-import-user-${randomUUID()}`);
+      const agentsDir = join(userHome, '.claude', 'agents');
+      mockCloneRepository(async tempDir => {
+        const agentDir = join(tempDir, 'agents');
+        await mkdir(agentDir, { recursive: true });
+        await writeFile(join(agentDir, 'good.md'), validAgentContent);
+        await writeFile(join(agentDir, 'bad.md'), validAgentContent);
+      });
+
+      try {
+        await mkdir(join(agentsDir, 'bad.md'), { recursive: true });
+        await writeFile(join(agentsDir, 'bad.md', 'sentinel.txt'), 'preserve me');
+
+        await expect(
+          importAgentsFromGit({ userHome } as unknown as UserContext, {
+            repository_url: 'https://github.com/acme/public-agents.git',
+            paths: ['agents/good.md', 'agents/bad.md'],
+            branch: 'main',
+          })
+        ).rejects.toThrow('Cannot overwrite directory with non-directory');
+
+        await expect(stat(join(agentsDir, 'good.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readFile(join(agentsDir, 'bad.md', 'sentinel.txt'), 'utf-8')).resolves.toBe(
+          'preserve me'
+        );
       } finally {
         await rm(userHome, { recursive: true, force: true });
       }

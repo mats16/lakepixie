@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -339,14 +339,7 @@ description: Test
   });
 
   describe('importSkillsFromGit', () => {
-    beforeEach(() => {
-      mockSpawnAsync.mockReset();
-      mockSpawnAsync.mockResolvedValue({ stdout: '', stderr: '' });
-    });
-
-    it('clones without passing authentication environment variables', async () => {
-      const userHome = join(tmpdir(), `test-skill-import-user-${randomUUID()}`);
-      const validSkillContent = `---
+    const validSkillContent = `---
 name: test-skill
 description: A test skill
 metadata:
@@ -356,17 +349,30 @@ metadata:
 # Test Skill
 `;
 
+    beforeEach(() => {
+      mockSpawnAsync.mockReset();
+      mockSpawnAsync.mockResolvedValue({ stdout: '', stderr: '' });
+    });
+
+    function mockCloneRepository(populate: (tempDir: string) => Promise<void>): void {
       mockSpawnAsync.mockImplementation(async (_command: string, args: string[]) => {
         if (args[0] === 'clone') {
           const tempDir = args.at(-1);
           if (typeof tempDir !== 'string') {
             throw new Error('Clone destination was not provided');
           }
-          const skillDir = join(tempDir, 'skills', 'test-skill');
-          await mkdir(skillDir, { recursive: true });
-          await writeFile(join(skillDir, 'SKILL.md'), validSkillContent);
+          await populate(tempDir);
         }
         return { stdout: '', stderr: '' };
+      });
+    }
+
+    it('clones without passing authentication environment variables', async () => {
+      const userHome = join(tmpdir(), `test-skill-import-user-${randomUUID()}`);
+      mockCloneRepository(async tempDir => {
+        const skillDir = join(tempDir, 'skills', 'test-skill');
+        await mkdir(skillDir, { recursive: true });
+        await writeFile(join(skillDir, 'SKILL.md'), validSkillContent);
       });
 
       try {
@@ -394,7 +400,61 @@ metadata:
           ],
           { timeout: 60000 }
         );
-        expect(mockSpawnAsync.mock.calls[0]?.[2]).not.toHaveProperty('env');
+        for (const [, , options] of mockSpawnAsync.mock.calls) {
+          expect(options).not.toHaveProperty('env');
+        }
+      } finally {
+        await rm(userHome, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects imports that resolve to the same skill directory', async () => {
+      const userHome = join(tmpdir(), `test-skill-import-user-${randomUUID()}`);
+      mockCloneRepository(async tempDir => {
+        await mkdir(join(tempDir, 'team', 'duplicate'), { recursive: true });
+        await mkdir(join(tempDir, 'org', 'duplicate'), { recursive: true });
+        await writeFile(join(tempDir, 'team', 'duplicate', 'SKILL.md'), validSkillContent);
+        await writeFile(join(tempDir, 'org', 'duplicate', 'SKILL.md'), validSkillContent);
+      });
+
+      try {
+        await expect(
+          importSkillsFromGit({ userHome } as unknown as UserContext, {
+            repository_url: 'https://github.com/acme/public-skills.git',
+            paths: ['team/duplicate', 'org/duplicate'],
+            branch: 'main',
+          })
+        ).rejects.toThrow('Duplicate import target detected: duplicate');
+      } finally {
+        await rm(userHome, { recursive: true, force: true });
+      }
+    });
+
+    it('rolls back copied skill directories when a later copy fails', async () => {
+      const userHome = join(tmpdir(), `test-skill-import-user-${randomUUID()}`);
+      const skillsDir = join(userHome, '.claude', 'skills');
+      mockCloneRepository(async tempDir => {
+        for (const skillName of ['good', 'bad']) {
+          const skillDir = join(tempDir, 'skills', skillName);
+          await mkdir(skillDir, { recursive: true });
+          await writeFile(join(skillDir, 'SKILL.md'), validSkillContent);
+        }
+      });
+
+      try {
+        await mkdir(skillsDir, { recursive: true });
+        await writeFile(join(skillsDir, 'bad'), 'preserve me');
+
+        await expect(
+          importSkillsFromGit({ userHome } as unknown as UserContext, {
+            repository_url: 'https://github.com/acme/public-skills.git',
+            paths: ['skills/good', 'skills/bad'],
+            branch: 'main',
+          })
+        ).rejects.toThrow('Cannot overwrite non-directory with directory');
+
+        await expect(stat(join(skillsDir, 'good'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readFile(join(skillsDir, 'bad'), 'utf-8')).resolves.toBe('preserve me');
       } finally {
         await rm(userHome, { recursive: true, force: true });
       }
