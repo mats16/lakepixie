@@ -333,8 +333,21 @@
   "databricksApp": {
     "workspace": "Workspace",
     "app": "App",
-    "logs": "Logs",
-    "enableApps": "Deploy to Databricks Apps",
+    "logs": "View logs",
+    "console": "Console",
+    "actions": "App actions",
+    "create": "Create Databricks App",
+    "createShort": "Create App",
+    "creating": "Creating Databricks App",
+    "createSuccess": "Databricks App created and Agent was asked to deploy it",
+    "createError": "Failed to create Databricks App",
+    "deploy": "Deploy to Databricks Apps",
+    "deployShort": "Deploy to Apps",
+    "deploying": "Deploying to Databricks Apps",
+    "deploySuccess": "Databricks Apps deployment started",
+    "deployError": "Failed to deploy to Databricks Apps",
+    "missingAppYamlWarning": "Add app.yaml before creating a Databricks App.",
+    "enableApps": "Create Databricks App",
     "workspaceOpenError": "Failed to open workspace"
   },
   "gitStatus": {

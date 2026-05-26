@@ -200,6 +200,52 @@ describe('DatabricksWorkspaceClient', () => {
     });
   });
 
+  describe('getStatus', () => {
+    it('Workspace object status を返すこと', async () => {
+      fetchSpy.mockResolvedValueOnce(
+        createMockResponse(200, {
+          path: '/Workspace/Users/test/app',
+          object_type: 'DIRECTORY',
+          object_id: 12345,
+        })
+      );
+
+      const result = await client.getStatus('/Workspace/Users/test/app');
+
+      expect(result.object_id).toBe(12345);
+      const [url] = fetchSpy.mock.calls[0] as [string];
+      expect(url).toContain('/api/2.0/workspace/get-status');
+      expect(url).toContain('path=%2FWorkspace%2FUsers%2Ftest%2Fapp');
+    });
+  });
+
+  describe('updateDirectoryPermissions', () => {
+    it('ディレクトリに service principal の CAN_READ 権限を付与すること', async () => {
+      fetchSpy.mockResolvedValueOnce(createMockResponse(200, {}));
+
+      await client.updateDirectoryPermissions(12345, [
+        {
+          service_principal_name: 'sp-client-id',
+          permission_level: 'CAN_READ',
+        },
+      ]);
+
+      const [url, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(
+        'https://test-workspace.databricks.com/api/2.0/permissions/directories/12345'
+      );
+      expect(options.method).toBe('PATCH');
+      expect(JSON.parse(options.body as string)).toEqual({
+        access_control_list: [
+          {
+            service_principal_name: 'sp-client-id',
+            permission_level: 'CAN_READ',
+          },
+        ],
+      });
+    });
+  });
+
   describe('exportFile', () => {
     it('base64 デコードした Buffer を返すこと', async () => {
       const originalContent = 'Hello, exported content!';

@@ -17,6 +17,13 @@ interface WorkspaceObject {
   language?: string;
 }
 
+interface WorkspacePermissionAssignment {
+  service_principal_name?: string;
+  user_name?: string;
+  group_name?: string;
+  permission_level: 'CAN_READ' | 'CAN_RUN' | 'CAN_EDIT' | 'CAN_MANAGE';
+}
+
 const MAX_RETRIES = 3;
 const INITIAL_BACKOFF_MS = 1000;
 const MAX_CONCURRENCY = 10;
@@ -207,6 +214,36 @@ export class DatabricksWorkspaceClient {
 
     const data = (await response.json()) as { objects?: WorkspaceObject[] };
     return data.objects ?? [];
+  }
+
+  async getStatus(path: string): Promise<WorkspaceObject & { object_id: number }> {
+    const response = await this.request('GET', '/api/2.0/workspace/get-status', {
+      searchParams: { path },
+    });
+    await this.throwIfNotOk(response, 'get-status');
+
+    const data = (await response.json()) as WorkspaceObject;
+    if (!data.object_id) {
+      throw new DatabricksApiError(
+        502,
+        `Workspace get-status failed: missing object_id for ${path}`
+      );
+    }
+    return data as WorkspaceObject & { object_id: number };
+  }
+
+  async updateDirectoryPermissions(
+    directoryId: number,
+    accessControlList: WorkspacePermissionAssignment[]
+  ): Promise<void> {
+    const response = await this.request(
+      'PATCH',
+      `/api/2.0/permissions/directories/${directoryId}`,
+      {
+        body: { access_control_list: accessControlList },
+      }
+    );
+    await this.throwIfNotOk(response, 'update directory permissions');
   }
 
   async exportFile(path: string): Promise<Buffer> {

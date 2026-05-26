@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, and, inArray, lt, asc } from 'drizzle-orm';
 import { accessSync, constants as fsConstants } from 'node:fs';
-import { chmod, writeFile } from 'node:fs/promises';
+import { access, chmod, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { spawnAsync } from '../utils/spawn.js';
 import {
@@ -28,6 +28,8 @@ import {
   type SessionCreateRequest,
   type SessionCreateResponse,
   type SessionCreateEventData,
+  type SessionAppCreateResponse,
+  type SessionAppNotificationStatus,
   type SessionListQuery,
   type SessionListResponse,
   type SessionOutcome,
@@ -45,11 +47,11 @@ import { insertSessionEventInTx } from '../db/helpers.js';
 import { ensureDirectory, removeDirectory } from '../utils/directory.js';
 import { validatePathWithinBase } from '../utils/path-validation.js';
 import { fromUUID } from 'typeid-js';
-import { DatabricksAppsClient } from '../lib/databricks-apps-client.js';
+import { DatabricksApiError, DatabricksAppsClient } from '../lib/databricks-apps-client.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { getAuthProvider } from '../lib/databricks-auth.js';
 import { DATABRICKS_CONFIG_PROFILE, writeDatabricksConfig } from '../lib/databricks-cli-config.js';
-import { getAllowedModelIds, getAppSettings } from './admin.service.js';
+import { getAllowedModelIds, getAppSettings, getModelSettings } from './admin.service.js';
 import { writeHelperScripts } from './helper-scripts.service.js';
 import { buildClaudeTelemetryEnv } from './claude-telemetry-env.service.js';
 import { wsManager } from './websocket-manager.service.js';
@@ -60,6 +62,7 @@ import { waitForExitPlanModeDecision } from './exit-plan-mode.service.js';
 import { SessionId } from '../models/session.model.js';
 import type { UserContext } from '../lib/user-context.js';
 import path from 'node:path';
+import { AppNameService, isValidDatabricksAppName } from './app-name.service.js';
 import {
   createGitHubGitAuthEnvironment,
   toGitHubRepositoryFullName,
@@ -133,6 +136,16 @@ export class SessionValidationError extends Error {
   }
 }
 
+export class SessionAppCreateError extends Error {
+  constructor(
+    public readonly statusCode: 400 | 401 | 404 | 409 | 500,
+    message: string
+  ) {
+    super(message);
+    this.name = 'SessionAppCreateError';
+  }
+}
+
 interface QueuedUserMessageResume {
   userMessage: SDKUserMessage;
   sessionContext: SessionContextResponse;
@@ -161,6 +174,36 @@ function buildGitIdentityEnv(ctx: UserContext): Record<string, string> {
 
 function toLogError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function escapeXmlText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function findDatabricksAppsOutcome(
+  context: SessionContextResponse
+): ResolvedDatabricksAppsOutcome | undefined {
+  return context.outcomes.find(
+    (outcome): outcome is ResolvedDatabricksAppsOutcome => outcome.type === 'databricks_apps'
+  );
+}
+
+function findDatabricksWorkspaceOutcome(
+  context: SessionContextResponse
+): DatabricksWorkspaceSource | undefined {
+  return context.outcomes.find(
+    (outcome): outcome is DatabricksWorkspaceSource => outcome.type === 'databricks_workspace'
+  );
+}
+
+function assertValidDatabricksWorkspacePath(workspacePath: string): void {
+  if (
+    !workspacePath.startsWith('/') ||
+    workspacePath.includes('..') ||
+    workspacePath.includes('\0')
+  ) {
+    throw new SessionAppCreateError(400, 'Databricks Workspace path is invalid');
+  }
 }
 
 function getSupportedClaudeArch(): SupportedClaudeArch {
@@ -1913,6 +1956,247 @@ export async function sendMessageToSession(
     sdkSessionId: sessionRow.sdkSessionId,
     initialUserEvent: undefined,
   });
+}
+
+function createAppCreateNotificationMessage(params: {
+  sessionId: SessionId;
+  appName: string;
+  workspacePath: string;
+}): SDKUserMessage {
+  const appName = escapeXmlText(params.appName);
+  const workspacePath = escapeXmlText(params.workspacePath);
+
+  return {
+    type: 'user',
+    uuid: crypto.randomUUID() as UUID,
+    session_id: params.sessionId.toString(),
+    parent_tool_use_id: null,
+    message: {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: [
+            'I created an app on Databricks Apps. Please deploy it once compute starts.',
+            'Compute startup can take 2-3 minutes after creation.',
+            '',
+            `<app_name>${appName}</app_name>`,
+            `<workspace_path>${workspacePath}</workspace_path>`,
+          ].join('\n'),
+        },
+      ],
+    },
+  };
+}
+
+async function createOrReuseDatabricksApp(
+  appsClient: DatabricksAppsClient,
+  appName: string,
+  appDescription: string
+): Promise<void> {
+  const existingApp = await appsClient.get(appName);
+  if (existingApp) return;
+
+  try {
+    await appsClient.create(appName, {
+      description: appDescription,
+      noCompute: false,
+    });
+  } catch (error) {
+    if (error instanceof DatabricksApiError && error.statusCode === 409) {
+      const app = await appsClient.get(appName);
+      if (app) return;
+    }
+    throw error;
+  }
+}
+
+async function appendDatabricksAppsOutcome(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId,
+  context: SessionContextResponse,
+  appName: string
+): Promise<void> {
+  const existingAppsOutcome = findDatabricksAppsOutcome(context);
+  if (existingAppsOutcome) {
+    if (existingAppsOutcome.name !== appName) {
+      throw new SessionAppCreateError(
+        400,
+        `Session already has Databricks Apps outcome '${existingAppsOutcome.name}'`
+      );
+    }
+    return;
+  }
+
+  const nextContext: SessionContextResponse = {
+    ...context,
+    outcomes: [...context.outcomes, { type: 'databricks_apps', name: appName }],
+  };
+
+  await fastify.withUserContext(userId, async tx => {
+    await tx
+      .update(sessions)
+      .set({ context: nextContext, updatedAt: new Date() })
+      .where(eq(sessions.id, sessionId.toUUID()));
+  });
+}
+
+export async function createDatabricksAppForSession(params: {
+  fastify: FastifyInstance;
+  userId: string;
+  sessionId: SessionId;
+  context: string;
+  ctx: UserContext;
+}): Promise<SessionAppCreateResponse> {
+  const { fastify, userId, sessionId, ctx } = params;
+  const createContext = params.context.trim();
+  if (!createContext) {
+    throw new SessionAppCreateError(400, 'context is required');
+  }
+
+  const oboToken = ctx.oboAccessToken;
+  if (!oboToken) {
+    throw new SessionAppCreateError(401, 'OBO access token is required to create an app');
+  }
+
+  const servicePrincipalName = fastify.config.DATABRICKS_CLIENT_ID.trim();
+  if (!servicePrincipalName) {
+    throw new SessionAppCreateError(500, 'DATABRICKS_CLIENT_ID is required');
+  }
+
+  const sessionRow = await fastify.withUserContext(userId, async tx => {
+    const rows = await tx
+      .select({
+        status: sessions.status,
+        context: sessions.context,
+      })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId.toUUID()))
+      .limit(1);
+    return rows[0] ?? null;
+  });
+
+  if (!sessionRow) {
+    throw new SessionAppCreateError(404, 'Session not found');
+  }
+  if (sessionRow.status === 'archived') {
+    throw new SessionAppCreateError(400, 'Session is archived');
+  }
+  if (sessionRow.status === 'init' || sessionRow.status === 'running') {
+    throw new SessionAppCreateError(409, 'Session is busy');
+  }
+  if (!sessionRow.context) {
+    throw new SessionAppCreateError(400, 'Session context not found');
+  }
+
+  const sessionContext = sessionRow.context as SessionContextResponse;
+  const existingAppsOutcome = findDatabricksAppsOutcome(sessionContext);
+  if (existingAppsOutcome) {
+    throw new SessionAppCreateError(
+      400,
+      `Session already has Databricks Apps outcome '${existingAppsOutcome.name}'`
+    );
+  }
+
+  const workspaceOutcome = findDatabricksWorkspaceOutcome(sessionContext);
+  if (!workspaceOutcome?.path) {
+    throw new SessionAppCreateError(400, 'Databricks Workspace outcome is required');
+  }
+  const workspacePath = workspaceOutcome.path.trim();
+  assertValidDatabricksWorkspacePath(workspacePath);
+
+  const sessionsBaseDir = path.join(fastify.config.CCBRICKS_BASE_DIR, 'sessions');
+  const cwd = await validatePathWithinBase(sessionContext.cwd, sessionsBaseDir);
+  try {
+    await access(path.join(cwd, 'app.yaml'));
+  } catch {
+    throw new SessionAppCreateError(400, 'app.yaml is required to create a Databricks App');
+  }
+
+  let metadataAccessToken: string;
+  try {
+    metadataAccessToken = await ctx.getAuthProvider().getToken();
+  } catch {
+    throw new SessionAppCreateError(401, 'Access token is required to generate app metadata');
+  }
+
+  const modelSettings = await getModelSettings(fastify);
+  const appMetadata = await new AppNameService({
+    databricksHost: fastify.config.DATABRICKS_HOST,
+  }).generateAppMetadata({
+    context: createContext,
+    accessToken: metadataAccessToken,
+    model: modelSettings.haikuModel,
+  });
+  const appName = appMetadata.name;
+  const appDescription = appMetadata.description;
+  if (!isValidDatabricksAppName(appName)) {
+    throw new SessionAppCreateError(
+      500,
+      'Generated app name must contain only lowercase alphanumeric characters and hyphens'
+    );
+  }
+
+  const workspaceClient = new DatabricksWorkspaceClient(fastify.config.DATABRICKS_HOST, oboToken);
+  await workspaceClient.importDir(cwd, workspacePath);
+  const workspaceStatus = await workspaceClient.getStatus(workspacePath);
+  await workspaceClient.updateDirectoryPermissions(workspaceStatus.object_id, [
+    {
+      service_principal_name: servicePrincipalName,
+      permission_level: 'CAN_READ',
+    },
+  ]);
+
+  const appsClient = DatabricksAppsClient.fromToken(fastify.config.DATABRICKS_HOST, oboToken);
+  await createOrReuseDatabricksApp(appsClient, appName, appDescription);
+  await appsClient.updatePermissions(appName, [
+    {
+      service_principal_name: servicePrincipalName,
+      permission_level: 'CAN_MANAGE',
+    },
+  ]);
+
+  await appendDatabricksAppsOutcome(fastify, userId, sessionId, sessionContext, appName);
+
+  let notificationStatus: SessionAppNotificationStatus = 'sent';
+  try {
+    const notifySession = await getSession(fastify, userId, sessionId);
+    if (!notifySession?.session_context) {
+      throw new Error('Session context not found after app creation');
+    }
+    await sendMessageToSession(
+      fastify,
+      userId,
+      sessionId,
+      createAppCreateNotificationMessage({
+        sessionId,
+        appName,
+        workspacePath,
+      }),
+      ctx
+    );
+  } catch (error) {
+    notificationStatus = 'failed';
+    fastify.log.error(
+      { err: toLogError(error), sessionId: sessionId.toString(), appName },
+      'Failed to notify agent after Databricks App creation'
+    );
+  }
+
+  const session = await getSession(fastify, userId, sessionId);
+  if (!session) {
+    throw new SessionAppCreateError(404, 'Session not found');
+  }
+
+  return {
+    session,
+    name: appName,
+    description: appDescription,
+    workspace_path: workspacePath,
+    sp_permission_status: 'granted',
+    notification_status: notificationStatus,
+  };
 }
 
 /**
