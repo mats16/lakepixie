@@ -112,6 +112,20 @@ describe('AskUserQuestionToolUse', () => {
     );
   });
 
+  it('restores a known answer from SDK question-keyed tool_use_result data', () => {
+    renderTool({
+      result: {
+        content: 'The user answered.',
+        isError: false,
+        toolUseResult: { answers: { 'Which language do you prefer?': 'TypeScript' } },
+      },
+    });
+
+    expect(screen.getByRole('button', { name: /TypeScript/ }).className).toContain(
+      'border-primary'
+    );
+  });
+
   it('restores an unknown answer as Other from structured tool_use_result data', () => {
     renderTool({
       result: {
@@ -170,6 +184,34 @@ describe('AskUserQuestionToolUse', () => {
     });
 
     expect(screen.getByRole('button', { name: /Apple, Inc./ }).className).toContain(
+      'border-primary'
+    );
+  });
+
+  it('restores comma-separated structured multi-select answers from SDK data', () => {
+    renderTool({
+      toolInput: {
+        questions: [
+          {
+            question: 'Which languages should we use?',
+            header: 'Language',
+            multiSelect: true,
+            options: [
+              { label: 'Python', description: 'For scripts' },
+              { label: 'TypeScript', description: 'For web apps' },
+            ],
+          },
+        ],
+      },
+      result: {
+        content: 'The user answered.',
+        isError: false,
+        toolUseResult: { answers: { 'Which languages should we use?': 'Python,TypeScript' } },
+      },
+    });
+
+    expect(screen.getByRole('button', { name: /Python/ }).className).toContain('border-primary');
+    expect(screen.getByRole('button', { name: /TypeScript/ }).className).toContain(
       'border-primary'
     );
   });

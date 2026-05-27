@@ -7,11 +7,60 @@ interface PendingQuestion {
   timeoutId: ReturnType<typeof setTimeout>;
 }
 
+type UserAnswerValue = string | string[];
+type UserAnswers = Record<string, UserAnswerValue>;
+
 /** AskUserQuestion の回答待ち管理（tool_use_id → PendingQuestion） */
 const pendingQuestions = new Map<string, PendingQuestion>();
 
 /** タイムアウト（10 分） */
 const ASK_USER_QUESTION_TIMEOUT_MS = 10 * 60 * 1000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getHeaderToQuestionMap(input: Record<string, unknown>): Map<string, string> {
+  const questions = input.questions;
+  const map = new Map<string, string>();
+  if (!Array.isArray(questions)) return map;
+
+  for (const question of questions) {
+    if (
+      !isRecord(question) ||
+      typeof question.header !== 'string' ||
+      typeof question.question !== 'string'
+    ) {
+      continue;
+    }
+    map.set(question.header, question.question);
+  }
+
+  return map;
+}
+
+function stringifyAnswer(value: UserAnswerValue): string {
+  return Array.isArray(value) ? value.join(',') : value;
+}
+
+/**
+ * UI は header → label/label[] で送るが、Claude Agent SDK の AskUserQuestion は
+ * question text → string を期待するため、canUseTool の updatedInput 用に変換する。
+ */
+export function normalizeAskUserQuestionAnswers(
+  input: Record<string, unknown>,
+  answers: UserAnswers
+): Record<string, string> {
+  const headerToQuestion = getHeaderToQuestionMap(input);
+  const normalized: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(answers)) {
+    const answerKey = headerToQuestion.get(key) ?? key;
+    normalized[answerKey] = stringifyAnswer(value);
+  }
+
+  return normalized;
+}
 
 /**
  * AskUserQuestion をサスペンドし、ユーザーの回答を待つ。
@@ -19,7 +68,7 @@ const ASK_USER_QUESTION_TIMEOUT_MS = 10 * 60 * 1000;
  * 1. WebSocket で全クライアントに質問リクエストを broadcast
  * 2. Promise を返し、resolve されるまでブロック
  *
- * @returns ユーザーの回答（header → 選択ラベル のマッピング）
+ * @returns ユーザーの回答（UI から受け取った header → 選択ラベル のマッピング）
  */
 export function waitForUserAnswer(
   sessionId: string,

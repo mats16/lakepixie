@@ -54,6 +54,7 @@ import {
   __testing as exitPlanModeTesting,
   resolveExitPlanModeDecision,
 } from './exit-plan-mode.service.js';
+import { resolveUserAnswer } from './ask-user-question.service.js';
 
 describe('session.service', () => {
   // Mock FastifyInstance
@@ -407,6 +408,25 @@ describe('session.service', () => {
   });
 
   describe('session control settings', () => {
+    function startAskUserQuestion(
+      fastify: FastifyInstance,
+      sessionId: SessionId,
+      toolUseID: string,
+      input: Record<string, unknown>
+    ) {
+      return __testing.handleCanUseTool({
+        fastify,
+        userId: 'user-123',
+        sessionId,
+        toolName: 'AskUserQuestion',
+        input,
+        options: {
+          signal: new AbortController().signal,
+          toolUseID,
+        },
+      });
+    }
+
     it('stores an allowed model change', async () => {
       const { fastify, set } = createContextUpdateFastify();
       const sessionId = new SessionId();
@@ -563,6 +583,89 @@ describe('session.service', () => {
       expect(result).toEqual({
         behavior: 'allow',
         updatedInput: input,
+      });
+    });
+
+    it('normalizes AskUserQuestion answers to SDK question keys', async () => {
+      const { fastify } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+      const input = {
+        questions: [
+          {
+            question: '何を確認したいですか?',
+            header: '確認目的',
+            options: [
+              {
+                label: 'UIの見た目を確認したい',
+                description: 'UI rendering should be checked',
+              },
+              {
+                label: '動作を確認したい',
+                description: 'Behavior should be checked',
+              },
+            ],
+          },
+        ],
+      };
+
+      const resultPromise = startAskUserQuestion(
+        fastify,
+        sessionId,
+        'toolu-ask-user-question',
+        input
+      );
+
+      resolveUserAnswer('toolu-ask-user-question', {
+        確認目的: 'UIの見た目を確認したい',
+      });
+
+      await expect(resultPromise).resolves.toEqual({
+        behavior: 'allow',
+        updatedInput: {
+          ...input,
+          answers: {
+            '何を確認したいですか?': 'UIの見た目を確認したい',
+          },
+        },
+      });
+    });
+
+    it('normalizes AskUserQuestion multi-select arrays to comma-separated SDK answers', async () => {
+      const { fastify } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+      const input = {
+        questions: [
+          {
+            question: 'Which features should be enabled?',
+            header: 'Features',
+            multiSelect: true,
+            options: [
+              { label: 'Auth', description: 'Enable authentication' },
+              { label: 'Billing', description: 'Enable billing' },
+            ],
+          },
+        ],
+      };
+
+      const resultPromise = startAskUserQuestion(
+        fastify,
+        sessionId,
+        'toolu-ask-user-question-multi',
+        input
+      );
+
+      resolveUserAnswer('toolu-ask-user-question-multi', {
+        Features: ['Auth', 'Billing'],
+      });
+
+      await expect(resultPromise).resolves.toEqual({
+        behavior: 'allow',
+        updatedInput: {
+          ...input,
+          answers: {
+            'Which features should be enabled?': 'Auth,Billing',
+          },
+        },
       });
     });
 

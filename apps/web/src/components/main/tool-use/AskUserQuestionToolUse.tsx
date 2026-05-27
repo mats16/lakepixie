@@ -33,12 +33,6 @@ interface AskUserQuestionToolUseProps extends BaseToolUseProps {
 
 type AnswerValue = string | string[];
 type AnswerSelections = Record<string, AnswerValue>;
-type AnswerSource = 'structured' | 'resultText';
-
-interface AnswerSelectionState {
-  answers: AnswerSelections;
-  source: AnswerSource;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -74,9 +68,17 @@ function hasAnswer(value: AnswerValue | undefined): value is AnswerValue {
   return !isEmptyAnswer(value);
 }
 
-function toMultiSelectValues(value: AnswerValue, source: AnswerSource): string[] {
+function splitAnswerList(value: string): string[] {
+  return value
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
+function toMultiSelectValues(value: AnswerValue, optionLabels: string[]): string[] {
   if (Array.isArray(value)) return value;
-  return source === 'resultText' ? value.split(',') : [value];
+  if (optionLabels.includes(value)) return [value];
+  return splitAnswerList(value);
 }
 
 function toSingleSelectValue(value: AnswerValue): string {
@@ -86,7 +88,7 @@ function toSingleSelectValue(value: AnswerValue): string {
 /**
  * tool_result テキストから回答をパース（表示専用）。
  *
- * フォーマット `"header"="label"` は Claude Agent SDK の AskUserQuestion ツールが
+ * フォーマット `"header or question"="label"` は Claude Agent SDK の AskUserQuestion ツールが
  * 生成する結果文字列に依存。パース失敗時は空オブジェクトを返し、選択状態が
  * 表示されないだけで機能には影響しない。
  */
@@ -102,30 +104,31 @@ function parseAnswersFromResult(content: string): AnswerSelections {
 
 function getAnsweredSelections(
   result: AskUserQuestionToolUseProps['result']
-): AnswerSelectionState | undefined {
+): AnswerSelections | undefined {
   const structuredAnswers = getToolUseResultAnswers(result?.toolUseResult);
-  if (structuredAnswers) return { answers: structuredAnswers, source: 'structured' };
+  if (structuredAnswers) return structuredAnswers;
 
   if (!result || result.isError) return undefined;
 
   const parsedAnswers = parseAnswersFromResult(result.content);
-  return Object.keys(parsedAnswers).length > 0
-    ? { answers: parsedAnswers, source: 'resultText' }
-    : undefined;
+  return Object.keys(parsedAnswers).length > 0 ? parsedAnswers : undefined;
+}
+
+function getAnsweredValue(q: Question, answers: AnswerSelections): AnswerValue | undefined {
+  return answers[q.header] ?? answers[q.question];
 }
 
 /** 回答済みの値から selections / otherTexts の初期値を一括生成 */
 function buildInitialState(
   questions: Question[],
-  answeredSelections?: AnswerSelectionState
+  answeredSelections?: AnswerSelections
 ): { selections: Record<string, string | string[]>; otherTexts: Record<string, string> } {
   const selections: Record<string, string | string[]> = {};
   const otherTexts: Record<string, string> = {};
 
   for (const q of questions) {
-    const answeredState = answeredSelections;
-    const answeredValue = answeredState?.answers[q.header];
-    if (!answeredState || !hasAnswer(answeredValue)) {
+    const answeredValue = answeredSelections ? getAnsweredValue(q, answeredSelections) : undefined;
+    if (!answeredSelections || !hasAnswer(answeredValue)) {
       selections[q.header] = q.multiSelect ? [] : '';
       otherTexts[q.header] = '';
       continue;
@@ -134,7 +137,7 @@ function buildInitialState(
     const optionLabels = (q.options ?? []).map(o => o.label);
 
     if (q.multiSelect) {
-      const vals = toMultiSelectValues(answeredValue, answeredState.source);
+      const vals = toMultiSelectValues(answeredValue, optionLabels);
       const known = vals.filter(v => optionLabels.includes(v));
       const unknown = vals.filter(v => !optionLabels.includes(v));
       selections[q.header] = unknown.length > 0 ? [...known, OTHER_SENTINEL] : known;
@@ -208,8 +211,8 @@ export function AskUserQuestionToolUse({ input, result, toolUseId }: AskUserQues
 interface TabbedQuestionsProps {
   questions: Question[];
   isPending: boolean;
-  /** 回答済みの場合、パース結果を渡す（header → label） */
-  answeredSelections?: AnswerSelectionState;
+  /** 回答済みの場合、パース結果を渡す（header/question → label） */
+  answeredSelections?: AnswerSelections;
   onSubmit: (answers: Record<string, string | string[]>) => void;
 }
 

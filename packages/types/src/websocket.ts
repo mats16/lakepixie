@@ -38,7 +38,7 @@ export interface WsAbortRequest {
 export interface WsAskUserQuestionAnswerRequest {
   subtype: 'ask_user_question_answer';
   tool_use_id: string;
-  /** header → 選択された label (single) または label[] (multi) のマッピング */
+  /** UI から受け取る header → 選択された label (single) または label[] (multi) のマッピング。backend で SDK 用に変換する */
   answers: Record<string, string | string[]>;
 }
 
