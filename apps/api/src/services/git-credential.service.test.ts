@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
-const mockGetGitHubAppInstallationToken = vi.hoisted(() => vi.fn());
+const mockGetValidGitHubUserAccessToken = vi.hoisted(() => vi.fn());
 
-vi.mock('./github-app-auth.service.js', async importOriginal => {
-  const actual = await importOriginal<typeof import('./github-app-auth.service.js')>();
+vi.mock('./github-oauth.service.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('./github-oauth.service.js')>();
   return {
     ...actual,
-    getGitHubAppInstallationToken: mockGetGitHubAppInstallationToken,
+    getValidGitHubUserAccessToken: mockGetValidGitHubUserAccessToken,
   };
 });
 
@@ -23,11 +23,11 @@ describe('git-credential.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     __testing.registeredCredentials.clear();
-    mockGetGitHubAppInstallationToken.mockResolvedValue('ghs_installation_token');
+    mockGetValidGitHubUserAccessToken.mockResolvedValue('ghu_user_token');
   });
 
   it('returns a Git credential only for the registered GitHub repository', async () => {
-    const registration = registerGitCredential('https://github.com/acme/widgets.git', 'write');
+    const registration = registerGitCredential('user-1', 'https://github.com/acme/widgets.git');
 
     const output = await resolveGitCredentialRequest(
       fastify,
@@ -36,16 +36,12 @@ describe('git-credential.service', () => {
     );
 
     expect(output).toContain('username=x-access-token');
-    expect(output).toContain('password=ghs_installation_token');
-    expect(mockGetGitHubAppInstallationToken).toHaveBeenCalledWith(
-      fastify,
-      'acme/widgets',
-      'write'
-    );
+    expect(output).toContain('password=ghu_user_token');
+    expect(mockGetValidGitHubUserAccessToken).toHaveBeenCalledWith(fastify, 'user-1');
   });
 
   it('refuses non-GitHub hosts and mismatched repository paths', async () => {
-    const registration = registerGitCredential('https://github.com/acme/widgets.git', 'write');
+    const registration = registerGitCredential('user-1', 'https://github.com/acme/widgets.git');
 
     await expect(
       resolveGitCredentialRequest(
@@ -65,7 +61,7 @@ describe('git-credential.service', () => {
   });
 
   it('does not resolve credentials after a registration is revoked', async () => {
-    const registration = registerGitCredential('https://github.com/acme/widgets.git', 'write');
+    const registration = registerGitCredential('user-1', 'https://github.com/acme/widgets.git');
     expect(__testing.revokeGitCredential(registration.bearerToken)).toBe(true);
 
     await expect(
@@ -75,6 +71,6 @@ describe('git-credential.service', () => {
         ['protocol=https', 'host=github.com', 'path=acme/widgets.git', '', ''].join('\n')
       )
     ).resolves.toBe('');
-    expect(mockGetGitHubAppInstallationToken).not.toHaveBeenCalled();
+    expect(mockGetValidGitHubUserAccessToken).not.toHaveBeenCalled();
   });
 });

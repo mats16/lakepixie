@@ -64,9 +64,10 @@ import type { UserContext } from '../lib/user-context.js';
 import path from 'node:path';
 import { AppNameService, isValidDatabricksAppName } from './app-name.service.js';
 import {
-  createGitHubGitAuthEnvironment,
+  createGitHubUserGitAuthEnvironment,
+  getValidGitHubUserAccessToken,
   toGitHubRepositoryFullName,
-} from './github-app-auth.service.js';
+} from './github-oauth.service.js';
 import {
   buildGitCredentialHelperScript,
   registerGitCredential,
@@ -647,10 +648,11 @@ function getInternalGitCredentialUrl(fastify: FastifyInstance): string {
 
 async function configureGitCredentialHelper(
   fastify: FastifyInstance,
+  userId: string,
   cwd: string,
   repositoryUrl: string
 ): Promise<() => void> {
-  const registration = registerGitCredential(repositoryUrl, 'write');
+  const registration = registerGitCredential(userId, repositoryUrl);
   const helperPath = path.join(cwd, '.git', 'ccbricks-credential-helper.mjs');
   await writeFile(
     helperPath,
@@ -1211,6 +1213,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
     if (gitSource) {
       cleanupGitCredential = await configureGitCredentialHelper(
         fastify,
+        userId,
         sessionContext.cwd,
         gitSource.url
       );
@@ -1376,6 +1379,7 @@ async function resolveAppsOutcomeName(
 }
 
 async function cloneGitRepositorySource(
+  userId: string,
   source: GitRepositorySource,
   outcome: GitRepositoryOutcome,
   cwd: string,
@@ -1391,7 +1395,7 @@ async function cloneGitRepositorySource(
   }
 
   const gitAuth = fastify
-    ? await createGitHubGitAuthEnvironment(fastify, source.url, 'read')
+    ? await createGitHubUserGitAuthEnvironment(fastify, userId, source.url)
     : null;
   try {
     await spawnAsync(
@@ -1537,6 +1541,9 @@ export async function createSession(
   const gitSources = session_context.sources.filter(
     (s): s is GitRepositorySource => s.type === 'git_repository'
   );
+  if (gitSources.length > 0) {
+    await getValidGitHubUserAccessToken(fastify, userId);
+  }
 
   // 5. Apps outcome にアプリ名を割当
   const resolvedOutcomes = await Promise.all(
@@ -1671,7 +1678,7 @@ export async function createSession(
       }
 
       for (const source of gitSources) {
-        await cloneGitRepositorySource(source, gitOutcome, cwd, fastify);
+        await cloneGitRepositorySource(userId, source, gitOutcome, cwd, fastify);
         fastify.log.info(
           {
             sessionId: sessionId.toString(),

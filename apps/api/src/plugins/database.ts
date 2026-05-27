@@ -331,6 +331,34 @@ async function initSqlite(fastify: FastifyInstance) {
       "updated_at" INTEGER NOT NULL DEFAULT ${TS},
       PRIMARY KEY ("user_id", "id")
     );
+    CREATE TABLE IF NOT EXISTS "github_user_authorizations" (
+      "user_id" TEXT PRIMARY KEY NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+      "github_user_id" TEXT NOT NULL,
+      "github_login" TEXT NOT NULL,
+      "access_token_ciphertext" TEXT NOT NULL,
+      "access_token_iv" TEXT NOT NULL,
+      "access_token_auth_tag" TEXT NOT NULL,
+      "access_token_key_version" TEXT NOT NULL,
+      "refresh_token_ciphertext" TEXT,
+      "refresh_token_iv" TEXT,
+      "refresh_token_auth_tag" TEXT,
+      "refresh_token_key_version" TEXT,
+      "token_expires_at" INTEGER,
+      "refresh_token_expires_at" INTEGER,
+      "created_at" INTEGER NOT NULL DEFAULT ${TS},
+      "updated_at" INTEGER NOT NULL DEFAULT ${TS}
+    );
+    CREATE TABLE IF NOT EXISTS "github_oauth_states" (
+      "state" TEXT PRIMARY KEY,
+      "user_id" TEXT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+      "code_verifier_ciphertext" TEXT NOT NULL,
+      "code_verifier_iv" TEXT NOT NULL,
+      "code_verifier_auth_tag" TEXT NOT NULL,
+      "code_verifier_key_version" TEXT NOT NULL,
+      "redirect_after" TEXT,
+      "expires_at" INTEGER NOT NULL,
+      "created_at" INTEGER NOT NULL DEFAULT ${TS}
+    );
     INSERT OR IGNORE INTO "app_settings" ("key", "value") VALUES ('app_title', 'ccbricks');
     INSERT OR IGNORE INTO "app_settings" ("key", "value") VALUES ('welcome_heading', 'Claude Code on Databricks');
     INSERT OR IGNORE INTO "app_settings" ("key", "value") VALUES ('default_new_user_role', 'admin');
@@ -338,6 +366,9 @@ async function initSqlite(fastify: FastifyInstance) {
     CREATE INDEX IF NOT EXISTS "sessions_updated_at_idx" ON "sessions" ("updated_at");
     CREATE INDEX IF NOT EXISTS "sessions_status_idx" ON "sessions" ("status");
     CREATE INDEX IF NOT EXISTS "session_events_session_created_at_idx" ON "session_events" ("session_id", "created_at");
+    CREATE INDEX IF NOT EXISTS "github_user_authorizations_login_idx" ON "github_user_authorizations" ("github_login");
+    CREATE INDEX IF NOT EXISTS "github_oauth_states_user_id_idx" ON "github_oauth_states" ("user_id");
+    CREATE INDEX IF NOT EXISTS "github_oauth_states_expires_at_idx" ON "github_oauth_states" ("expires_at");
 
     -- updated_at 自動更新トリガー（ミリ秒精度）
     -- WHEN ガードで updated_at が変更されていない場合のみ発火（再帰防止）
@@ -366,6 +397,11 @@ async function initSqlite(fastify: FastifyInstance) {
       AFTER UPDATE ON "mcp_servers" FOR EACH ROW
       WHEN NEW."updated_at" = OLD."updated_at"
       BEGIN UPDATE "mcp_servers" SET "updated_at" = ${TS} WHERE "user_id" = NEW."user_id" AND "id" = NEW."id"; END;
+    DROP TRIGGER IF EXISTS "set_updated_at_github_user_authorizations";
+    CREATE TRIGGER "set_updated_at_github_user_authorizations"
+      AFTER UPDATE ON "github_user_authorizations" FOR EACH ROW
+      WHEN NEW."updated_at" = OLD."updated_at"
+      BEGIN UPDATE "github_user_authorizations" SET "updated_at" = ${TS} WHERE "user_id" = NEW."user_id"; END;
   `);
 
   // Drizzle ORM 初期化

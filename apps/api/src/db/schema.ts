@@ -23,6 +23,8 @@ export const sessions = mod.sessions;
 export const sessionEvents = mod.sessionEvents;
 export const appSettings = mod.appSettings;
 export const mcpServers = mod.mcpServers;
+export const githubUserAuthorizations = mod.githubUserAuthorizations;
+export const githubOAuthStates = mod.githubOAuthStates;
 
 // 行型は PG スキーマから re-export（canonical types）
 export type {
@@ -38,4 +40,8 @@ export type {
   AppSettings,
   InsertMcpServer,
   McpServer,
+  InsertGithubUserAuthorization,
+  InsertGithubOAuthState,
+  GithubUserAuthorization,
+  GithubOAuthState,
 } from './schema.pg.js';

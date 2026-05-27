@@ -32,6 +32,7 @@ PostgreSQL ロールを作成または再利用し、接続と作成の権限を
 データベースマイグレーションはサーバー起動時に自動的に適用されます。デプロイ時に手動でマイグレーションを実行する必要はありません。
 
 以下の場合、自動マイグレーションは無効化されます:
+
 - 環境変数 `DISABLE_AUTO_MIGRATION=true` が設定されている場合
 - 環境変数 `NODE_ENV=test` が設定されている場合
 
@@ -73,14 +74,14 @@ databricks secrets create-scope ccbricks-prod
 
 ### 2.2 必要なシークレットの追加
 
-**暗号化キー:**
+GitHub OAuth client secret とアプリケーション暗号鍵は Databricks Secrets に保存します。
+アプリはアプリ用 secret scope に以下のキーを書き込みます。
 
-機密データ（OAuth トークンなど）を暗号化するための安全な暗号化キーを生成します。32 バイト（64 文字の 16 進数）のランダムキーが必要です。
+- `github-oauth-client-secret`（管理画面から保存）
+- `encryption-active-key-version`（未設定時に自動生成）
+- `encryption-key-v<version>`（未設定時またはローテーション時に自動生成）
 
-```bash
-ENCRYPTION_KEY=$(openssl rand -hex 32)
-databricks secrets put-secret ccbricks-[dev|prod] encryption-key --string-value "$ENCRYPTION_KEY"
-```
+アプリの service principal に、アプリ用 scope の secret を作成・読み取り・書き込みできる権限を付与してください。
 
 ## 3. Asset Bundles によるデプロイ
 
@@ -138,12 +139,12 @@ databricks apps get ccbricks-dev-<user-id>
 
 ## 環境別の設定
 
-| 設定 | 開発環境 | 本番環境 |
-|------|----------|----------|
-| バンドルターゲット | `dev` | `prod` |
-| シークレットスコープ | `ccbricks-dev` | `ccbricks-prod` |
-| アプリ名 | `ccbricks-dev-<user-id>` | `ccbricks-prod` |
-| ワークスペースパス | `/Workspace/Users/<user>/.bundle/...` | `/Workspace/Shared/.bundle/...` |
+| 設定                 | 開発環境                              | 本番環境                        |
+| -------------------- | ------------------------------------- | ------------------------------- |
+| バンドルターゲット   | `dev`                                 | `prod`                          |
+| シークレットスコープ | `ccbricks-dev`                        | `ccbricks-prod`                 |
+| アプリ名             | `ccbricks-dev-<user-id>`              | `ccbricks-prod`                 |
+| ワークスペースパス   | `/Workspace/Users/<user>/.bundle/...` | `/Workspace/Shared/.bundle/...` |
 
 ## セキュリティに関する考慮事項
 

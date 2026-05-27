@@ -105,9 +105,6 @@ NODE_ENV=development
 # Set LAKEBASE_ENDPOINT for Lakebase; Databricks Apps injects PG* for deployments.
 LAKEBASE_ENDPOINT=
 
-# Encryption (required - generate with: openssl rand -hex 32)
-ENCRYPTION_KEY=your-64-character-hex-key
-
 # Databricks (required)
 DATABRICKS_HOST=your-workspace.cloud.databricks.com
 
@@ -132,13 +129,11 @@ ANTHROPIC_BASE_URL=https://your-workspace.cloud.databricks.com/ai-gateway/anthro
 CCBRICKS_BASE_DIR=/path/to/base/directory
 ```
 
-### 3.4 Generate Encryption Key
+### 3.4 Application Encryption Keys
 
-```bash
-openssl rand -hex 32
-```
-
-Copy the output to your `.env` file as `ENCRYPTION_KEY`.
+Application encryption keys are stored in Databricks Secrets, not in `.env`.
+When the key is missing, ccbricks generates `encryption-key-v1` and
+`encryption-active-key-version` automatically in the app secret scope.
 
 ## 4. Start Development Servers
 
@@ -149,6 +144,7 @@ npm run dev
 ```
 
 This starts both frontend and backend in development mode:
+
 - Frontend: http://localhost:3003
 - Backend: http://localhost:8003
 
@@ -168,15 +164,15 @@ Open http://localhost:3003 in your browser.
 
 ## 5. Development Commands
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start all apps in development mode |
-| `npm run build` | Build all packages |
-| `npm run lint` | Run ESLint |
-| `npm run format` | Format code with Prettier |
-| `npm run type-check` | Run TypeScript type checking |
-| `npm run test` | Run tests |
-| `npm run clean` | Clean build artifacts and node_modules |
+| Command              | Description                            |
+| -------------------- | -------------------------------------- |
+| `npm run dev`        | Start all apps in development mode     |
+| `npm run build`      | Build all packages                     |
+| `npm run lint`       | Run ESLint                             |
+| `npm run format`     | Format code with Prettier              |
+| `npm run type-check` | Run TypeScript type checking           |
+| `npm run test`       | Run tests                              |
+| `npm run clean`      | Clean build artifacts and node_modules |
 
 ### Working with Turborepo
 
@@ -215,12 +211,12 @@ In production, Databricks Apps proxy handles authentication and forwards user in
 
 ### Headers Emulated
 
-| Header | Environment Variable |
-|--------|---------------------|
-| `x-forwarded-user` | `DATABRICKS_USER_ID` |
-| `x-forwarded-preferred-username` | `DATABRICKS_USER_NAME` |
-| `x-forwarded-email` | `DATABRICKS_USER_EMAIL` |
-| `x-forwarded-access-token` | `DATABRICKS_TOKEN` |
+| Header                           | Environment Variable    |
+| -------------------------------- | ----------------------- |
+| `x-forwarded-user`               | `DATABRICKS_USER_ID`    |
+| `x-forwarded-preferred-username` | `DATABRICKS_USER_NAME`  |
+| `x-forwarded-email`              | `DATABRICKS_USER_EMAIL` |
+| `x-forwarded-access-token`       | `DATABRICKS_TOKEN`      |
 
 ## 7. Project Structure
 
@@ -264,6 +260,7 @@ kill -9 <PID>
 ### Type Errors After Schema Changes
 
 1. Build the types package first:
+
    ```bash
    npm run build --filter=@repo/types
    ```

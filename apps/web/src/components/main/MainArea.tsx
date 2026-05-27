@@ -133,7 +133,7 @@ export function MainArea({
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
-  const { githubAppId, modelSettings } = useUser();
+  const { githubOAuthAuthorization, modelSettings } = useUser();
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
   const [gitDiffRefreshKey, setGitDiffRefreshKey] = useState(0);
   const [gitRepositoryStatusRefreshKey, setGitRepositoryStatusRefreshKey] = useState(0);
@@ -583,8 +583,8 @@ export function MainArea({
     try {
       setCreateSessionError(null);
       const gitRepositoryForSession = sourceType === 'git_repository' ? gitRepository : null;
-      if (sourceType === 'git_repository' && !githubAppId) {
-        setCreateSessionError(t('welcome.sourceType.repositoryRequired'));
+      if (sourceType === 'git_repository' && githubOAuthAuthorization?.status !== 'connected') {
+        setCreateSessionError(t('welcome.sourceType.githubAuthorizationRequired'));
         return;
       }
       if (sourceType === 'git_repository' && !gitRepositoryForSession) {

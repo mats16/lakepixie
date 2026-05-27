@@ -1,16 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import {
-  getGitHubAppInstallationToken,
+  getValidGitHubUserAccessToken,
   toGitHubRepositoryFullName,
-  type GitHubAppTokenPermission,
-} from './github-app-auth.service.js';
+} from './github-oauth.service.js';
 
 const CREDENTIAL_REGISTRATION_TTL_MS = 12 * 60 * 60 * 1000;
 
 interface RegisteredGitCredential {
+  userId: string;
   repoFullName: string;
-  permission: GitHubAppTokenPermission;
   expiresAt: number;
 }
 
@@ -31,15 +30,15 @@ function cleanupExpiredRegistrations(): void {
 }
 
 export function registerGitCredential(
-  repository: string,
-  permission: GitHubAppTokenPermission
+  userId: string,
+  repository: string
 ): GitCredentialRegistration {
   cleanupExpiredRegistrations();
   const repoFullName = toGitHubRepositoryFullName(repository);
   const bearerToken = randomBytes(32).toString('base64url');
   registeredCredentials.set(bearerToken, {
+    userId,
     repoFullName,
-    permission,
     expiresAt: Date.now() + CREDENTIAL_REGISTRATION_TTL_MS,
   });
   return { bearerToken, repoFullName };
@@ -113,11 +112,7 @@ export async function resolveGitCredentialRequest(
     return '';
   }
 
-  const token = await getGitHubAppInstallationToken(
-    fastify,
-    registration.repoFullName,
-    registration.permission
-  );
+  const token = await getValidGitHubUserAccessToken(fastify, registration.userId);
 
   return [
     'protocol=https',

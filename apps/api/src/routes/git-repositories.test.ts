@@ -3,42 +3,50 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import requestDecoratorPlugin from '../plugins/request-decorator.js';
 
 const {
-  mockCreateGitHubAppPullRequest,
-  mockGetGitHubAppPullRequest,
-  mockGetGitHubAppRepositoryBranch,
-  mockListGitHubAppPullRequests,
-  mockListGitHubAppRepositoryBranches,
-  mockListGitHubAppRepositories,
+  mockCreateGitHubUserPullRequest,
+  mockGetGitHubUserPullRequest,
+  mockGetGitHubUserRepositoryBranch,
+  mockListGitHubUserPullRequests,
+  mockListGitHubUserRepositoryBranches,
+  mockListGitHubUserRepositories,
 } = vi.hoisted(() => ({
-  mockCreateGitHubAppPullRequest: vi.fn(),
-  mockGetGitHubAppPullRequest: vi.fn(),
-  mockGetGitHubAppRepositoryBranch: vi.fn(),
-  mockListGitHubAppPullRequests: vi.fn(),
-  mockListGitHubAppRepositoryBranches: vi.fn(),
-  mockListGitHubAppRepositories: vi.fn(),
+  mockCreateGitHubUserPullRequest: vi.fn(),
+  mockGetGitHubUserPullRequest: vi.fn(),
+  mockGetGitHubUserRepositoryBranch: vi.fn(),
+  mockListGitHubUserPullRequests: vi.fn(),
+  mockListGitHubUserRepositoryBranches: vi.fn(),
+  mockListGitHubUserRepositories: vi.fn(),
 }));
 
-vi.mock('../services/github-app-auth.service.js', () => ({
-  GitHubAppAuthError: class GitHubAppAuthError extends Error {
+vi.mock('../services/github-oauth.service.js', () => ({
+  GitHubOAuthError: class GitHubOAuthError extends Error {
     constructor(
       message: string,
       public readonly details?: unknown
     ) {
       super(message);
-      this.name = 'GitHubAppAuthError';
+      this.name = 'GitHubOAuthError';
     }
   },
-  GitHubAppAuthNotConfiguredError: class GitHubAppAuthNotConfiguredError extends Error {},
-  createGitHubAppPullRequest: mockCreateGitHubAppPullRequest,
-  getGitHubAppPullRequest: mockGetGitHubAppPullRequest,
-  getGitHubAppRepositoryBranch: mockGetGitHubAppRepositoryBranch,
-  listGitHubAppPullRequests: mockListGitHubAppPullRequests,
-  listGitHubAppRepositoryBranches: mockListGitHubAppRepositoryBranches,
-  listGitHubAppRepositories: mockListGitHubAppRepositories,
+  GitHubOAuthAuthorizationRequiredError: class GitHubOAuthAuthorizationRequiredError extends Error {},
+  GitHubOAuthExpiredError: class GitHubOAuthExpiredError extends Error {},
+  GitHubOAuthNotConfiguredError: class GitHubOAuthNotConfiguredError extends Error {},
+  createGitHubUserPullRequest: mockCreateGitHubUserPullRequest,
+  getGitHubUserPullRequest: mockGetGitHubUserPullRequest,
+  getGitHubUserRepositoryBranch: mockGetGitHubUserRepositoryBranch,
+  listGitHubUserPullRequests: mockListGitHubUserPullRequests,
+  listGitHubUserRepositories: mockListGitHubUserRepositories,
+  listGitHubUserRepositoryBranches: mockListGitHubUserRepositoryBranches,
+  normalizePullRequestCreateHead: (owner: string, head: string) =>
+    head.startsWith(`${owner}:`) ? head.slice(owner.length + 1) : head,
 }));
 
 import gitRepositoriesRoute from './git-repositories.js';
-import { GitHubAppAuthError } from '../services/github-app-auth.service.js';
+import {
+  GitHubOAuthAuthorizationRequiredError,
+  GitHubOAuthError,
+  GitHubOAuthNotConfiguredError,
+} from '../services/github-oauth.service.js';
 
 const TEST_USER_HEADERS = {
   'x-forwarded-user': 'test-user-id',
@@ -61,7 +69,7 @@ describe('git repositories route', () => {
   });
 
   it('lists repositories from /api/repos and does not expose the old route', async () => {
-    mockListGitHubAppRepositories.mockResolvedValue([
+    mockListGitHubUserRepositories.mockResolvedValue([
       { full_name: 'acme/widgets', url: 'https://github.com/acme/widgets' },
     ]);
 
@@ -80,12 +88,48 @@ describe('git repositories route', () => {
     expect(response.json()).toEqual({
       repositories: [{ full_name: 'acme/widgets', url: 'https://github.com/acme/widgets' }],
     });
-    expect(mockListGitHubAppRepositories).toHaveBeenCalledWith(expect.anything(), 'widget');
+    expect(mockListGitHubUserRepositories).toHaveBeenCalledWith(
+      expect.anything(),
+      'test-user-id',
+      'widget'
+    );
     expect(oldResponse.statusCode).toBe(404);
   });
 
+  it('requires user GitHub authorization for repository listing', async () => {
+    mockListGitHubUserRepositories.mockRejectedValue(new GitHubOAuthAuthorizationRequiredError());
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/repos',
+      headers: TEST_USER_HEADERS,
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      error: 'GitHubAuthorizationRequired',
+      statusCode: 401,
+    });
+  });
+
+  it('returns 503 when GitHub OAuth is not configured', async () => {
+    mockListGitHubUserRepositories.mockRejectedValue(new GitHubOAuthNotConfiguredError());
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/repos',
+      headers: TEST_USER_HEADERS,
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      error: 'GitHubOAuthNotConfigured',
+      statusCode: 503,
+    });
+  });
+
   it('decodes slash-containing branch names for branch detail', async () => {
-    mockGetGitHubAppRepositoryBranch.mockResolvedValue({
+    mockGetGitHubUserRepositoryBranch.mockResolvedValue({
       name: 'ccbricks/test',
       html_url: 'https://github.com/acme/widgets/tree/ccbricks%2Ftest',
       compare: null,
@@ -98,16 +142,17 @@ describe('git repositories route', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(mockGetGitHubAppRepositoryBranch).toHaveBeenCalledWith(
+    expect(mockGetGitHubUserRepositoryBranch).toHaveBeenCalledWith(
       expect.anything(),
+      'test-user-id',
       'acme/widgets',
       'ccbricks/test'
     );
   });
 
   it('returns branch detail errors with GitHub details for debugging', async () => {
-    mockGetGitHubAppRepositoryBranch.mockRejectedValue(
-      new GitHubAppAuthError('GitHub API returned 404', { message: 'Branch not found' })
+    mockGetGitHubUserRepositoryBranch.mockRejectedValue(
+      new GitHubOAuthError('GitHub API returned 404', { message: 'Branch not found' })
     );
 
     const response = await app.inject({
@@ -125,7 +170,7 @@ describe('git repositories route', () => {
   });
 
   it('passes head, base, and state through to pull request search', async () => {
-    mockListGitHubAppPullRequests.mockResolvedValue([
+    mockListGitHubUserPullRequests.mockResolvedValue([
       {
         number: 4,
         title: 'Update widgets',
@@ -146,15 +191,20 @@ describe('git repositories route', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ pulls: [{ number: 4 }] });
-    expect(mockListGitHubAppPullRequests).toHaveBeenCalledWith(expect.anything(), 'acme/widgets', {
-      head: 'acme:ccbricks/test',
-      base: 'main',
-      state: 'open',
-    });
+    expect(mockListGitHubUserPullRequests).toHaveBeenCalledWith(
+      expect.anything(),
+      'test-user-id',
+      'acme/widgets',
+      {
+        head: 'acme:ccbricks/test',
+        base: 'main',
+        state: 'open',
+      }
+    );
   });
 
   it('uses pull_number when fetching pull request details', async () => {
-    mockGetGitHubAppPullRequest.mockResolvedValue({
+    mockGetGitHubUserPullRequest.mockResolvedValue({
       number: 4,
       title: 'Update widgets',
       state: 'open',
@@ -172,11 +222,16 @@ describe('git repositories route', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(mockGetGitHubAppPullRequest).toHaveBeenCalledWith(expect.anything(), 'acme/widgets', 4);
+    expect(mockGetGitHubUserPullRequest).toHaveBeenCalledWith(
+      expect.anything(),
+      'test-user-id',
+      'acme/widgets',
+      4
+    );
   });
 
   it('creates pull requests with GitHub-shaped request fields', async () => {
-    mockCreateGitHubAppPullRequest.mockResolvedValue({
+    mockCreateGitHubUserPullRequest.mockResolvedValue({
       number: 5,
       title: 'Update widgets',
       state: 'open',
@@ -202,12 +257,17 @@ describe('git repositories route', () => {
 
     expect(response.statusCode).toBe(201);
     expect(response.json()).toMatchObject({ number: 5, draft: true });
-    expect(mockCreateGitHubAppPullRequest).toHaveBeenCalledWith(expect.anything(), 'acme/widgets', {
-      title: 'Update widgets',
-      body: 'Generated PR body',
-      head: 'acme:ccbricks/test',
-      base: 'main',
-      draft: true,
-    });
+    expect(mockCreateGitHubUserPullRequest).toHaveBeenCalledWith(
+      expect.anything(),
+      'test-user-id',
+      'acme/widgets',
+      {
+        title: 'Update widgets',
+        body: 'Generated PR body',
+        head: 'acme:ccbricks/test',
+        base: 'main',
+        draft: true,
+      }
+    );
   });
 });

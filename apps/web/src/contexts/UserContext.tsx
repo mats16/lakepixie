@@ -1,6 +1,11 @@
 import { createContext, useCallback, useEffect, useState, type ReactNode } from 'react';
-import type { UserInfo, UserSettingsResponse } from '@repo/types';
-import { appSettingsService, userService, userSettingsService } from '@/services';
+import type { GitHubOAuthAuthorizationResponse, UserInfo, UserSettingsResponse } from '@repo/types';
+import {
+  appSettingsService,
+  githubOAuthService,
+  userService,
+  userSettingsService,
+} from '@/services';
 
 export interface UserContextValue {
   user: UserInfo | null;
@@ -9,7 +14,7 @@ export interface UserContextValue {
   claudeCodeVersion: string | null;
   appTitle: string;
   welcomeHeading: string;
-  githubAppId: string | null;
+  githubOAuthAuthorization: GitHubOAuthAuthorizationResponse | null;
   modelSettings: UserSettingsResponse | null;
   isLoading: boolean;
   isAdmin: boolean;
@@ -17,6 +22,7 @@ export interface UserContextValue {
   refetch: () => Promise<void>;
   refetchAppSettings: () => Promise<void>;
   refetchModelSettings: () => Promise<void>;
+  refetchGitHubAuthorization: () => Promise<void>;
 }
 
 export const UserContext = createContext<UserContextValue | null>(null);
@@ -32,7 +38,8 @@ export function UserProvider({ children }: UserProviderProps) {
   const [claudeCodeVersion, setClaudeCodeVersion] = useState<string | null>(null);
   const [appTitle, setAppTitle] = useState('');
   const [welcomeHeading, setWelcomeHeading] = useState('');
-  const [githubAppId, setGithubAppId] = useState<string | null>(null);
+  const [githubOAuthAuthorization, setGitHubOAuthAuthorization] =
+    useState<GitHubOAuthAuthorizationResponse | null>(null);
   const [modelSettings, setModelSettings] = useState<UserSettingsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -42,7 +49,6 @@ export function UserProvider({ children }: UserProviderProps) {
       const data = await appSettingsService.getPublicSettings();
       setAppTitle(data.app_title);
       setWelcomeHeading(data.welcome_heading);
-      setGithubAppId(data.github_app_id);
       document.title = data.app_title;
     } catch (err) {
       console.error('Failed to fetch app settings:', err);
@@ -55,6 +61,11 @@ export function UserProvider({ children }: UserProviderProps) {
     setModelSettings(settings);
   }, []);
 
+  const fetchGitHubAuthorization = useCallback(async () => {
+    const authorization = await githubOAuthService.getAuthorization();
+    setGitHubOAuthAuthorization(authorization);
+  }, []);
+
   const fetchUser = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -65,6 +76,10 @@ export function UserProvider({ children }: UserProviderProps) {
       setDatabricksHost(data.databricks_host);
       setClaudeAgentSdkVersion(data.claude_agent_sdk_version);
       setClaudeCodeVersion(data.claude_code_version);
+      void fetchGitHubAuthorization().catch(err => {
+        console.error('Failed to fetch GitHub authorization:', err);
+        setGitHubOAuthAuthorization(null);
+      });
       void fetchModelSettings().catch(err => {
         console.error('Failed to fetch model settings:', err);
         setModelSettings(null);
@@ -77,11 +92,12 @@ export function UserProvider({ children }: UserProviderProps) {
       setDatabricksHost(null);
       setClaudeAgentSdkVersion(null);
       setClaudeCodeVersion(null);
+      setGitHubOAuthAuthorization(null);
       setModelSettings(null);
     } finally {
       setIsLoading(false);
     }
-  }, [fetchModelSettings]);
+  }, [fetchGitHubAuthorization, fetchModelSettings]);
 
   useEffect(() => {
     fetchUser();
@@ -97,7 +113,7 @@ export function UserProvider({ children }: UserProviderProps) {
         claudeCodeVersion,
         appTitle,
         welcomeHeading,
-        githubAppId,
+        githubOAuthAuthorization,
         modelSettings,
         isLoading,
         isAdmin: user?.is_admin ?? false,
@@ -105,6 +121,7 @@ export function UserProvider({ children }: UserProviderProps) {
         refetch: fetchUser,
         refetchAppSettings: fetchAppSettings,
         refetchModelSettings: fetchModelSettings,
+        refetchGitHubAuthorization: fetchGitHubAuthorization,
       }}
     >
       {children}
