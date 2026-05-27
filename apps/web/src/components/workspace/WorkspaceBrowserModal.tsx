@@ -59,10 +59,11 @@ function getWorkspaceErrorMessage(error: unknown, fallback: string): string {
 }
 
 function hasControlCharacter(value: string): boolean {
-  return Array.from(value).some(char => {
+  for (const char of value) {
     const code = char.charCodeAt(0);
-    return code <= 31 || code === 127;
-  });
+    if (code <= 31 || code === 127) return true;
+  }
+  return false;
 }
 
 function isInvalidFolderName(folderName: string, trimmedName: string): boolean {
@@ -76,6 +77,21 @@ function isInvalidFolderName(folderName: string, trimmedName: string): boolean {
     trimmedName.startsWith('.') ||
     trimmedName.endsWith('.')
   );
+}
+
+async function getCreatedDirectoryStatus(path: string): Promise<WorkspaceObjectInfo> {
+  try {
+    return await workspaceService.getStatus(path);
+  } catch (err) {
+    if (err instanceof ApiClientError && err.statusCode === 404) {
+      return {
+        path,
+        object_type: 'DIRECTORY',
+        object_id: 0,
+      };
+    }
+    throw err;
+  }
 }
 
 export function WorkspaceBrowserModal({
@@ -116,6 +132,12 @@ export function WorkspaceBrowserModal({
     setNewFolderName('');
   }, []);
 
+  const cancelPendingCreate = useCallback(() => {
+    createGenerationRef.current += 1;
+    isCreatingFolderRef.current = false;
+    setIsCreatingFolder(false);
+  }, []);
+
   const fetchObjects = useCallback(
     async ({ clearSelection = true }: { clearSelection?: boolean } = {}) => {
       setIsLoading(true);
@@ -141,8 +163,7 @@ export function WorkspaceBrowserModal({
   useEffect(() => {
     if (open) {
       currentPathRef.current = initialPath;
-      createGenerationRef.current += 1;
-      isCreatingFolderRef.current = false;
+      cancelPendingCreate();
       setCurrentPath(initialPath);
       setCurrentObjectType('DIRECTORY'); // 初期パスは通常 DIRECTORY
       setCurrentObjectId(undefined);
@@ -152,10 +173,9 @@ export function WorkspaceBrowserModal({
       setSelectError(null);
       setIsLoading(false);
       setIsSelecting(false);
-      setIsCreatingFolder(false);
       resetCreateForm();
     }
-  }, [open, initialPath, resetCreateForm]);
+  }, [open, initialPath, cancelPendingCreate, resetCreateForm]);
 
   // パスが変わったらオブジェクト一覧を取得
   useEffect(() => {
@@ -168,17 +188,15 @@ export function WorkspaceBrowserModal({
     (path: string, objectType: WorkspaceObjectType = 'DIRECTORY', objectId?: number) => {
       const nextPath = safeSanitizePath(path);
       currentPathRef.current = nextPath;
-      createGenerationRef.current += 1;
-      isCreatingFolderRef.current = false;
+      cancelPendingCreate();
       setCurrentPath(nextPath);
       setCurrentObjectType(objectType);
       setCurrentObjectId(objectId);
       setSelectedItem(null);
       setSelectError(null);
-      setIsCreatingFolder(false);
       resetCreateForm();
     },
-    [resetCreateForm]
+    [cancelPendingCreate, resetCreateForm]
   );
 
   const openCreateForm = useCallback(() => {
@@ -237,16 +255,7 @@ export function WorkspaceBrowserModal({
 
     try {
       await workspaceService.mkdirs(newFolderPath);
-      const createdFolder = await workspaceService.getStatus(newFolderPath).catch(err => {
-        if (err instanceof ApiClientError && err.statusCode === 404) {
-          return {
-            path: newFolderPath,
-            object_type: 'DIRECTORY' as const,
-            object_id: 0,
-          };
-        }
-        throw err;
-      });
+      const createdFolder = await getCreatedDirectoryStatus(newFolderPath);
 
       if (
         currentPathRef.current !== createBasePath ||
