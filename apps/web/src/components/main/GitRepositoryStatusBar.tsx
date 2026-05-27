@@ -92,7 +92,7 @@ function getPullStatusKey(pull: GitRepositoryPullRequest | null): PullStatusKey 
 
 function hasPullRequestDiff(diff: GitRepositoryDiffResponse | null | undefined): boolean {
   if (!diff) return false;
-  return Number(diff.total_commits) > 0 || Number(diff.additions) > 0 || Number(diff.deletions) > 0;
+  return diff.total_commits > 0 || diff.additions > 0 || diff.deletions > 0;
 }
 
 export function GitRepositoryStatusBar({
@@ -134,14 +134,12 @@ export function GitRepositoryStatusBar({
           '[GitRepositoryStatusBar] Failed to load branch details:',
           branchResult.reason
         );
-        setBranchDetail(null);
       }
 
       if (pullsResult.status === 'fulfilled') {
         setPull(pullsResult.value.pulls[0] ?? null);
       } else {
         console.warn('[GitRepositoryStatusBar] Failed to load pull requests:', pullsResult.reason);
-        setPull(null);
       }
     });
 
@@ -149,14 +147,6 @@ export function GitRepositoryStatusBar({
       isCurrent = false;
     };
   }, [baseBranch, fullName, headBranch, owner, remoteRefreshKey]);
-
-  useEffect(() => {
-    setBranchDetail(null);
-    setLocalDiff(null);
-    setPull(null);
-    setIsCreating(false);
-    setPendingPullRequestDraft(null);
-  }, [baseBranch, fullName, headBranch, owner, sessionId]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -231,10 +221,53 @@ export function GitRepositoryStatusBar({
   const remoteBranchUrl = branchDetail?.html_url;
   const manualPullRequestUrl = pullRequestCreateUrl(owner, repo, baseBranch, headBranch);
   const canShowCreatePullRequest = branchDetail !== null && !pull;
-  const canCreatePullRequest = canShowCreatePullRequest && hasPullRequestDiff(diff);
-  const createPullRequestDisabledReason = canCreatePullRequest
-    ? undefined
-    : t('gitStatus.createPullRequestDisabledNoDiff');
+  const isDiffKnownEmpty = diff !== null && diff !== undefined && !hasPullRequestDiff(diff);
+  const canCreatePullRequest = canShowCreatePullRequest && !isDiffKnownEmpty;
+  const createPullRequestDisabledReason = isDiffKnownEmpty
+    ? t('gitStatus.createPullRequestDisabledNoDiff')
+    : undefined;
+  const createPullRequestButtonGroup = canShowCreatePullRequest ? (
+    <div className="flex overflow-hidden rounded-md border shadow-sm">
+      <Button
+        type="button"
+        variant="ghost"
+        className="h-6 rounded-none px-2 text-xs"
+        onClick={() => setPendingPullRequestDraft(false)}
+        disabled={isCreating || !canCreatePullRequest}
+      >
+        {t('gitStatus.createPullRequest')}
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 rounded-none border-l"
+            disabled={isCreating || !canCreatePullRequest}
+            aria-label={t('gitStatus.createPullRequestOptions')}
+          >
+            <ChevronDown className="h-3 w-3" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => setPendingPullRequestDraft(false)}>
+            <GitPullRequestArrow className="h-4 w-4" />
+            {t('gitStatus.createPullRequest')}
+            <Check className="ml-auto h-4 w-4" />
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setPendingPullRequestDraft(true)}>
+            <GitPullRequestDraft className="h-4 w-4" />
+            {t('gitStatus.createDraftPullRequest')}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => openUrl(manualPullRequestUrl)}>
+            <ExternalLink className="h-4 w-4" />
+            {t('gitStatus.createPullRequestManually')}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  ) : null;
 
   return (
     <>
@@ -317,50 +350,17 @@ export function GitRepositoryStatusBar({
 
             <div className="flex shrink-0 items-center gap-2">
               {diffBadge}
-              {canShowCreatePullRequest && (
-                <div
-                  className="flex overflow-hidden rounded-md border shadow-sm"
-                  title={createPullRequestDisabledReason}
-                >
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="h-6 rounded-none px-2 text-xs"
-                    onClick={() => setPendingPullRequestDraft(false)}
-                    disabled={isCreating || !canCreatePullRequest}
-                  >
-                    {t('gitStatus.createPullRequest')}
-                  </Button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 rounded-none border-l"
-                        disabled={isCreating || !canCreatePullRequest}
-                        aria-label={t('gitStatus.createPullRequestOptions')}
-                      >
-                        <ChevronDown className="h-3 w-3" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => setPendingPullRequestDraft(false)}>
-                        <GitPullRequestArrow className="h-4 w-4" />
-                        {t('gitStatus.createPullRequest')}
-                        <Check className="ml-auto h-4 w-4" />
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setPendingPullRequestDraft(true)}>
-                        <GitPullRequestDraft className="h-4 w-4" />
-                        {t('gitStatus.createDraftPullRequest')}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => openUrl(manualPullRequestUrl)}>
-                        <ExternalLink className="h-4 w-4" />
-                        {t('gitStatus.createPullRequestManually')}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+              {createPullRequestDisabledReason && createPullRequestButtonGroup ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex">{createPullRequestButtonGroup}</span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{createPullRequestDisabledReason}</p>
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                createPullRequestButtonGroup
               )}
             </div>
           </div>

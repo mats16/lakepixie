@@ -54,6 +54,16 @@ describe('shouldRefreshGitRepositoryStatusForEvent', () => {
     expect(shouldRefreshGitRepositoryStatusForEvent({ type: 'result' })).toBe(true);
   });
 
+  it('ignores failed result events', () => {
+    expect(
+      shouldRefreshGitRepositoryStatusForEvent({
+        type: 'result',
+        subtype: 'error_during_execution',
+        errors: ['failed'],
+      } as SDKMessage)
+    ).toBe(false);
+  });
+
   it('ignores tool_result events', () => {
     const event = {
       type: 'user',

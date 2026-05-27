@@ -145,6 +145,7 @@ export function MainArea({
   const [hasAppYaml, setHasAppYaml] = useState<boolean | null>(null);
   const [isCheckingAppYaml, setIsCheckingAppYaml] = useState(false);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gitRepositoryStatusRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // navigate state から初期メッセージを取得
   const initialMessage = useMemo(() => {
@@ -202,7 +203,13 @@ export function MainArea({
   }, []);
 
   const handleGitRepositoryStatusRefreshNeeded = useCallback(() => {
-    setGitRepositoryStatusRefreshKey(current => current + 1);
+    if (gitRepositoryStatusRefreshTimerRef.current) {
+      clearTimeout(gitRepositoryStatusRefreshTimerRef.current);
+    }
+    gitRepositoryStatusRefreshTimerRef.current = setTimeout(() => {
+      gitRepositoryStatusRefreshTimerRef.current = null;
+      setGitRepositoryStatusRefreshKey(current => current + 1);
+    }, GIT_DIFF_REFRESH_DEBOUNCE_MS);
   }, []);
 
   useEffect(() => {
@@ -210,6 +217,10 @@ export function MainArea({
       if (gitDiffRefreshTimerRef.current) {
         clearTimeout(gitDiffRefreshTimerRef.current);
         gitDiffRefreshTimerRef.current = null;
+      }
+      if (gitRepositoryStatusRefreshTimerRef.current) {
+        clearTimeout(gitRepositoryStatusRefreshTimerRef.current);
+        gitRepositoryStatusRefreshTimerRef.current = null;
       }
     };
   }, [sessionId]);

@@ -235,6 +235,32 @@ describe('GitRepositoryStatusBar', () => {
       'disabled',
       true
     );
+    const buttonGroup = button.closest('span');
+    expect(buttonGroup).toBeTruthy();
+    fireEvent.pointerMove(buttonGroup!);
+    fireEvent.pointerOver(buttonGroup!);
+    fireEvent.mouseMove(buttonGroup!);
+
+    expect(
+      (await screen.findAllByText('No changes to create a pull request')).length
+    ).toBeGreaterThan(0);
+  });
+
+  it('keeps pull request creation enabled when the local diff is unavailable', async () => {
+    mockGitRepositoryService.getBranch.mockResolvedValue({
+      name: 'ccbricks/test',
+      html_url: 'https://github.com/acme/widgets/tree/ccbricks%2Ftest',
+      compare: null,
+    });
+    mockGitRepositoryService.listPullRequests.mockResolvedValue({ pulls: [] });
+    mockSessionService.getGitDiff.mockRejectedValue(new Error('Git diff unavailable'));
+
+    renderStatusBar();
+
+    expect(await screen.findByRole('button', { name: 'Create PR' })).toHaveProperty(
+      'disabled',
+      false
+    );
   });
 
   it('refreshes the local diff when the refresh key changes', async () => {
@@ -521,6 +547,55 @@ describe('GitRepositoryStatusBar', () => {
     expect(screen.queryByRole('button', { name: 'Create PR' })).toBeNull();
   });
 
+  it('keeps existing pull request details when a remote refresh fails', async () => {
+    mockGitRepositoryService.getBranch.mockResolvedValue({
+      name: 'ccbricks/test',
+      html_url: 'https://github.com/acme/widgets/tree/ccbricks%2Ftest',
+      compare: null,
+    });
+    mockSessionService.getGitDiff.mockResolvedValue(gitDiff());
+    mockGitRepositoryService.listPullRequests
+      .mockResolvedValueOnce({
+        pulls: [
+          {
+            number: 4,
+            title: 'Update widgets',
+            state: 'open',
+            draft: false,
+            merged: false,
+            html_url: 'https://github.com/acme/widgets/pull/4',
+            head: { ref: 'ccbricks/test', label: 'acme:ccbricks/test' },
+            base: { ref: 'main', label: 'acme:main' },
+          },
+        ],
+      })
+      .mockRejectedValueOnce(new Error('Pulls unavailable'));
+
+    const { rerender } = renderStatusBar({ remoteRefreshKey: 0 });
+
+    expect(await screen.findByText('#4')).toBeTruthy();
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <TooltipProvider delayDuration={0}>
+          <GitRepositoryStatusBar
+            sessionId="019729a8-0000-7000-8000-000000000000"
+            owner="acme"
+            repo="widgets"
+            headBranch="ccbricks/test"
+            baseBranch="main"
+            sessionTitle="Update widgets"
+            remoteRefreshKey={1}
+          />
+        </TooltipProvider>
+      </I18nextProvider>
+    );
+
+    await waitFor(() => expect(mockGitRepositoryService.listPullRequests).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('#4')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Create PR' })).toBeNull();
+  });
+
   it('refreshes remote branch details when the remote refresh key changes', async () => {
     mockGitRepositoryService.getBranch
       .mockRejectedValueOnce(new Error('Branch not found'))
@@ -530,9 +605,7 @@ describe('GitRepositoryStatusBar', () => {
         compare: null,
       });
     mockGitRepositoryService.listPullRequests.mockResolvedValue({ pulls: [] });
-    mockSessionService.getGitDiff
-      .mockResolvedValueOnce(gitDiff({ ahead_by: 0, total_commits: 0, additions: 0 }))
-      .mockResolvedValueOnce(gitDiff({ additions: 5, deletions: 1 }));
+    mockSessionService.getGitDiff.mockResolvedValue(gitDiff());
 
     const { rerender } = renderStatusBar({ diffRefreshKey: 0, remoteRefreshKey: 0 });
 
@@ -549,7 +622,6 @@ describe('GitRepositoryStatusBar', () => {
             headBranch="ccbricks/test"
             baseBranch="main"
             sessionTitle="Update widgets"
-            diffRefreshKey={1}
             remoteRefreshKey={1}
           />
         </TooltipProvider>
@@ -559,6 +631,8 @@ describe('GitRepositoryStatusBar', () => {
     const button = await screen.findByRole('button', { name: 'Create PR' });
     await waitFor(() => expect(button).toHaveProperty('disabled', false));
     expect(mockGitRepositoryService.getBranch).toHaveBeenCalledTimes(2);
+    expect(mockGitRepositoryService.listPullRequests).toHaveBeenCalledTimes(2);
+    expect(mockSessionService.getGitDiff).toHaveBeenCalledTimes(1);
   });
 
   it('treats pull request list failures as no existing pull request', async () => {

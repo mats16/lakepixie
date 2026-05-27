@@ -68,7 +68,14 @@ export function shouldRefreshGitDiffForEvent(event: SDKMessage): boolean {
 }
 
 export function shouldRefreshGitRepositoryStatusForEvent(event: SDKMessage): boolean {
-  return isSDKResultMessageEvent(event);
+  if (!isSDKResultMessageEvent(event)) return false;
+  const result = event as SDKMessage & {
+    subtype?: string;
+    is_error?: boolean;
+    errors?: unknown;
+  };
+  if (result.subtype === 'error_during_execution' || result.is_error === true) return false;
+  return !Array.isArray(result.errors) || result.errors.length === 0;
 }
 
 export function getToolResultIdsFromEvent(event: SDKMessage): string[] {
