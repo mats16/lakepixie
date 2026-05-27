@@ -24,7 +24,6 @@ interface FloatingButtonsProps {
   onCreateApp?: () => void;
   isCreatingApp?: boolean;
   createAppDisabled?: boolean;
-  createAppTooltip?: string;
 }
 
 type AppStateType = 'RUNNING' | 'DEPLOYING' | 'CRASHED' | 'UNAVAILABLE' | 'UNKNOWN';
@@ -94,7 +93,6 @@ export function FloatingButtons({
   onCreateApp,
   isCreatingApp = false,
   createAppDisabled = false,
-  createAppTooltip,
 }: FloatingButtonsProps) {
   const showWorkspaceButton = !!workspacePath;
   const showCreateButton = showWorkspaceButton && !showAppButton && !!onCreateApp;
@@ -307,10 +305,7 @@ export function FloatingButtons({
           {showCreateButton && (
             <span
               className="flex shrink-0 overflow-hidden rounded-md border shadow-sm"
-              title={
-                createAppTooltip ??
-                t(isCreatingApp ? 'databricksApp.creating' : 'databricksApp.create')
-              }
+              title={t(isCreatingApp ? 'databricksApp.creating' : 'databricksApp.create')}
             >
               <button
                 type="button"

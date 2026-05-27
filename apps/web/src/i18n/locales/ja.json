@@ -356,7 +356,6 @@
     "deploying": "Databricks Apps にデプロイ中",
     "deploySuccess": "Databricks Apps へのデプロイを開始しました",
     "deployError": "Databricks Apps へのデプロイに失敗しました",
-    "missingAppYamlWarning": "Databricks App を作成するには app.yaml を追加してください。",
     "workspaceOpenError": "ワークスペースを開けませんでした"
   },
   "gitStatus": {
