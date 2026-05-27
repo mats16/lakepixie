@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, and, inArray, lt, asc } from 'drizzle-orm';
 import { accessSync, constants as fsConstants } from 'node:fs';
-import { chmod, writeFile } from 'node:fs/promises';
+import { access, chmod, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { spawnAsync } from '../utils/spawn.js';
 import {
@@ -2167,6 +2167,11 @@ async function createDatabricksAppForSessionUnlocked(
 
   const sessionsBaseDir = path.join(fastify.config.CCBRICKS_BASE_DIR, 'sessions');
   const cwd = await validatePathWithinBase(sessionContext.cwd, sessionsBaseDir);
+  try {
+    await access(path.join(cwd, 'app.yaml'));
+  } catch {
+    throw new SessionAppCreateError(400, 'app.yaml is required to create a Databricks App');
+  }
 
   let metadataAccessToken: string;
   try {

@@ -40,6 +40,7 @@ beforeEach(async () => {
             askUserQuestion: 'Question',
             askQuestionOther: 'Other',
             askQuestionOtherPlaceholder: 'Enter your answer',
+            askQuestionNext: 'Next',
             askQuestionSubmit: 'Submit',
           },
         },
@@ -214,6 +215,39 @@ describe('AskUserQuestionToolUse', () => {
     expect(screen.getByRole('button', { name: /TypeScript/ }).className).toContain(
       'border-primary'
     );
+  });
+
+  it('prefers SDK question-keyed answers over colliding header keys', () => {
+    renderTool({
+      toolInput: {
+        questions: [
+          {
+            question: 'Library',
+            header: 'Lang',
+            options: [{ label: 'TypeScript', description: 'Language choice' }],
+          },
+          {
+            question: 'Which database?',
+            header: 'Library',
+            options: [{ label: 'Postgres', description: 'Database choice' }],
+          },
+        ],
+      },
+      result: {
+        content: 'The user answered.',
+        isError: false,
+        toolUseResult: {
+          answers: {
+            Library: 'TypeScript',
+            'Which database?': 'Postgres',
+          },
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+
+    expect(screen.getByRole('button', { name: /Postgres/ }).className).toContain('border-primary');
   });
 
   it('shows multi-value arrays on single-select questions without truncating them', () => {

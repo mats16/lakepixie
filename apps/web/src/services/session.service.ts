@@ -12,6 +12,7 @@ import type {
   GenerateTitleRequest,
   GenerateTitleResponse,
   GitRepositoryDiffResponse,
+  SessionAppCreatePrerequisitesResponse,
   SessionAppCreateRequest,
   SessionAppCreateResponse,
   SDKUserMessage,
@@ -78,6 +79,14 @@ export const sessionService = {
 
   async getGitDiff(sessionId: string): Promise<GitRepositoryDiffResponse> {
     return apiClient<GitRepositoryDiffResponse>(`/api/sessions/${sessionId}/git-diff`);
+  },
+
+  async getAppCreatePrerequisites(
+    sessionId: string
+  ): Promise<SessionAppCreatePrerequisitesResponse> {
+    return apiClient<SessionAppCreatePrerequisitesResponse>(
+      `/api/sessions/${sessionId}/app/create-prerequisites`
+    );
   },
 
   async sendMessage(sessionId: string, message: SDKUserMessage): Promise<SessionEventPostResponse> {

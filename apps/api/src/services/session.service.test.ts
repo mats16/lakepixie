@@ -54,7 +54,10 @@ import {
   __testing as exitPlanModeTesting,
   resolveExitPlanModeDecision,
 } from './exit-plan-mode.service.js';
-import { resolveUserAnswer } from './ask-user-question.service.js';
+import {
+  __testing as askUserQuestionTesting,
+  resolveUserAnswer,
+} from './ask-user-question.service.js';
 
 describe('session.service', () => {
   // Mock FastifyInstance
@@ -156,6 +159,7 @@ describe('session.service', () => {
     __testing.clearActiveSessionQueries();
     __testing.clearDatabricksAppCreateLocks();
     exitPlanModeTesting.clearPendingExitPlanModes();
+    askUserQuestionTesting.clearPendingQuestions();
     mockSpawn.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & {
         stdout: EventEmitter;
@@ -667,6 +671,84 @@ describe('session.service', () => {
           },
         },
       });
+    });
+
+    it('rejects AskUserQuestion inputs with duplicate headers', async () => {
+      const { fastify } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+      const input = {
+        questions: [
+          { question: 'Which UI library?', header: 'Library' },
+          { question: 'Which database library?', header: 'Library' },
+        ],
+      };
+
+      const resultPromise = startAskUserQuestion(
+        fastify,
+        sessionId,
+        'toolu-ask-user-question-duplicate-header',
+        input
+      );
+
+      resolveUserAnswer('toolu-ask-user-question-duplicate-header', {
+        Library: 'React',
+      });
+
+      await expect(resultPromise).rejects.toThrow(
+        "AskUserQuestion input contains duplicate header 'Library'"
+      );
+    });
+
+    it('rejects AskUserQuestion answers that do not match any question', async () => {
+      const { fastify } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+      const input = {
+        questions: [{ question: 'Which framework?', header: 'Framework' }],
+      };
+
+      const resultPromise = startAskUserQuestion(
+        fastify,
+        sessionId,
+        'toolu-ask-user-question-unknown-key',
+        input
+      );
+
+      resolveUserAnswer('toolu-ask-user-question-unknown-key', {
+        Library: 'React',
+      });
+
+      await expect(resultPromise).rejects.toThrow(
+        "AskUserQuestion answer key 'Library' does not match any question"
+      );
+    });
+
+    it('rejects comma-containing AskUserQuestion multi-select answers', async () => {
+      const { fastify } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+      const input = {
+        questions: [
+          {
+            question: 'Which companies should be enabled?',
+            header: 'Companies',
+            multiSelect: true,
+          },
+        ],
+      };
+
+      const resultPromise = startAskUserQuestion(
+        fastify,
+        sessionId,
+        'toolu-ask-user-question-comma',
+        input
+      );
+
+      resolveUserAnswer('toolu-ask-user-question-comma', {
+        Companies: ['Apple, Inc.', 'Banana'],
+      });
+
+      await expect(resultPromise).rejects.toThrow(
+        "AskUserQuestion multi-select answer for 'Companies' cannot contain a comma: 'Apple, Inc.'"
+      );
     });
 
     it('waits for ExitPlanMode approval and restores the pre-plan permission mode', async () => {

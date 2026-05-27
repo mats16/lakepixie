@@ -142,6 +142,8 @@ export function MainArea({
   const [optimisticPlanMode, setOptimisticPlanMode] = useState<boolean | null>(null);
   const [optimisticEffortLevel, setOptimisticEffortLevel] = useState<WsEffortLevel | null>(null);
   const [isCreatingApp, setIsCreatingApp] = useState(false);
+  const [hasAppYaml, setHasAppYaml] = useState<boolean | null>(null);
+  const [isCheckingAppYaml, setIsCheckingAppYaml] = useState(false);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gitRepositoryStatusRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -503,9 +505,36 @@ export function MainArea({
     [isPlanMode, modeBeforePlan, refetchSession, sessionId, setPermissionMode, t]
   );
 
+  useEffect(() => {
+    const workspacePath = databricksWorkspaceOutcome?.path;
+    if (!sessionId || !workspacePath || databricksAppsOutcome) {
+      setHasAppYaml(null);
+      setIsCheckingAppYaml(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsCheckingAppYaml(true);
+    sessionService
+      .getAppCreatePrerequisites(sessionId)
+      .then(result => {
+        if (!cancelled) setHasAppYaml(result.has_app_yaml);
+      })
+      .catch(() => {
+        if (!cancelled) setHasAppYaml(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsCheckingAppYaml(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [databricksAppsOutcome, databricksWorkspaceOutcome?.path, sessionId]);
+
   const handleCreateApp = useCallback(async () => {
     const workspacePath = databricksWorkspaceOutcome?.path;
-    if (!sessionId || !workspacePath || isCreatingApp) return;
+    if (!sessionId || !workspacePath || isCreatingApp || hasAppYaml === false) return;
 
     setIsCreatingApp(true);
     try {
@@ -530,6 +559,7 @@ export function MainArea({
   }, [
     activeSession?.title,
     databricksWorkspaceOutcome?.path,
+    hasAppYaml,
     isCreatingApp,
     refetchSession,
     sessionId,
@@ -737,9 +767,14 @@ export function MainArea({
             onCreateApp={handleCreateApp}
             isCreatingApp={isCreatingApp}
             createAppDisabled={
+              isCheckingAppYaml ||
+              hasAppYaml === false ||
               isAgentThinking ||
               sessionControlPending ||
               activeSession?.session_status === 'archived'
+            }
+            createAppTooltip={
+              hasAppYaml === false ? t('databricksApp.missingAppYamlWarning') : undefined
             }
           />
         )}

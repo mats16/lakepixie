@@ -33,6 +33,12 @@ interface AskUserQuestionToolUseProps extends BaseToolUseProps {
 
 type AnswerValue = string | string[];
 type AnswerSelections = Record<string, AnswerValue>;
+type AnswerSource = 'structured' | 'resultText';
+
+interface AnswerSelectionState {
+  answers: AnswerSelections;
+  source: AnswerSource;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -104,24 +110,32 @@ function parseAnswersFromResult(content: string): AnswerSelections {
 
 function getAnsweredSelections(
   result: AskUserQuestionToolUseProps['result']
-): AnswerSelections | undefined {
+): AnswerSelectionState | undefined {
   const structuredAnswers = getToolUseResultAnswers(result?.toolUseResult);
-  if (structuredAnswers) return structuredAnswers;
+  if (structuredAnswers) return { answers: structuredAnswers, source: 'structured' };
 
   if (!result || result.isError) return undefined;
 
   const parsedAnswers = parseAnswersFromResult(result.content);
-  return Object.keys(parsedAnswers).length > 0 ? parsedAnswers : undefined;
+  return Object.keys(parsedAnswers).length > 0
+    ? { answers: parsedAnswers, source: 'resultText' }
+    : undefined;
 }
 
-function getAnsweredValue(q: Question, answers: AnswerSelections): AnswerValue | undefined {
-  return answers[q.header] ?? answers[q.question];
+function getAnsweredValue(
+  q: Question,
+  answeredSelections: AnswerSelectionState
+): AnswerValue | undefined {
+  const { answers, source } = answeredSelections;
+  return source === 'structured'
+    ? (answers[q.question] ?? answers[q.header])
+    : (answers[q.header] ?? answers[q.question]);
 }
 
 /** 回答済みの値から selections / otherTexts の初期値を一括生成 */
 function buildInitialState(
   questions: Question[],
-  answeredSelections?: AnswerSelections
+  answeredSelections?: AnswerSelectionState
 ): { selections: Record<string, string | string[]>; otherTexts: Record<string, string> } {
   const selections: Record<string, string | string[]> = {};
   const otherTexts: Record<string, string> = {};
@@ -212,7 +226,7 @@ interface TabbedQuestionsProps {
   questions: Question[];
   isPending: boolean;
   /** 回答済みの場合、パース結果を渡す（header/question → label） */
-  answeredSelections?: AnswerSelections;
+  answeredSelections?: AnswerSelectionState;
   onSubmit: (answers: Record<string, string | string[]>) => void;
 }
 

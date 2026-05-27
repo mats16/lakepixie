@@ -10,6 +10,11 @@ interface PendingQuestion {
 type UserAnswerValue = string | string[];
 type UserAnswers = Record<string, UserAnswerValue>;
 
+interface QuestionMapping {
+  headerToQuestion: Map<string, string>;
+  questionTexts: Set<string>;
+}
+
 /** AskUserQuestion の回答待ち管理（tool_use_id → PendingQuestion） */
 const pendingQuestions = new Map<string, PendingQuestion>();
 
@@ -20,10 +25,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function getHeaderToQuestionMap(input: Record<string, unknown>): Map<string, string> {
+function getQuestionMapping(input: Record<string, unknown>): QuestionMapping {
   const questions = input.questions;
-  const map = new Map<string, string>();
-  if (!Array.isArray(questions)) return map;
+  const headerToQuestion = new Map<string, string>();
+  const questionTexts = new Set<string>();
+  if (!Array.isArray(questions)) return { headerToQuestion, questionTexts };
 
   for (const question of questions) {
     if (
@@ -31,16 +37,30 @@ function getHeaderToQuestionMap(input: Record<string, unknown>): Map<string, str
       typeof question.header !== 'string' ||
       typeof question.question !== 'string'
     ) {
-      continue;
+      throw new Error('AskUserQuestion input questions must include string header and question');
     }
-    map.set(question.header, question.question);
+    if (headerToQuestion.has(question.header)) {
+      throw new Error(`AskUserQuestion input contains duplicate header '${question.header}'`);
+    }
+    headerToQuestion.set(question.header, question.question);
+    questionTexts.add(question.question);
   }
 
-  return map;
+  return { headerToQuestion, questionTexts };
 }
 
 function stringifyAnswer(value: UserAnswerValue): string {
   return Array.isArray(value) ? value.join(',') : value;
+}
+
+function assertNoCommaInMultiSelectAnswer(key: string, value: UserAnswerValue): void {
+  if (!Array.isArray(value)) return;
+  const invalid = value.find(answer => answer.includes(','));
+  if (invalid) {
+    throw new Error(
+      `AskUserQuestion multi-select answer for '${key}' cannot contain a comma: '${invalid}'`
+    );
+  }
 }
 
 /**
@@ -51,11 +71,15 @@ export function normalizeAskUserQuestionAnswers(
   input: Record<string, unknown>,
   answers: UserAnswers
 ): Record<string, string> {
-  const headerToQuestion = getHeaderToQuestionMap(input);
+  const { headerToQuestion, questionTexts } = getQuestionMapping(input);
   const normalized: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(answers)) {
-    const answerKey = headerToQuestion.get(key) ?? key;
+    assertNoCommaInMultiSelectAnswer(key, value);
+    const answerKey = headerToQuestion.get(key) ?? (questionTexts.has(key) ? key : undefined);
+    if (!answerKey) {
+      throw new Error(`AskUserQuestion answer key '${key}' does not match any question`);
+    }
     normalized[answerKey] = stringifyAnswer(value);
   }
 
@@ -138,3 +162,12 @@ export function resolveUserAnswer(
   pending.resolve(answers);
   return true;
 }
+
+export const __testing = {
+  clearPendingQuestions: () => {
+    for (const pending of pendingQuestions.values()) {
+      clearTimeout(pending.timeoutId);
+    }
+    pendingQuestions.clear();
+  },
+};
