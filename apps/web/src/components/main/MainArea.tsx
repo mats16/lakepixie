@@ -136,6 +136,7 @@ export function MainArea({
   const { githubAppId, modelSettings } = useUser();
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
   const [gitDiffRefreshKey, setGitDiffRefreshKey] = useState(0);
+  const [gitRepositoryStatusRefreshKey, setGitRepositoryStatusRefreshKey] = useState(0);
   const [sessionControlPending, setSessionControlPending] = useState(false);
   const [optimisticModelId, setOptimisticModelId] = useState<string | null>(null);
   const [optimisticPlanMode, setOptimisticPlanMode] = useState<boolean | null>(null);
@@ -200,6 +201,10 @@ export function MainArea({
     }, GIT_DIFF_REFRESH_DEBOUNCE_MS);
   }, []);
 
+  const handleGitRepositoryStatusRefreshNeeded = useCallback(() => {
+    setGitRepositoryStatusRefreshKey(current => current + 1);
+  }, []);
+
   useEffect(() => {
     return () => {
       if (gitDiffRefreshTimerRef.current) {
@@ -233,6 +238,7 @@ export function MainArea({
     onAskUserQuestion: handleAskUserQuestion,
     onExitPlanMode: handleExitPlanMode,
     onGitDiffRefreshNeeded: handleGitDiffRefreshNeeded,
+    onGitRepositoryStatusRefreshNeeded: handleGitRepositoryStatusRefreshNeeded,
   });
 
   const submitAnswer = useCallback(
@@ -771,6 +777,7 @@ export function MainArea({
             baseBranch={gitRepositoryStatus.baseBranch}
             sessionTitle={activeSession?.title ?? undefined}
             diffRefreshKey={gitDiffRefreshKey}
+            remoteRefreshKey={gitRepositoryStatusRefreshKey}
             bottomClassName={gitStatusBottomClassName}
           />
         )}

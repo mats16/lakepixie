@@ -45,6 +45,7 @@ interface GitRepositoryStatusBarProps {
   baseBranch: string;
   sessionTitle?: string;
   diffRefreshKey?: number;
+  remoteRefreshKey?: number;
   bottomClassName?: string;
 }
 
@@ -89,6 +90,11 @@ function getPullStatusKey(pull: GitRepositoryPullRequest | null): PullStatusKey 
   return pull.state;
 }
 
+function hasPullRequestDiff(diff: GitRepositoryDiffResponse | null | undefined): boolean {
+  if (!diff) return false;
+  return Number(diff.total_commits) > 0 || Number(diff.additions) > 0 || Number(diff.deletions) > 0;
+}
+
 export function GitRepositoryStatusBar({
   sessionId,
   owner,
@@ -97,6 +103,7 @@ export function GitRepositoryStatusBar({
   baseBranch,
   sessionTitle,
   diffRefreshKey = 0,
+  remoteRefreshKey = 0,
   bottomClassName = 'pb-[7.5rem]',
 }: GitRepositoryStatusBarProps) {
   const { t, i18n } = useTranslation();
@@ -109,12 +116,6 @@ export function GitRepositoryStatusBar({
 
   useEffect(() => {
     let isCurrent = true;
-
-    setBranchDetail(null);
-    setLocalDiff(null);
-    setPull(null);
-    setIsCreating(false);
-    setPendingPullRequestDraft(null);
 
     void Promise.allSettled([
       gitRepositoryService.getBranch(fullName, headBranch, baseBranch),
@@ -133,19 +134,29 @@ export function GitRepositoryStatusBar({
           '[GitRepositoryStatusBar] Failed to load branch details:',
           branchResult.reason
         );
+        setBranchDetail(null);
       }
 
       if (pullsResult.status === 'fulfilled') {
         setPull(pullsResult.value.pulls[0] ?? null);
       } else {
         console.warn('[GitRepositoryStatusBar] Failed to load pull requests:', pullsResult.reason);
+        setPull(null);
       }
     });
 
     return () => {
       isCurrent = false;
     };
-  }, [baseBranch, fullName, headBranch, owner]);
+  }, [baseBranch, fullName, headBranch, owner, remoteRefreshKey]);
+
+  useEffect(() => {
+    setBranchDetail(null);
+    setLocalDiff(null);
+    setPull(null);
+    setIsCreating(false);
+    setPendingPullRequestDraft(null);
+  }, [baseBranch, fullName, headBranch, owner, sessionId]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -219,7 +230,11 @@ export function GitRepositoryStatusBar({
   const statusTooltip = t(`gitStatus.status.${statusKey}`);
   const remoteBranchUrl = branchDetail?.html_url;
   const manualPullRequestUrl = pullRequestCreateUrl(owner, repo, baseBranch, headBranch);
-  const canCreatePullRequest = branchDetail !== null && !pull;
+  const canShowCreatePullRequest = branchDetail !== null && !pull;
+  const canCreatePullRequest = canShowCreatePullRequest && hasPullRequestDiff(diff);
+  const createPullRequestDisabledReason = canCreatePullRequest
+    ? undefined
+    : t('gitStatus.createPullRequestDisabledNoDiff');
 
   return (
     <>
@@ -302,14 +317,17 @@ export function GitRepositoryStatusBar({
 
             <div className="flex shrink-0 items-center gap-2">
               {diffBadge}
-              {canCreatePullRequest && (
-                <div className="flex overflow-hidden rounded-md border shadow-sm">
+              {canShowCreatePullRequest && (
+                <div
+                  className="flex overflow-hidden rounded-md border shadow-sm"
+                  title={createPullRequestDisabledReason}
+                >
                   <Button
                     type="button"
                     variant="ghost"
                     className="h-6 rounded-none px-2 text-xs"
                     onClick={() => setPendingPullRequestDraft(false)}
-                    disabled={isCreating}
+                    disabled={isCreating || !canCreatePullRequest}
                   >
                     {t('gitStatus.createPullRequest')}
                   </Button>
@@ -320,7 +338,7 @@ export function GitRepositoryStatusBar({
                         variant="ghost"
                         size="icon"
                         className="h-6 w-6 rounded-none border-l"
-                        disabled={isCreating}
+                        disabled={isCreating || !canCreatePullRequest}
                         aria-label={t('gitStatus.createPullRequestOptions')}
                       >
                         <ChevronDown className="h-3 w-3" />

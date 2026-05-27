@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { SDKMessage } from '@repo/types';
-import { getToolResultIdsFromEvent, shouldRefreshGitDiffForEvent } from './useSessionEvents';
+import {
+  getToolResultIdsFromEvent,
+  shouldRefreshGitDiffForEvent,
+  shouldRefreshGitRepositoryStatusForEvent,
+} from './useSessionEvents';
 
 describe('shouldRefreshGitDiffForEvent', () => {
   it('detects user tool_result events from the agent stream', () => {
@@ -42,6 +46,24 @@ describe('shouldRefreshGitDiffForEvent', () => {
         },
       })
     ).toBe(false);
+  });
+});
+
+describe('shouldRefreshGitRepositoryStatusForEvent', () => {
+  it('detects result events', () => {
+    expect(shouldRefreshGitRepositoryStatusForEvent({ type: 'result' })).toBe(true);
+  });
+
+  it('ignores tool_result events', () => {
+    const event = {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu-1', content: 'ok' }],
+      },
+    } satisfies SDKMessage;
+
+    expect(shouldRefreshGitRepositoryStatusForEvent(event)).toBe(false);
   });
 });
 

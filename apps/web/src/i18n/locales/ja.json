@@ -361,6 +361,7 @@
     "createDraftPullRequest": "下書きPRを作成",
     "createPullRequestManually": "PRを手動で作成",
     "createPullRequestOptions": "PR作成オプション",
+    "createPullRequestDisabledNoDiff": "PRを作成する差分がありません",
     "createPullRequestError": "PRの作成に失敗しました",
     "metadataDialog": {
       "title": "PRメタデータを生成",
