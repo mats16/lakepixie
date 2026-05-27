@@ -53,6 +53,10 @@ function stringifyAnswer(value: UserAnswerValue): string {
   return Array.isArray(value) ? value.join(',') : value;
 }
 
+function getAnswerKey(key: string, mapping: QuestionMapping): string | undefined {
+  return mapping.headerToQuestion.get(key) ?? (mapping.questionTexts.has(key) ? key : undefined);
+}
+
 function assertNoCommaInMultiSelectAnswer(key: string, value: UserAnswerValue): void {
   if (!Array.isArray(value)) return;
   const invalid = value.find(answer => answer.includes(','));
@@ -71,12 +75,12 @@ export function normalizeAskUserQuestionAnswers(
   input: Record<string, unknown>,
   answers: UserAnswers
 ): Record<string, string> {
-  const { headerToQuestion, questionTexts } = getQuestionMapping(input);
+  const questionMapping = getQuestionMapping(input);
   const normalized: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(answers)) {
     assertNoCommaInMultiSelectAnswer(key, value);
-    const answerKey = headerToQuestion.get(key) ?? (questionTexts.has(key) ? key : undefined);
+    const answerKey = getAnswerKey(key, questionMapping);
     if (!answerKey) {
       throw new Error(`AskUserQuestion answer key '${key}' does not match any question`);
     }

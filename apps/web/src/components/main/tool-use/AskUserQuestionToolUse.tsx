@@ -127,9 +127,10 @@ function getAnsweredValue(
   answeredSelections: AnswerSelectionState
 ): AnswerValue | undefined {
   const { answers, source } = answeredSelections;
-  return source === 'structured'
-    ? (answers[q.question] ?? answers[q.header])
-    : (answers[q.header] ?? answers[q.question]);
+  if (source === 'structured') {
+    return answers[q.question] ?? answers[q.header];
+  }
+  return answers[q.header] ?? answers[q.question];
 }
 
 /** 回答済みの値から selections / otherTexts の初期値を一括生成 */
@@ -142,7 +143,7 @@ function buildInitialState(
 
   for (const q of questions) {
     const answeredValue = answeredSelections ? getAnsweredValue(q, answeredSelections) : undefined;
-    if (!answeredSelections || !hasAnswer(answeredValue)) {
+    if (!hasAnswer(answeredValue)) {
       selections[q.header] = q.multiSelect ? [] : '';
       otherTexts[q.header] = '';
       continue;
