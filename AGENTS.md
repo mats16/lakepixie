@@ -92,6 +92,11 @@ DATABRICKS_USER_EMAIL=your-email@example.com
 
 See `.env.example` for all available configuration options.
 
+## Architecture Decision Records
+
+- Record architecture decisions as Markdown files under `adr/`.
+- Review relevant ADRs before changing protocol boundaries, backend/frontend ownership, or SDK integration behavior.
+
 ## Development Commands
 
 ```bash

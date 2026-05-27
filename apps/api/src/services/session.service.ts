@@ -57,7 +57,7 @@ import { buildClaudeTelemetryEnv } from './claude-telemetry-env.service.js';
 import { wsManager } from './websocket-manager.service.js';
 import { sessionStreamHub } from './session-stream-hub.service.js';
 import { enqueueSessionEvent } from './event-queue.service.js';
-import { waitForUserAnswer } from './ask-user-question.service.js';
+import { normalizeAskUserQuestionAnswers, waitForUserAnswer } from './ask-user-question.service.js';
 import { waitForExitPlanModeDecision } from './exit-plan-mode.service.js';
 import { SessionId } from '../models/session.model.js';
 import type { UserContext } from '../lib/user-context.js';
@@ -406,7 +406,10 @@ async function handleCanUseTool({
       input,
       options.signal
     );
-    return { behavior: 'allow', updatedInput: { ...input, answers } };
+    return {
+      behavior: 'allow',
+      updatedInput: { ...input, answers: normalizeAskUserQuestionAnswers(input, answers) },
+    };
   }
 
   if (toolName === 'ExitPlanMode') {

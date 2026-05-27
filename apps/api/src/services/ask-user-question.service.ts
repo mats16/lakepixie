@@ -7,11 +7,88 @@ interface PendingQuestion {
   timeoutId: ReturnType<typeof setTimeout>;
 }
 
+type UserAnswerValue = string | string[];
+type UserAnswers = Record<string, UserAnswerValue>;
+
+interface QuestionMapping {
+  headerToQuestion: Map<string, string>;
+  questionTexts: Set<string>;
+}
+
 /** AskUserQuestion の回答待ち管理（tool_use_id → PendingQuestion） */
 const pendingQuestions = new Map<string, PendingQuestion>();
 
 /** タイムアウト（10 分） */
 const ASK_USER_QUESTION_TIMEOUT_MS = 10 * 60 * 1000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getQuestionMapping(input: Record<string, unknown>): QuestionMapping {
+  const questions = input.questions;
+  const headerToQuestion = new Map<string, string>();
+  const questionTexts = new Set<string>();
+  if (!Array.isArray(questions)) return { headerToQuestion, questionTexts };
+
+  for (const question of questions) {
+    if (
+      !isRecord(question) ||
+      typeof question.header !== 'string' ||
+      typeof question.question !== 'string'
+    ) {
+      throw new Error('AskUserQuestion input questions must include string header and question');
+    }
+    if (headerToQuestion.has(question.header)) {
+      throw new Error(`AskUserQuestion input contains duplicate header '${question.header}'`);
+    }
+    headerToQuestion.set(question.header, question.question);
+    questionTexts.add(question.question);
+  }
+
+  return { headerToQuestion, questionTexts };
+}
+
+function stringifyAnswer(value: UserAnswerValue): string {
+  return Array.isArray(value) ? value.join(',') : value;
+}
+
+function getAnswerKey(key: string, mapping: QuestionMapping): string | undefined {
+  return mapping.headerToQuestion.get(key) ?? (mapping.questionTexts.has(key) ? key : undefined);
+}
+
+function assertNoCommaInMultiSelectAnswer(key: string, value: UserAnswerValue): void {
+  if (!Array.isArray(value)) return;
+  const invalid = value.find(answer => answer.includes(','));
+  if (invalid) {
+    throw new Error(
+      `AskUserQuestion multi-select answer for '${key}' cannot contain a comma: '${invalid}'`
+    );
+  }
+}
+
+/**
+ * UI は header → label/label[] で送るが、Claude Agent SDK の AskUserQuestion は
+ * question text → string を期待するため、canUseTool の updatedInput 用に変換する。
+ */
+export function normalizeAskUserQuestionAnswers(
+  input: Record<string, unknown>,
+  answers: UserAnswers
+): Record<string, string> {
+  const questionMapping = getQuestionMapping(input);
+  const normalized: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(answers)) {
+    assertNoCommaInMultiSelectAnswer(key, value);
+    const answerKey = getAnswerKey(key, questionMapping);
+    if (!answerKey) {
+      throw new Error(`AskUserQuestion answer key '${key}' does not match any question`);
+    }
+    normalized[answerKey] = stringifyAnswer(value);
+  }
+
+  return normalized;
+}
 
 /**
  * AskUserQuestion をサスペンドし、ユーザーの回答を待つ。
@@ -19,7 +96,7 @@ const ASK_USER_QUESTION_TIMEOUT_MS = 10 * 60 * 1000;
  * 1. WebSocket で全クライアントに質問リクエストを broadcast
  * 2. Promise を返し、resolve されるまでブロック
  *
- * @returns ユーザーの回答（header → 選択ラベル のマッピング）
+ * @returns ユーザーの回答（UI から受け取った header → 選択ラベル のマッピング）
  */
 export function waitForUserAnswer(
   sessionId: string,
@@ -89,3 +166,12 @@ export function resolveUserAnswer(
   pending.resolve(answers);
   return true;
 }
+
+export const __testing = {
+  clearPendingQuestions: () => {
+    for (const pending of pendingQuestions.values()) {
+      clearTimeout(pending.timeoutId);
+    }
+    pendingQuestions.clear();
+  },
+};

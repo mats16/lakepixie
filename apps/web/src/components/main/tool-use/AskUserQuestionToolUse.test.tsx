@@ -40,6 +40,7 @@ beforeEach(async () => {
             askUserQuestion: 'Question',
             askQuestionOther: 'Other',
             askQuestionOtherPlaceholder: 'Enter your answer',
+            askQuestionNext: 'Next',
             askQuestionSubmit: 'Submit',
           },
         },
@@ -112,6 +113,20 @@ describe('AskUserQuestionToolUse', () => {
     );
   });
 
+  it('restores a known answer from SDK question-keyed tool_use_result data', () => {
+    renderTool({
+      result: {
+        content: 'The user answered.',
+        isError: false,
+        toolUseResult: { answers: { 'Which language do you prefer?': 'TypeScript' } },
+      },
+    });
+
+    expect(screen.getByRole('button', { name: /TypeScript/ }).className).toContain(
+      'border-primary'
+    );
+  });
+
   it('restores an unknown answer as Other from structured tool_use_result data', () => {
     renderTool({
       result: {
@@ -172,6 +187,67 @@ describe('AskUserQuestionToolUse', () => {
     expect(screen.getByRole('button', { name: /Apple, Inc./ }).className).toContain(
       'border-primary'
     );
+  });
+
+  it('restores comma-separated structured multi-select answers from SDK data', () => {
+    renderTool({
+      toolInput: {
+        questions: [
+          {
+            question: 'Which languages should we use?',
+            header: 'Language',
+            multiSelect: true,
+            options: [
+              { label: 'Python', description: 'For scripts' },
+              { label: 'TypeScript', description: 'For web apps' },
+            ],
+          },
+        ],
+      },
+      result: {
+        content: 'The user answered.',
+        isError: false,
+        toolUseResult: { answers: { 'Which languages should we use?': 'Python,TypeScript' } },
+      },
+    });
+
+    expect(screen.getByRole('button', { name: /Python/ }).className).toContain('border-primary');
+    expect(screen.getByRole('button', { name: /TypeScript/ }).className).toContain(
+      'border-primary'
+    );
+  });
+
+  it('prefers SDK question-keyed answers over colliding header keys', () => {
+    renderTool({
+      toolInput: {
+        questions: [
+          {
+            question: 'Library',
+            header: 'Lang',
+            options: [{ label: 'TypeScript', description: 'Language choice' }],
+          },
+          {
+            question: 'Which database?',
+            header: 'Library',
+            options: [{ label: 'Postgres', description: 'Database choice' }],
+          },
+        ],
+      },
+      result: {
+        content: 'The user answered.',
+        isError: false,
+        toolUseResult: {
+          answers: {
+            Library: 'TypeScript',
+            'Which database?': 'Postgres',
+          },
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+
+    expect(screen.getByRole('button', { name: /Postgres/ }).className).toContain('border-primary');
   });
 
   it('shows multi-value arrays on single-select questions without truncating them', () => {

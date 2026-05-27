@@ -54,6 +54,10 @@ import {
   __testing as exitPlanModeTesting,
   resolveExitPlanModeDecision,
 } from './exit-plan-mode.service.js';
+import {
+  __testing as askUserQuestionTesting,
+  resolveUserAnswer,
+} from './ask-user-question.service.js';
 
 describe('session.service', () => {
   // Mock FastifyInstance
@@ -155,6 +159,7 @@ describe('session.service', () => {
     __testing.clearActiveSessionQueries();
     __testing.clearDatabricksAppCreateLocks();
     exitPlanModeTesting.clearPendingExitPlanModes();
+    askUserQuestionTesting.clearPendingQuestions();
     mockSpawn.mockImplementation(() => {
       const child = new EventEmitter() as EventEmitter & {
         stdout: EventEmitter;
@@ -407,6 +412,25 @@ describe('session.service', () => {
   });
 
   describe('session control settings', () => {
+    function startAskUserQuestion(
+      fastify: FastifyInstance,
+      sessionId: SessionId,
+      toolUseID: string,
+      input: Record<string, unknown>
+    ) {
+      return __testing.handleCanUseTool({
+        fastify,
+        userId: 'user-123',
+        sessionId,
+        toolName: 'AskUserQuestion',
+        input,
+        options: {
+          signal: new AbortController().signal,
+          toolUseID,
+        },
+      });
+    }
+
     it('stores an allowed model change', async () => {
       const { fastify, set } = createContextUpdateFastify();
       const sessionId = new SessionId();
@@ -564,6 +588,167 @@ describe('session.service', () => {
         behavior: 'allow',
         updatedInput: input,
       });
+    });
+
+    it('normalizes AskUserQuestion answers to SDK question keys', async () => {
+      const { fastify } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+      const input = {
+        questions: [
+          {
+            question: '何を確認したいですか?',
+            header: '確認目的',
+            options: [
+              {
+                label: 'UIの見た目を確認したい',
+                description: 'UI rendering should be checked',
+              },
+              {
+                label: '動作を確認したい',
+                description: 'Behavior should be checked',
+              },
+            ],
+          },
+        ],
+      };
+
+      const resultPromise = startAskUserQuestion(
+        fastify,
+        sessionId,
+        'toolu-ask-user-question',
+        input
+      );
+
+      resolveUserAnswer('toolu-ask-user-question', {
+        確認目的: 'UIの見た目を確認したい',
+      });
+
+      await expect(resultPromise).resolves.toEqual({
+        behavior: 'allow',
+        updatedInput: {
+          ...input,
+          answers: {
+            '何を確認したいですか?': 'UIの見た目を確認したい',
+          },
+        },
+      });
+    });
+
+    it('normalizes AskUserQuestion multi-select arrays to comma-separated SDK answers', async () => {
+      const { fastify } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+      const input = {
+        questions: [
+          {
+            question: 'Which features should be enabled?',
+            header: 'Features',
+            multiSelect: true,
+            options: [
+              { label: 'Auth', description: 'Enable authentication' },
+              { label: 'Billing', description: 'Enable billing' },
+            ],
+          },
+        ],
+      };
+
+      const resultPromise = startAskUserQuestion(
+        fastify,
+        sessionId,
+        'toolu-ask-user-question-multi',
+        input
+      );
+
+      resolveUserAnswer('toolu-ask-user-question-multi', {
+        Features: ['Auth', 'Billing'],
+      });
+
+      await expect(resultPromise).resolves.toEqual({
+        behavior: 'allow',
+        updatedInput: {
+          ...input,
+          answers: {
+            'Which features should be enabled?': 'Auth,Billing',
+          },
+        },
+      });
+    });
+
+    it('rejects AskUserQuestion inputs with duplicate headers', async () => {
+      const { fastify } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+      const input = {
+        questions: [
+          { question: 'Which UI library?', header: 'Library' },
+          { question: 'Which database library?', header: 'Library' },
+        ],
+      };
+
+      const resultPromise = startAskUserQuestion(
+        fastify,
+        sessionId,
+        'toolu-ask-user-question-duplicate-header',
+        input
+      );
+
+      resolveUserAnswer('toolu-ask-user-question-duplicate-header', {
+        Library: 'React',
+      });
+
+      await expect(resultPromise).rejects.toThrow(
+        "AskUserQuestion input contains duplicate header 'Library'"
+      );
+    });
+
+    it('rejects AskUserQuestion answers that do not match any question', async () => {
+      const { fastify } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+      const input = {
+        questions: [{ question: 'Which framework?', header: 'Framework' }],
+      };
+
+      const resultPromise = startAskUserQuestion(
+        fastify,
+        sessionId,
+        'toolu-ask-user-question-unknown-key',
+        input
+      );
+
+      resolveUserAnswer('toolu-ask-user-question-unknown-key', {
+        Library: 'React',
+      });
+
+      await expect(resultPromise).rejects.toThrow(
+        "AskUserQuestion answer key 'Library' does not match any question"
+      );
+    });
+
+    it('rejects comma-containing AskUserQuestion multi-select answers', async () => {
+      const { fastify } = createContextUpdateFastify();
+      const sessionId = new SessionId();
+      const input = {
+        questions: [
+          {
+            question: 'Which companies should be enabled?',
+            header: 'Companies',
+            multiSelect: true,
+          },
+        ],
+      };
+
+      const resultPromise = startAskUserQuestion(
+        fastify,
+        sessionId,
+        'toolu-ask-user-question-comma',
+        input
+      );
+
+      resolveUserAnswer('toolu-ask-user-question-comma', {
+        Companies: ['Apple, Inc.', 'Banana'],
+      });
+
+      await expect(resultPromise).rejects.toThrow(
+        "AskUserQuestion multi-select answer for 'Companies' cannot contain a comma: 'Apple, Inc.'"
+      );
     });
 
     it('waits for ExitPlanMode approval and restores the pre-plan permission mode', async () => {

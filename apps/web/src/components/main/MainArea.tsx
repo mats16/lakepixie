@@ -711,6 +711,15 @@ export function MainArea({
     return <SessionNotFound onGoHome={() => navigate('/')} />;
   }
 
+  const createAppDisabled =
+    isCheckingAppYaml ||
+    hasAppYaml === false ||
+    isAgentThinking ||
+    sessionControlPending ||
+    activeSession?.session_status === 'archived';
+  const createAppTooltip =
+    hasAppYaml === false ? t('databricksApp.missingAppYamlWarning') : undefined;
+
   return (
     <AskUserQuestionProvider value={askUserQuestionCtx}>
       <div className="relative z-0 flex flex-col w-full h-full min-w-0 overflow-hidden bg-background">
@@ -766,16 +775,8 @@ export function MainArea({
             bottomClassName={floatingButtonsBottomClassName}
             onCreateApp={handleCreateApp}
             isCreatingApp={isCreatingApp}
-            createAppDisabled={
-              isCheckingAppYaml ||
-              hasAppYaml === false ||
-              isAgentThinking ||
-              sessionControlPending ||
-              activeSession?.session_status === 'archived'
-            }
-            createAppTooltip={
-              hasAppYaml === false ? t('databricksApp.missingAppYamlWarning') : undefined
-            }
+            createAppDisabled={createAppDisabled}
+            createAppTooltip={createAppTooltip}
           />
         )}
         {gitRepositoryStatus && (
