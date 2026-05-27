@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, ChevronRight } from 'lucide-react';
+import { Loader2, ChevronRight, FolderPlus, X } from 'lucide-react';
 import type { WorkspaceObjectType, WorkspaceObjectInfo, WorkspaceSelection } from '@repo/types';
 import {
   Dialog,
@@ -11,9 +11,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { extractNameFromPath, safeSanitizePath, getWorkspaceObjectIcon } from '@/lib/workspace';
+import {
+  extractNameFromPath,
+  safeSanitizePath,
+  sanitizePath,
+  getWorkspaceObjectIcon,
+} from '@/lib/workspace';
 import { workspaceService, ApiClientError } from '@/services';
 import { WorkspaceBreadcrumb } from './WorkspaceBreadcrumb';
 
@@ -32,6 +38,61 @@ interface WorkspaceBrowserModalProps {
 }
 
 const DEFAULT_SELECTABLE_TYPES: WorkspaceObjectType[] = ['DIRECTORY', 'REPO'];
+
+function buildChildPath(parentPath: string, childName: string): string {
+  const normalizedParent = parentPath.endsWith('/') ? parentPath.slice(0, -1) : parentPath;
+  return `${normalizedParent}/${childName}`;
+}
+
+function sortWorkspaceObjects(objects: WorkspaceObjectInfo[]): WorkspaceObjectInfo[] {
+  return [...objects].sort((a, b) => {
+    if (a.object_type === 'DIRECTORY' && b.object_type !== 'DIRECTORY') return -1;
+    if (a.object_type !== 'DIRECTORY' && b.object_type === 'DIRECTORY') return 1;
+    if (a.object_type === 'REPO' && b.object_type !== 'REPO') return -1;
+    if (a.object_type !== 'REPO' && b.object_type === 'REPO') return 1;
+    return extractNameFromPath(a.path).localeCompare(extractNameFromPath(b.path));
+  });
+}
+
+function getWorkspaceErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof ApiClientError ? error.message : fallback;
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code <= 31 || code === 127) return true;
+  }
+  return false;
+}
+
+function isInvalidFolderName(folderName: string, trimmedName: string): boolean {
+  return (
+    folderName !== trimmedName ||
+    hasControlCharacter(trimmedName) ||
+    trimmedName.includes('/') ||
+    trimmedName.includes('\\') ||
+    trimmedName.includes('..') ||
+    trimmedName === '.' ||
+    trimmedName.startsWith('.') ||
+    trimmedName.endsWith('.')
+  );
+}
+
+async function getCreatedDirectoryStatus(path: string): Promise<WorkspaceObjectInfo> {
+  try {
+    return await workspaceService.getStatus(path);
+  } catch (err) {
+    if (err instanceof ApiClientError && err.statusCode === 404) {
+      return {
+        path,
+        object_type: 'DIRECTORY',
+        object_id: 0,
+      };
+    }
+    throw err;
+  }
+}
 
 export function WorkspaceBrowserModal({
   open,
@@ -53,66 +114,211 @@ export function WorkspaceBrowserModal({
   const [error, setError] = useState<string | null>(null);
   const [selectError, setSelectError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<WorkspaceObjectInfo | null>(null);
+  const [isCreateFormOpen, setIsCreateFormOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const currentPathRef = useRef(currentPath);
+  const createGenerationRef = useRef(0);
+  const isCreatingFolderRef = useRef(false);
+
+  useEffect(() => {
+    currentPathRef.current = currentPath;
+  }, [currentPath]);
+
+  const resetCreateForm = useCallback(() => {
+    setCreateError(null);
+    setIsCreateFormOpen(false);
+    setNewFolderName('');
+  }, []);
+
+  const cancelPendingCreate = useCallback(() => {
+    createGenerationRef.current += 1;
+    isCreatingFolderRef.current = false;
+    setIsCreatingFolder(false);
+  }, []);
+
+  const fetchObjects = useCallback(
+    async ({ clearSelection = true }: { clearSelection?: boolean } = {}) => {
+      setIsLoading(true);
+      setError(null);
+      if (clearSelection) {
+        setSelectedItem(null);
+      }
+
+      try {
+        const listResponse = await workspaceService.listWorkspace(currentPath);
+        setObjects(sortWorkspaceObjects(listResponse.objects ?? []));
+      } catch (err) {
+        setError(getWorkspaceErrorMessage(err, t('workspace.error')));
+        setObjects([]);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [currentPath, t]
+  );
 
   // モーダルが開いた時にパスをリセット
   useEffect(() => {
     if (open) {
+      currentPathRef.current = initialPath;
+      cancelPendingCreate();
       setCurrentPath(initialPath);
       setCurrentObjectType('DIRECTORY'); // 初期パスは通常 DIRECTORY
       setCurrentObjectId(undefined);
       setSelectedItem(null);
+      setObjects([]);
       setError(null);
       setSelectError(null);
+      setIsLoading(false);
+      setIsSelecting(false);
+      resetCreateForm();
     }
-  }, [open, initialPath]);
+  }, [open, initialPath, cancelPendingCreate, resetCreateForm]);
 
   // パスが変わったらオブジェクト一覧を取得
   useEffect(() => {
     if (!open) return;
 
-    const fetchObjects = async () => {
-      setIsLoading(true);
-      setError(null);
-      setSelectedItem(null);
-
-      try {
-        const listResponse = await workspaceService.listWorkspace(currentPath);
-
-        // パスでソート（ディレクトリを先に、その後名前順）
-        const sorted = (listResponse.objects ?? []).sort((a, b) => {
-          // ディレクトリを先に
-          if (a.object_type === 'DIRECTORY' && b.object_type !== 'DIRECTORY') return -1;
-          if (a.object_type !== 'DIRECTORY' && b.object_type === 'DIRECTORY') return 1;
-          // リポジトリを次に
-          if (a.object_type === 'REPO' && b.object_type !== 'REPO') return -1;
-          if (a.object_type !== 'REPO' && b.object_type === 'REPO') return 1;
-          // 名前順
-          return extractNameFromPath(a.path).localeCompare(extractNameFromPath(b.path));
-        });
-        setObjects(sorted);
-      } catch (err) {
-        if (err instanceof ApiClientError) {
-          setError(err.message);
-        } else {
-          setError(t('workspace.error'));
-        }
-        setObjects([]);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchObjects();
-  }, [open, currentPath, t]);
+    void fetchObjects();
+  }, [open, fetchObjects]);
 
   const handleNavigate = useCallback(
     (path: string, objectType: WorkspaceObjectType = 'DIRECTORY', objectId?: number) => {
-      setCurrentPath(safeSanitizePath(path));
+      const nextPath = safeSanitizePath(path);
+      currentPathRef.current = nextPath;
+      cancelPendingCreate();
+      setCurrentPath(nextPath);
       setCurrentObjectType(objectType);
       setCurrentObjectId(objectId);
+      setSelectedItem(null);
+      setSelectError(null);
+      resetCreateForm();
     },
-    []
+    [cancelPendingCreate, resetCreateForm]
   );
+
+  const openCreateForm = useCallback(() => {
+    setIsCreateFormOpen(true);
+    setCreateError(null);
+    setSelectedItem(null);
+  }, []);
+
+  const handleFolderNameChange = useCallback((value: string) => {
+    setNewFolderName(value);
+    setCreateError(null);
+  }, []);
+
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (isCreatingFolder && !nextOpen) return;
+      onOpenChange(nextOpen);
+    },
+    [isCreatingFolder, onOpenChange]
+  );
+
+  const handleCreateFolder = useCallback(async () => {
+    if (isCreatingFolderRef.current) return;
+
+    const trimmedName = newFolderName.trim();
+    setCreateError(null);
+    setSelectError(null);
+
+    if (!trimmedName) {
+      setCreateError(t('workspace.folderNameRequired'));
+      return;
+    }
+
+    if (isInvalidFolderName(newFolderName, trimmedName)) {
+      setCreateError(t('workspace.folderNameInvalid'));
+      return;
+    }
+
+    let newFolderPath: string;
+    try {
+      newFolderPath = sanitizePath(buildChildPath(currentPath, trimmedName));
+    } catch {
+      setCreateError(t('workspace.folderNameInvalid'));
+      return;
+    }
+
+    if (objects.some(object => object.path === newFolderPath)) {
+      setCreateError(t('workspace.folderAlreadyExists'));
+      return;
+    }
+
+    const createBasePath = currentPath;
+    const createGeneration = createGenerationRef.current;
+    isCreatingFolderRef.current = true;
+    setIsCreatingFolder(true);
+
+    try {
+      await workspaceService.mkdirs(newFolderPath);
+      const createdFolder = await getCreatedDirectoryStatus(newFolderPath);
+
+      if (
+        currentPathRef.current !== createBasePath ||
+        createGenerationRef.current !== createGeneration
+      ) {
+        return;
+      }
+
+      setSelectedItem(createdFolder);
+      resetCreateForm();
+      await fetchObjects({ clearSelection: false });
+    } catch (err) {
+      setCreateError(getWorkspaceErrorMessage(err, t('workspace.createFolderError')));
+    } finally {
+      if (createGenerationRef.current === createGeneration) {
+        isCreatingFolderRef.current = false;
+        setIsCreatingFolder(false);
+      }
+    }
+  }, [currentPath, fetchObjects, newFolderName, objects, resetCreateForm, t]);
+
+  const handleSelectCurrentFolder = useCallback(async () => {
+    if (selectedItem) {
+      onSelect({
+        path: selectedItem.path,
+        name: extractNameFromPath(selectedItem.path),
+        object_type: selectedItem.object_type,
+        object_id: selectedItem.object_id,
+      });
+      onOpenChange(false);
+      return;
+    }
+
+    if (currentObjectId !== undefined) {
+      onSelect({
+        path: currentPath,
+        name: extractNameFromPath(currentPath),
+        object_type: currentObjectType,
+        object_id: currentObjectId,
+      });
+      onOpenChange(false);
+      return;
+    }
+
+    setIsSelecting(true);
+    setSelectError(null);
+    try {
+      const statusResponse = await workspaceService.getStatus(currentPath);
+      setCurrentObjectId(statusResponse.object_id);
+      setCurrentObjectType(statusResponse.object_type);
+      onSelect({
+        path: currentPath,
+        name: extractNameFromPath(currentPath),
+        object_type: statusResponse.object_type,
+        object_id: statusResponse.object_id,
+      });
+      onOpenChange(false);
+    } catch (err) {
+      setSelectError(getWorkspaceErrorMessage(err, t('workspace.error')));
+    } finally {
+      setIsSelecting(false);
+    }
+  }, [currentObjectId, currentObjectType, currentPath, onOpenChange, onSelect, selectedItem, t]);
 
   const handleItemDoubleClick = useCallback(
     (item: WorkspaceObjectInfo) => {
@@ -137,185 +343,220 @@ export function WorkspaceBrowserModal({
   );
 
   const isSelectable = (item: WorkspaceObjectInfo) => selectableTypes.includes(item.object_type);
+  const displayPath = selectedItem?.path ?? currentPath;
+
+  const renderWorkspaceList = () => {
+    if (isLoading) {
+      return (
+        <div className="flex h-full items-center justify-center">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">{t('workspace.loading')}</span>
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div className="flex h-full items-center justify-center px-6 text-center">
+          <p className="text-sm text-destructive">{error}</p>
+        </div>
+      );
+    }
+
+    if (objects.length === 0) {
+      return (
+        <div className="flex h-full items-center justify-center px-6 text-center">
+          <p className="text-sm text-muted-foreground">{t('workspace.empty')}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="px-2 py-2">
+        {objects.map(item => {
+          const Icon = getWorkspaceObjectIcon(item.object_type);
+          const name = extractNameFromPath(item.path);
+          const selectable = isSelectable(item);
+          const isSelected = selectedItem?.path === item.path;
+          const isDirectory = item.object_type === 'DIRECTORY';
+          const canOpen = isDirectory || item.object_type === 'REPO';
+
+          return (
+            <div
+              key={item.path}
+              className={cn(
+                'group flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors',
+                'hover:bg-muted/70',
+                isSelected && 'bg-accent',
+                !selectable && !isDirectory && 'opacity-50'
+              )}
+            >
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                onClick={() => {
+                  if (selectable) {
+                    setSelectedItem(prev => (prev?.path === item.path ? null : item));
+                  }
+                }}
+                onDoubleClick={() => handleItemDoubleClick(item)}
+                disabled={!selectable && !isDirectory}
+              >
+                <Icon
+                  className={cn(
+                    'h-4 w-4 shrink-0 text-muted-foreground',
+                    item.object_type === 'REPO' && 'text-emerald-600/80',
+                    item.object_type === 'NOTEBOOK' && 'text-blue-600/80'
+                  )}
+                />
+                <span className="truncate text-sm font-medium">{name}</span>
+              </button>
+              {canOpen && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                  onClick={() => handleNavigate(item.path, item.object_type, item.object_id)}
+                  aria-label={t('workspace.open')}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>{title ?? t('workspace.browserTitle')}</DialogTitle>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-h-[82vh] max-w-3xl gap-0 overflow-hidden p-0 flex flex-col">
+        <DialogHeader className="border-b px-5 py-4 pr-12">
+          <DialogTitle className="text-base">{title ?? t('workspace.browserTitle')}</DialogTitle>
           <DialogDescription>{description ?? t('workspace.browserDescription')}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3 flex-1 min-h-0">
+        <div className="flex min-h-0 flex-1 flex-col">
           {/* パンくずナビゲーション */}
-          <div className="border-b pb-2">
+          <div className="border-b bg-muted/30 px-4 py-2">
             <WorkspaceBreadcrumb path={currentPath} onNavigate={handleNavigate} />
           </div>
 
           {/* オブジェクト一覧 */}
-          <ScrollArea className="h-[400px]">
-            {isLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                <span className="ml-2 text-muted-foreground">{t('workspace.loading')}</span>
-              </div>
-            ) : error ? (
-              <div className="flex items-center justify-center py-12">
-                <p className="text-sm text-destructive">{error}</p>
-              </div>
-            ) : objects.length === 0 ? (
-              <div className="flex items-center justify-center py-12">
-                <p className="text-sm text-muted-foreground">{t('workspace.empty')}</p>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {objects.map(item => {
-                  const Icon = getWorkspaceObjectIcon(item.object_type);
-                  const name = extractNameFromPath(item.path);
-                  const selectable = isSelectable(item);
-                  const isSelected = selectedItem?.path === item.path;
-                  const isDirectory = item.object_type === 'DIRECTORY';
-                  const canOpen = isDirectory || item.object_type === 'REPO';
-
-                  return (
-                    <div
-                      key={item.path}
-                      className={cn(
-                        'flex items-center gap-2 px-3 py-2 rounded-md transition-colors',
-                        'hover:bg-accent',
-                        isSelected && 'bg-accent',
-                        !selectable && !isDirectory && 'opacity-50'
-                      )}
-                    >
-                      <button
-                        type="button"
-                        className="flex-1 flex items-center gap-3 text-left min-w-0"
-                        onClick={() => {
-                          if (selectable) {
-                            setSelectedItem(prev => (prev?.path === item.path ? null : item));
-                          }
-                        }}
-                        onDoubleClick={() => handleItemDoubleClick(item)}
-                        disabled={!selectable && !isDirectory}
-                      >
-                        <Icon
-                          className={cn(
-                            'h-5 w-5 shrink-0',
-                            isDirectory && 'text-amber-500',
-                            item.object_type === 'REPO' && 'text-green-500',
-                            item.object_type === 'NOTEBOOK' && 'text-blue-500'
-                          )}
-                        />
-                        <span className="font-medium truncate">{name}</span>
-                      </button>
-                      {canOpen && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0"
-                          onClick={() =>
-                            handleNavigate(item.path, item.object_type, item.object_id)
-                          }
-                          aria-label={t('workspace.open')}
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </ScrollArea>
+          <ScrollArea className="h-[360px]">{renderWorkspaceList()}</ScrollArea>
 
           {/* 現在のフルパス表示 */}
-          <div className="px-1 pt-2 border-t flex items-center gap-2">
-            <span className="text-sm text-foreground shrink-0">Path:</span>
+          <div className="flex items-center gap-2 border-t bg-muted/20 px-4 py-2">
+            <span className="shrink-0 text-xs font-medium uppercase text-muted-foreground">
+              Path
+            </span>
             <p
               className={cn(
-                'text-sm font-mono truncate',
+                'truncate font-mono text-xs',
                 selectedItem ? 'text-foreground' : 'text-muted-foreground'
               )}
-              style={{ direction: 'rtl', textAlign: 'left' }}
+              title={displayPath}
             >
-              {selectedItem?.path ?? currentPath}
+              {displayPath}
             </p>
           </div>
         </div>
 
-        <DialogFooter className="flex-col gap-2 sm:flex-row sm:gap-0">
-          {selectError && (
-            <p className="text-sm text-destructive w-full sm:w-auto sm:flex-1 sm:mr-2">
-              {selectError}
-            </p>
-          )}
-          <div className="flex gap-2 sm:gap-0">
-            <Button variant="ghost" onClick={() => onOpenChange(false)}>
-              {t('workspace.cancel')}
-            </Button>
-            <Button
-              onClick={async () => {
-                // リストから選択されたアイテムがある場合はそのまま使用
-                if (selectedItem) {
-                  onSelect({
-                    path: selectedItem.path,
-                    name: extractNameFromPath(selectedItem.path),
-                    object_type: selectedItem.object_type,
-                    object_id: selectedItem.object_id,
-                  });
-                  onOpenChange(false);
-                  return;
-                }
-
-                // 現在のフォルダを選択する場合
-                // object_id が既にある場合（ナビゲーション経由）はそのまま使用
-                if (currentObjectId !== undefined) {
-                  onSelect({
-                    path: currentPath,
-                    name: extractNameFromPath(currentPath),
-                    object_type: currentObjectType,
-                    object_id: currentObjectId,
-                  });
-                  onOpenChange(false);
-                  return;
-                }
-
-                // 初期パスで object_id がない場合は getStatus で取得
-                setIsSelecting(true);
-                setSelectError(null); // エラーをクリアして再試行可能に
-                try {
-                  const statusResponse = await workspaceService.getStatus(currentPath);
-                  setCurrentObjectId(statusResponse.object_id);
-                  setCurrentObjectType(statusResponse.object_type);
-                  onSelect({
-                    path: currentPath,
-                    name: extractNameFromPath(currentPath),
-                    object_type: statusResponse.object_type,
-                    object_id: statusResponse.object_id,
-                  });
-                  onOpenChange(false);
-                } catch (err) {
-                  if (err instanceof ApiClientError) {
-                    setSelectError(err.message);
-                  } else {
-                    setSelectError(t('workspace.error'));
-                  }
-                } finally {
-                  setIsSelecting(false);
-                }
-              }}
-              disabled={isSelecting}
-            >
-              {isSelecting ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  {t('workspace.loading')}
-                </>
+        <DialogFooter className="border-t bg-background px-4 py-3 sm:justify-stretch sm:space-x-0">
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 flex-1">
+              {isCreateFormOpen ? (
+                <form
+                  className="flex max-w-md flex-col gap-2"
+                  onSubmit={event => {
+                    event.preventDefault();
+                    void handleCreateFolder();
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={newFolderName}
+                      onChange={event => handleFolderNameChange(event.target.value)}
+                      placeholder={t('workspace.folderNamePlaceholder')}
+                      aria-label={t('workspace.folderName')}
+                      disabled={isCreatingFolder}
+                      autoFocus
+                      className="h-9 min-w-0"
+                    />
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={isCreatingFolder || !newFolderName.trim()}
+                      className="shrink-0"
+                    >
+                      {isCreatingFolder ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          {t('workspace.creatingFolder')}
+                        </>
+                      ) : (
+                        t('workspace.createFolder')
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 shrink-0"
+                      disabled={isCreatingFolder}
+                      onClick={resetCreateForm}
+                      aria-label={t('workspace.cancel')}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  {createError && <p className="text-sm text-destructive">{createError}</p>}
+                </form>
               ) : (
-                t('workspace.selectCurrentFolder')
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={openCreateForm}
+                    disabled={isCreatingFolder}
+                  >
+                    <FolderPlus className="h-4 w-4 mr-2" />
+                    {t('workspace.newFolder')}
+                  </Button>
+                  {selectError && <p className="text-sm text-destructive sm:ml-2">{selectError}</p>}
+                </div>
               )}
-            </Button>
+              {isCreateFormOpen && selectError && (
+                <p className="mt-2 text-sm text-destructive">{selectError}</p>
+              )}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onOpenChange(false)}
+                disabled={isCreatingFolder}
+              >
+                {t('workspace.cancel')}
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSelectCurrentFolder}
+                disabled={isSelecting || isCreatingFolder}
+              >
+                {isSelecting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    {t('workspace.loading')}
+                  </>
+                ) : (
+                  t('workspace.selectCurrentFolder')
+                )}
+              </Button>
+            </div>
           </div>
         </DialogFooter>
       </DialogContent>
