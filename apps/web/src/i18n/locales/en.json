@@ -361,6 +361,7 @@
     "createDraftPullRequest": "Create draft PR",
     "createPullRequestManually": "Create PR manually",
     "createPullRequestOptions": "Pull request options",
+    "createPullRequestDisabledNoDiff": "No changes to create a pull request",
     "createPullRequestError": "Failed to create pull request",
     "metadataDialog": {
       "title": "Generate PR metadata",

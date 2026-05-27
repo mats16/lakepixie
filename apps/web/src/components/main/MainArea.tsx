@@ -136,6 +136,7 @@ export function MainArea({
   const { githubAppId, modelSettings } = useUser();
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
   const [gitDiffRefreshKey, setGitDiffRefreshKey] = useState(0);
+  const [gitRepositoryStatusRefreshKey, setGitRepositoryStatusRefreshKey] = useState(0);
   const [sessionControlPending, setSessionControlPending] = useState(false);
   const [optimisticModelId, setOptimisticModelId] = useState<string | null>(null);
   const [optimisticPlanMode, setOptimisticPlanMode] = useState<boolean | null>(null);
@@ -144,6 +145,7 @@ export function MainArea({
   const [hasAppYaml, setHasAppYaml] = useState<boolean | null>(null);
   const [isCheckingAppYaml, setIsCheckingAppYaml] = useState(false);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gitRepositoryStatusRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // navigate state から初期メッセージを取得
   const initialMessage = useMemo(() => {
@@ -200,11 +202,25 @@ export function MainArea({
     }, GIT_DIFF_REFRESH_DEBOUNCE_MS);
   }, []);
 
+  const handleGitRepositoryStatusRefreshNeeded = useCallback(() => {
+    if (gitRepositoryStatusRefreshTimerRef.current) {
+      clearTimeout(gitRepositoryStatusRefreshTimerRef.current);
+    }
+    gitRepositoryStatusRefreshTimerRef.current = setTimeout(() => {
+      gitRepositoryStatusRefreshTimerRef.current = null;
+      setGitRepositoryStatusRefreshKey(current => current + 1);
+    }, GIT_DIFF_REFRESH_DEBOUNCE_MS);
+  }, []);
+
   useEffect(() => {
     return () => {
       if (gitDiffRefreshTimerRef.current) {
         clearTimeout(gitDiffRefreshTimerRef.current);
         gitDiffRefreshTimerRef.current = null;
+      }
+      if (gitRepositoryStatusRefreshTimerRef.current) {
+        clearTimeout(gitRepositoryStatusRefreshTimerRef.current);
+        gitRepositoryStatusRefreshTimerRef.current = null;
       }
     };
   }, [sessionId]);
@@ -233,6 +249,7 @@ export function MainArea({
     onAskUserQuestion: handleAskUserQuestion,
     onExitPlanMode: handleExitPlanMode,
     onGitDiffRefreshNeeded: handleGitDiffRefreshNeeded,
+    onGitRepositoryStatusRefreshNeeded: handleGitRepositoryStatusRefreshNeeded,
   });
 
   const submitAnswer = useCallback(
@@ -771,6 +788,7 @@ export function MainArea({
             baseBranch={gitRepositoryStatus.baseBranch}
             sessionTitle={activeSession?.title ?? undefined}
             diffRefreshKey={gitDiffRefreshKey}
+            remoteRefreshKey={gitRepositoryStatusRefreshKey}
             bottomClassName={gitStatusBottomClassName}
           />
         )}

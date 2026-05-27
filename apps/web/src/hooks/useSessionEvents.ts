@@ -31,6 +31,8 @@ interface UseSessionEventsOptions {
   onExitPlanMode?: (request: WsExitPlanModeRequest) => void;
   /** Agent の tool_result / result 受信時に git diff を再取得するためのコールバック */
   onGitDiffRefreshNeeded?: () => void;
+  /** Agent の result 受信時に GitHub 側の branch / pull request 状態を再取得するためのコールバック */
+  onGitRepositoryStatusRefreshNeeded?: () => void;
 }
 
 interface UseSessionEventsReturn {
@@ -65,6 +67,17 @@ export function shouldRefreshGitDiffForEvent(event: SDKMessage): boolean {
   );
 }
 
+export function shouldRefreshGitRepositoryStatusForEvent(event: SDKMessage): boolean {
+  if (!isSDKResultMessageEvent(event)) return false;
+  const result = event as SDKMessage & {
+    subtype?: string;
+    is_error?: boolean;
+    errors?: unknown;
+  };
+  const hasErrors = Array.isArray(result.errors) && result.errors.length > 0;
+  return result.subtype !== 'error_during_execution' && result.is_error !== true && !hasErrors;
+}
+
 export function getToolResultIdsFromEvent(event: SDKMessage): string[] {
   if (!isSDKUserMessageEvent(event) || !Array.isArray(event.message.content)) return [];
   const ids: string[] = [];
@@ -93,6 +106,7 @@ export function useSessionEvents({
   onAskUserQuestion,
   onExitPlanMode,
   onGitDiffRefreshNeeded,
+  onGitRepositoryStatusRefreshNeeded,
 }: UseSessionEventsOptions): UseSessionEventsReturn {
   const [events, setEvents] = useState<SDKMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -185,6 +199,9 @@ export function useSessionEvents({
       if (shouldRefreshGitDiffForEvent(event)) {
         onGitDiffRefreshNeeded?.();
       }
+      if (shouldRefreshGitRepositoryStatusForEvent(event)) {
+        onGitRepositoryStatusRefreshNeeded?.();
+      }
 
       const nextToolResultIds = getToolResultIdsFromEvent(event);
       if (nextToolResultIds.length > 0) {
@@ -202,7 +219,7 @@ export function useSessionEvents({
         setSessionStatus('running');
       }
     },
-    [onGitDiffRefreshNeeded]
+    [onGitDiffRefreshNeeded, onGitRepositoryStatusRefreshNeeded]
   );
 
   // SSE 接続（shouldAutoConnect に基づいて自動接続を制御）
