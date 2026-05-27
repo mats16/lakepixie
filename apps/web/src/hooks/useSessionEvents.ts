@@ -74,8 +74,8 @@ export function shouldRefreshGitRepositoryStatusForEvent(event: SDKMessage): boo
     is_error?: boolean;
     errors?: unknown;
   };
-  if (result.subtype === 'error_during_execution' || result.is_error === true) return false;
-  return !Array.isArray(result.errors) || result.errors.length === 0;
+  const hasErrors = Array.isArray(result.errors) && result.errors.length > 0;
+  return result.subtype !== 'error_during_execution' && result.is_error !== true && !hasErrors;
 }
 
 export function getToolResultIdsFromEvent(event: SDKMessage): string[] {
