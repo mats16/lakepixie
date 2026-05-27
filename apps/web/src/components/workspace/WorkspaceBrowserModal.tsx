@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, ChevronRight, FolderPlus, X } from 'lucide-react';
 import type { WorkspaceObjectType, WorkspaceObjectInfo, WorkspaceSelection } from '@repo/types';
@@ -14,7 +14,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { extractNameFromPath, safeSanitizePath, getWorkspaceObjectIcon } from '@/lib/workspace';
+import {
+  extractNameFromPath,
+  safeSanitizePath,
+  sanitizePath,
+  getWorkspaceObjectIcon,
+} from '@/lib/workspace';
 import { workspaceService, ApiClientError } from '@/services';
 import { WorkspaceBreadcrumb } from './WorkspaceBreadcrumb';
 
@@ -53,12 +58,23 @@ function getWorkspaceErrorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiClientError ? error.message : fallback;
 }
 
-function isInvalidFolderName(folderName: string): boolean {
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some(char => {
+    const code = char.charCodeAt(0);
+    return code <= 31 || code === 127;
+  });
+}
+
+function isInvalidFolderName(folderName: string, trimmedName: string): boolean {
   return (
-    folderName.includes('/') ||
-    folderName.includes('\\') ||
-    folderName.includes('..') ||
-    folderName.includes('\0')
+    folderName !== trimmedName ||
+    hasControlCharacter(trimmedName) ||
+    trimmedName.includes('/') ||
+    trimmedName.includes('\\') ||
+    trimmedName.includes('..') ||
+    trimmedName === '.' ||
+    trimmedName.startsWith('.') ||
+    trimmedName.endsWith('.')
   );
 }
 
@@ -86,6 +102,13 @@ export function WorkspaceBrowserModal({
   const [newFolderName, setNewFolderName] = useState('');
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const currentPathRef = useRef(currentPath);
+  const createGenerationRef = useRef(0);
+  const isCreatingFolderRef = useRef(false);
+
+  useEffect(() => {
+    currentPathRef.current = currentPath;
+  }, [currentPath]);
 
   const resetCreateForm = useCallback(() => {
     setCreateError(null);
@@ -117,12 +140,19 @@ export function WorkspaceBrowserModal({
   // モーダルが開いた時にパスをリセット
   useEffect(() => {
     if (open) {
+      currentPathRef.current = initialPath;
+      createGenerationRef.current += 1;
+      isCreatingFolderRef.current = false;
       setCurrentPath(initialPath);
       setCurrentObjectType('DIRECTORY'); // 初期パスは通常 DIRECTORY
       setCurrentObjectId(undefined);
       setSelectedItem(null);
+      setObjects([]);
       setError(null);
       setSelectError(null);
+      setIsLoading(false);
+      setIsSelecting(false);
+      setIsCreatingFolder(false);
       resetCreateForm();
     }
   }, [open, initialPath, resetCreateForm]);
@@ -136,10 +166,16 @@ export function WorkspaceBrowserModal({
 
   const handleNavigate = useCallback(
     (path: string, objectType: WorkspaceObjectType = 'DIRECTORY', objectId?: number) => {
-      setCurrentPath(safeSanitizePath(path));
+      const nextPath = safeSanitizePath(path);
+      currentPathRef.current = nextPath;
+      createGenerationRef.current += 1;
+      isCreatingFolderRef.current = false;
+      setCurrentPath(nextPath);
       setCurrentObjectType(objectType);
       setCurrentObjectId(objectId);
+      setSelectedItem(null);
       setSelectError(null);
+      setIsCreatingFolder(false);
       resetCreateForm();
     },
     [resetCreateForm]
@@ -148,7 +184,7 @@ export function WorkspaceBrowserModal({
   const openCreateForm = useCallback(() => {
     setIsCreateFormOpen(true);
     setCreateError(null);
-    setSelectError(null);
+    setSelectedItem(null);
   }, []);
 
   const handleFolderNameChange = useCallback((value: string) => {
@@ -156,7 +192,17 @@ export function WorkspaceBrowserModal({
     setCreateError(null);
   }, []);
 
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (isCreatingFolder && !nextOpen) return;
+      onOpenChange(nextOpen);
+    },
+    [isCreatingFolder, onOpenChange]
+  );
+
   const handleCreateFolder = useCallback(async () => {
+    if (isCreatingFolderRef.current) return;
+
     const trimmedName = newFolderName.trim();
     setCreateError(null);
     setSelectError(null);
@@ -166,28 +212,59 @@ export function WorkspaceBrowserModal({
       return;
     }
 
-    if (isInvalidFolderName(trimmedName)) {
+    if (isInvalidFolderName(newFolderName, trimmedName)) {
       setCreateError(t('workspace.folderNameInvalid'));
       return;
     }
 
-    const newFolderPath = safeSanitizePath(buildChildPath(currentPath, trimmedName));
+    let newFolderPath: string;
+    try {
+      newFolderPath = sanitizePath(buildChildPath(currentPath, trimmedName));
+    } catch {
+      setCreateError(t('workspace.folderNameInvalid'));
+      return;
+    }
+
     if (objects.some(object => object.path === newFolderPath)) {
       setCreateError(t('workspace.folderAlreadyExists'));
       return;
     }
 
+    const createBasePath = currentPath;
+    const createGeneration = createGenerationRef.current;
+    isCreatingFolderRef.current = true;
     setIsCreatingFolder(true);
+
     try {
       await workspaceService.mkdirs(newFolderPath);
-      const createdFolder = await workspaceService.getStatus(newFolderPath);
+      const createdFolder = await workspaceService.getStatus(newFolderPath).catch(err => {
+        if (err instanceof ApiClientError && err.statusCode === 404) {
+          return {
+            path: newFolderPath,
+            object_type: 'DIRECTORY' as const,
+            object_id: 0,
+          };
+        }
+        throw err;
+      });
+
+      if (
+        currentPathRef.current !== createBasePath ||
+        createGenerationRef.current !== createGeneration
+      ) {
+        return;
+      }
+
       setSelectedItem(createdFolder);
       resetCreateForm();
       await fetchObjects({ clearSelection: false });
     } catch (err) {
       setCreateError(getWorkspaceErrorMessage(err, t('workspace.createFolderError')));
     } finally {
-      setIsCreatingFolder(false);
+      if (createGenerationRef.current === createGeneration) {
+        isCreatingFolderRef.current = false;
+        setIsCreatingFolder(false);
+      }
     }
   }, [currentPath, fetchObjects, newFolderName, objects, resetCreateForm, t]);
 
@@ -345,7 +422,7 @@ export function WorkspaceBrowserModal({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[82vh] max-w-3xl gap-0 overflow-hidden p-0 flex flex-col">
         <DialogHeader className="border-b px-5 py-4 pr-12">
           <DialogTitle className="text-base">{title ?? t('workspace.browserTitle')}</DialogTitle>
@@ -402,7 +479,7 @@ export function WorkspaceBrowserModal({
                     <Button
                       type="submit"
                       size="sm"
-                      disabled={isCreatingFolder}
+                      disabled={isCreatingFolder || !newFolderName.trim()}
                       className="shrink-0"
                     >
                       {isCreatingFolder ? (
@@ -448,10 +525,19 @@ export function WorkspaceBrowserModal({
               )}
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onOpenChange(false)}
+                disabled={isCreatingFolder}
+              >
                 {t('workspace.cancel')}
               </Button>
-              <Button size="sm" onClick={handleSelectCurrentFolder} disabled={isSelecting}>
+              <Button
+                size="sm"
+                onClick={handleSelectCurrentFolder}
+                disabled={isSelecting || isCreatingFolder}
+              >
                 {isSelecting ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />

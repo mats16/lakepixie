@@ -289,7 +289,7 @@
     "createFolder": "作成",
     "creatingFolder": "作成中...",
     "folderNameRequired": "フォルダ名を入力してください",
-    "folderNameInvalid": "フォルダ名に /、\\、..、NULL 文字は使用できません",
+    "folderNameInvalid": "フォルダ名にスラッシュ、前後の空白、前後のドット、..、制御文字は使用できません",
     "folderAlreadyExists": "同じ名前のフォルダが既に存在します",
     "createFolderError": "フォルダの作成に失敗しました",
     "open": "開く",

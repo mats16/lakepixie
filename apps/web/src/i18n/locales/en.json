@@ -289,7 +289,7 @@
     "createFolder": "Create",
     "creatingFolder": "Creating...",
     "folderNameRequired": "Enter a folder name",
-    "folderNameInvalid": "Folder name cannot contain /, \\, .., or null characters",
+    "folderNameInvalid": "Folder name cannot include slashes, leading/trailing spaces, leading/trailing dots, .., or control characters",
     "folderAlreadyExists": "A folder with this name already exists",
     "createFolderError": "Failed to create folder",
     "open": "Open",
