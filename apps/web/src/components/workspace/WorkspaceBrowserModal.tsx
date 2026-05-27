@@ -257,114 +257,128 @@ export function WorkspaceBrowserModal({
   );
 
   const isSelectable = (item: WorkspaceObjectInfo) => selectableTypes.includes(item.object_type);
+  const displayPath = selectedItem?.path ?? currentPath;
+
+  const renderWorkspaceList = () => {
+    if (isLoading) {
+      return (
+        <div className="flex h-full items-center justify-center">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">{t('workspace.loading')}</span>
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div className="flex h-full items-center justify-center px-6 text-center">
+          <p className="text-sm text-destructive">{error}</p>
+        </div>
+      );
+    }
+
+    if (objects.length === 0) {
+      return (
+        <div className="flex h-full items-center justify-center px-6 text-center">
+          <p className="text-sm text-muted-foreground">{t('workspace.empty')}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="px-2 py-2">
+        {objects.map(item => {
+          const Icon = getWorkspaceObjectIcon(item.object_type);
+          const name = extractNameFromPath(item.path);
+          const selectable = isSelectable(item);
+          const isSelected = selectedItem?.path === item.path;
+          const isDirectory = item.object_type === 'DIRECTORY';
+          const canOpen = isDirectory || item.object_type === 'REPO';
+
+          return (
+            <div
+              key={item.path}
+              className={cn(
+                'group flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors',
+                'hover:bg-muted/70',
+                isSelected && 'bg-accent',
+                !selectable && !isDirectory && 'opacity-50'
+              )}
+            >
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                onClick={() => {
+                  if (selectable) {
+                    setSelectedItem(prev => (prev?.path === item.path ? null : item));
+                  }
+                }}
+                onDoubleClick={() => handleItemDoubleClick(item)}
+                disabled={!selectable && !isDirectory}
+              >
+                <Icon
+                  className={cn(
+                    'h-4 w-4 shrink-0 text-muted-foreground',
+                    item.object_type === 'REPO' && 'text-emerald-600/80',
+                    item.object_type === 'NOTEBOOK' && 'text-blue-600/80'
+                  )}
+                />
+                <span className="truncate text-sm font-medium">{name}</span>
+              </button>
+              {canOpen && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                  onClick={() => handleNavigate(item.path, item.object_type, item.object_id)}
+                  aria-label={t('workspace.open')}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>{title ?? t('workspace.browserTitle')}</DialogTitle>
+      <DialogContent className="max-h-[82vh] max-w-3xl gap-0 overflow-hidden p-0 flex flex-col">
+        <DialogHeader className="border-b px-5 py-4 pr-12">
+          <DialogTitle className="text-base">{title ?? t('workspace.browserTitle')}</DialogTitle>
           <DialogDescription>{description ?? t('workspace.browserDescription')}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3 flex-1 min-h-0">
+        <div className="flex min-h-0 flex-1 flex-col">
           {/* パンくずナビゲーション */}
-          <div className="border-b pb-2">
+          <div className="border-b bg-muted/30 px-4 py-2">
             <WorkspaceBreadcrumb path={currentPath} onNavigate={handleNavigate} />
           </div>
 
           {/* オブジェクト一覧 */}
-          <ScrollArea className="h-[400px]">
-            {isLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                <span className="ml-2 text-muted-foreground">{t('workspace.loading')}</span>
-              </div>
-            ) : error ? (
-              <div className="flex items-center justify-center py-12">
-                <p className="text-sm text-destructive">{error}</p>
-              </div>
-            ) : objects.length === 0 ? (
-              <div className="flex items-center justify-center py-12">
-                <p className="text-sm text-muted-foreground">{t('workspace.empty')}</p>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {objects.map(item => {
-                  const Icon = getWorkspaceObjectIcon(item.object_type);
-                  const name = extractNameFromPath(item.path);
-                  const selectable = isSelectable(item);
-                  const isSelected = selectedItem?.path === item.path;
-                  const isDirectory = item.object_type === 'DIRECTORY';
-                  const canOpen = isDirectory || item.object_type === 'REPO';
-
-                  return (
-                    <div
-                      key={item.path}
-                      className={cn(
-                        'flex items-center gap-2 px-3 py-2 rounded-md transition-colors',
-                        'hover:bg-accent',
-                        isSelected && 'bg-accent',
-                        !selectable && !isDirectory && 'opacity-50'
-                      )}
-                    >
-                      <button
-                        type="button"
-                        className="flex-1 flex items-center gap-3 text-left min-w-0"
-                        onClick={() => {
-                          if (selectable) {
-                            setSelectedItem(prev => (prev?.path === item.path ? null : item));
-                          }
-                        }}
-                        onDoubleClick={() => handleItemDoubleClick(item)}
-                        disabled={!selectable && !isDirectory}
-                      >
-                        <Icon
-                          className={cn(
-                            'h-5 w-5 shrink-0',
-                            isDirectory && 'text-amber-500',
-                            item.object_type === 'REPO' && 'text-green-500',
-                            item.object_type === 'NOTEBOOK' && 'text-blue-500'
-                          )}
-                        />
-                        <span className="font-medium truncate">{name}</span>
-                      </button>
-                      {canOpen && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0"
-                          onClick={() =>
-                            handleNavigate(item.path, item.object_type, item.object_id)
-                          }
-                          aria-label={t('workspace.open')}
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </ScrollArea>
+          <ScrollArea className="h-[360px]">{renderWorkspaceList()}</ScrollArea>
 
           {/* 現在のフルパス表示 */}
-          <div className="px-1 pt-2 border-t flex items-center gap-2">
-            <span className="text-sm text-foreground shrink-0">Path:</span>
+          <div className="flex items-center gap-2 border-t bg-muted/20 px-4 py-2">
+            <span className="shrink-0 text-xs font-medium uppercase text-muted-foreground">
+              Path
+            </span>
             <p
               className={cn(
-                'text-sm font-mono truncate',
+                'truncate font-mono text-xs',
                 selectedItem ? 'text-foreground' : 'text-muted-foreground'
               )}
-              style={{ direction: 'rtl', textAlign: 'left' }}
+              title={displayPath}
             >
-              {selectedItem?.path ?? currentPath}
+              {displayPath}
             </p>
           </div>
         </div>
 
-        <DialogFooter className="sm:justify-stretch sm:space-x-0">
+        <DialogFooter className="border-t bg-background px-4 py-3 sm:justify-stretch sm:space-x-0">
           <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1">
               {isCreateFormOpen ? (
@@ -383,9 +397,14 @@ export function WorkspaceBrowserModal({
                       aria-label={t('workspace.folderName')}
                       disabled={isCreatingFolder}
                       autoFocus
-                      className="h-10 min-w-0"
+                      className="h-9 min-w-0"
                     />
-                    <Button type="submit" disabled={isCreatingFolder} className="shrink-0">
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={isCreatingFolder}
+                      className="shrink-0"
+                    >
                       {isCreatingFolder ? (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -399,7 +418,7 @@ export function WorkspaceBrowserModal({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="shrink-0"
+                      className="h-9 w-9 shrink-0"
                       disabled={isCreatingFolder}
                       onClick={resetCreateForm}
                       aria-label={t('workspace.cancel')}
@@ -414,6 +433,7 @@ export function WorkspaceBrowserModal({
                   <Button
                     type="button"
                     variant="outline"
+                    size="sm"
                     onClick={openCreateForm}
                     disabled={isCreatingFolder}
                   >
@@ -428,10 +448,10 @@ export function WorkspaceBrowserModal({
               )}
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
                 {t('workspace.cancel')}
               </Button>
-              <Button onClick={handleSelectCurrentFolder} disabled={isSelecting}>
+              <Button size="sm" onClick={handleSelectCurrentFolder} disabled={isSelecting}>
                 {isSelecting ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
