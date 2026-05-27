@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, ChevronRight } from 'lucide-react';
+import { Loader2, ChevronRight, FolderPlus, X } from 'lucide-react';
 import type { WorkspaceObjectType, WorkspaceObjectInfo, WorkspaceSelection } from '@repo/types';
 import {
   Dialog,
@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { extractNameFromPath, safeSanitizePath, getWorkspaceObjectIcon } from '@/lib/workspace';
@@ -33,6 +34,34 @@ interface WorkspaceBrowserModalProps {
 
 const DEFAULT_SELECTABLE_TYPES: WorkspaceObjectType[] = ['DIRECTORY', 'REPO'];
 
+function buildChildPath(parentPath: string, childName: string): string {
+  const normalizedParent = parentPath.endsWith('/') ? parentPath.slice(0, -1) : parentPath;
+  return `${normalizedParent}/${childName}`;
+}
+
+function sortWorkspaceObjects(objects: WorkspaceObjectInfo[]): WorkspaceObjectInfo[] {
+  return [...objects].sort((a, b) => {
+    if (a.object_type === 'DIRECTORY' && b.object_type !== 'DIRECTORY') return -1;
+    if (a.object_type !== 'DIRECTORY' && b.object_type === 'DIRECTORY') return 1;
+    if (a.object_type === 'REPO' && b.object_type !== 'REPO') return -1;
+    if (a.object_type !== 'REPO' && b.object_type === 'REPO') return 1;
+    return extractNameFromPath(a.path).localeCompare(extractNameFromPath(b.path));
+  });
+}
+
+function getWorkspaceErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof ApiClientError ? error.message : fallback;
+}
+
+function isInvalidFolderName(folderName: string): boolean {
+  return (
+    folderName.includes('/') ||
+    folderName.includes('\\') ||
+    folderName.includes('..') ||
+    folderName.includes('\0')
+  );
+}
+
 export function WorkspaceBrowserModal({
   open,
   onOpenChange,
@@ -53,6 +82,37 @@ export function WorkspaceBrowserModal({
   const [error, setError] = useState<string | null>(null);
   const [selectError, setSelectError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<WorkspaceObjectInfo | null>(null);
+  const [isCreateFormOpen, setIsCreateFormOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const resetCreateForm = useCallback(() => {
+    setCreateError(null);
+    setIsCreateFormOpen(false);
+    setNewFolderName('');
+  }, []);
+
+  const fetchObjects = useCallback(
+    async ({ clearSelection = true }: { clearSelection?: boolean } = {}) => {
+      setIsLoading(true);
+      setError(null);
+      if (clearSelection) {
+        setSelectedItem(null);
+      }
+
+      try {
+        const listResponse = await workspaceService.listWorkspace(currentPath);
+        setObjects(sortWorkspaceObjects(listResponse.objects ?? []));
+      } catch (err) {
+        setError(getWorkspaceErrorMessage(err, t('workspace.error')));
+        setObjects([]);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [currentPath, t]
+  );
 
   // モーダルが開いた時にパスをリセット
   useEffect(() => {
@@ -63,56 +123,116 @@ export function WorkspaceBrowserModal({
       setSelectedItem(null);
       setError(null);
       setSelectError(null);
+      resetCreateForm();
     }
-  }, [open, initialPath]);
+  }, [open, initialPath, resetCreateForm]);
 
   // パスが変わったらオブジェクト一覧を取得
   useEffect(() => {
     if (!open) return;
 
-    const fetchObjects = async () => {
-      setIsLoading(true);
-      setError(null);
-      setSelectedItem(null);
-
-      try {
-        const listResponse = await workspaceService.listWorkspace(currentPath);
-
-        // パスでソート（ディレクトリを先に、その後名前順）
-        const sorted = (listResponse.objects ?? []).sort((a, b) => {
-          // ディレクトリを先に
-          if (a.object_type === 'DIRECTORY' && b.object_type !== 'DIRECTORY') return -1;
-          if (a.object_type !== 'DIRECTORY' && b.object_type === 'DIRECTORY') return 1;
-          // リポジトリを次に
-          if (a.object_type === 'REPO' && b.object_type !== 'REPO') return -1;
-          if (a.object_type !== 'REPO' && b.object_type === 'REPO') return 1;
-          // 名前順
-          return extractNameFromPath(a.path).localeCompare(extractNameFromPath(b.path));
-        });
-        setObjects(sorted);
-      } catch (err) {
-        if (err instanceof ApiClientError) {
-          setError(err.message);
-        } else {
-          setError(t('workspace.error'));
-        }
-        setObjects([]);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchObjects();
-  }, [open, currentPath, t]);
+    void fetchObjects();
+  }, [open, fetchObjects]);
 
   const handleNavigate = useCallback(
     (path: string, objectType: WorkspaceObjectType = 'DIRECTORY', objectId?: number) => {
       setCurrentPath(safeSanitizePath(path));
       setCurrentObjectType(objectType);
       setCurrentObjectId(objectId);
+      setSelectError(null);
+      resetCreateForm();
     },
-    []
+    [resetCreateForm]
   );
+
+  const openCreateForm = useCallback(() => {
+    setIsCreateFormOpen(true);
+    setCreateError(null);
+    setSelectError(null);
+  }, []);
+
+  const handleFolderNameChange = useCallback((value: string) => {
+    setNewFolderName(value);
+    setCreateError(null);
+  }, []);
+
+  const handleCreateFolder = useCallback(async () => {
+    const trimmedName = newFolderName.trim();
+    setCreateError(null);
+    setSelectError(null);
+
+    if (!trimmedName) {
+      setCreateError(t('workspace.folderNameRequired'));
+      return;
+    }
+
+    if (isInvalidFolderName(trimmedName)) {
+      setCreateError(t('workspace.folderNameInvalid'));
+      return;
+    }
+
+    const newFolderPath = safeSanitizePath(buildChildPath(currentPath, trimmedName));
+    if (objects.some(object => object.path === newFolderPath)) {
+      setCreateError(t('workspace.folderAlreadyExists'));
+      return;
+    }
+
+    setIsCreatingFolder(true);
+    try {
+      await workspaceService.mkdirs(newFolderPath);
+      const createdFolder = await workspaceService.getStatus(newFolderPath);
+      setSelectedItem(createdFolder);
+      resetCreateForm();
+      await fetchObjects({ clearSelection: false });
+    } catch (err) {
+      setCreateError(getWorkspaceErrorMessage(err, t('workspace.createFolderError')));
+    } finally {
+      setIsCreatingFolder(false);
+    }
+  }, [currentPath, fetchObjects, newFolderName, objects, resetCreateForm, t]);
+
+  const handleSelectCurrentFolder = useCallback(async () => {
+    if (selectedItem) {
+      onSelect({
+        path: selectedItem.path,
+        name: extractNameFromPath(selectedItem.path),
+        object_type: selectedItem.object_type,
+        object_id: selectedItem.object_id,
+      });
+      onOpenChange(false);
+      return;
+    }
+
+    if (currentObjectId !== undefined) {
+      onSelect({
+        path: currentPath,
+        name: extractNameFromPath(currentPath),
+        object_type: currentObjectType,
+        object_id: currentObjectId,
+      });
+      onOpenChange(false);
+      return;
+    }
+
+    setIsSelecting(true);
+    setSelectError(null);
+    try {
+      const statusResponse = await workspaceService.getStatus(currentPath);
+      setCurrentObjectId(statusResponse.object_id);
+      setCurrentObjectType(statusResponse.object_type);
+      onSelect({
+        path: currentPath,
+        name: extractNameFromPath(currentPath),
+        object_type: statusResponse.object_type,
+        object_id: statusResponse.object_id,
+      });
+      onOpenChange(false);
+    } catch (err) {
+      setSelectError(getWorkspaceErrorMessage(err, t('workspace.error')));
+    } finally {
+      setIsSelecting(false);
+    }
+  }, [currentObjectId, currentObjectType, currentPath, onOpenChange, onSelect, selectedItem, t]);
 
   const handleItemDoubleClick = useCallback(
     (item: WorkspaceObjectInfo) => {
@@ -244,78 +364,84 @@ export function WorkspaceBrowserModal({
           </div>
         </div>
 
-        <DialogFooter className="flex-col gap-2 sm:flex-row sm:gap-0">
-          {selectError && (
-            <p className="text-sm text-destructive w-full sm:w-auto sm:flex-1 sm:mr-2">
-              {selectError}
-            </p>
-          )}
-          <div className="flex gap-2 sm:gap-0">
-            <Button variant="ghost" onClick={() => onOpenChange(false)}>
-              {t('workspace.cancel')}
-            </Button>
-            <Button
-              onClick={async () => {
-                // リストから選択されたアイテムがある場合はそのまま使用
-                if (selectedItem) {
-                  onSelect({
-                    path: selectedItem.path,
-                    name: extractNameFromPath(selectedItem.path),
-                    object_type: selectedItem.object_type,
-                    object_id: selectedItem.object_id,
-                  });
-                  onOpenChange(false);
-                  return;
-                }
-
-                // 現在のフォルダを選択する場合
-                // object_id が既にある場合（ナビゲーション経由）はそのまま使用
-                if (currentObjectId !== undefined) {
-                  onSelect({
-                    path: currentPath,
-                    name: extractNameFromPath(currentPath),
-                    object_type: currentObjectType,
-                    object_id: currentObjectId,
-                  });
-                  onOpenChange(false);
-                  return;
-                }
-
-                // 初期パスで object_id がない場合は getStatus で取得
-                setIsSelecting(true);
-                setSelectError(null); // エラーをクリアして再試行可能に
-                try {
-                  const statusResponse = await workspaceService.getStatus(currentPath);
-                  setCurrentObjectId(statusResponse.object_id);
-                  setCurrentObjectType(statusResponse.object_type);
-                  onSelect({
-                    path: currentPath,
-                    name: extractNameFromPath(currentPath),
-                    object_type: statusResponse.object_type,
-                    object_id: statusResponse.object_id,
-                  });
-                  onOpenChange(false);
-                } catch (err) {
-                  if (err instanceof ApiClientError) {
-                    setSelectError(err.message);
-                  } else {
-                    setSelectError(t('workspace.error'));
-                  }
-                } finally {
-                  setIsSelecting(false);
-                }
-              }}
-              disabled={isSelecting}
-            >
-              {isSelecting ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  {t('workspace.loading')}
-                </>
+        <DialogFooter className="sm:justify-stretch sm:space-x-0">
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 flex-1">
+              {isCreateFormOpen ? (
+                <form
+                  className="flex max-w-md flex-col gap-2"
+                  onSubmit={event => {
+                    event.preventDefault();
+                    void handleCreateFolder();
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={newFolderName}
+                      onChange={event => handleFolderNameChange(event.target.value)}
+                      placeholder={t('workspace.folderNamePlaceholder')}
+                      aria-label={t('workspace.folderName')}
+                      disabled={isCreatingFolder}
+                      autoFocus
+                      className="h-10 min-w-0"
+                    />
+                    <Button type="submit" disabled={isCreatingFolder} className="shrink-0">
+                      {isCreatingFolder ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          {t('workspace.creatingFolder')}
+                        </>
+                      ) : (
+                        t('workspace.createFolder')
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0"
+                      disabled={isCreatingFolder}
+                      onClick={resetCreateForm}
+                      aria-label={t('workspace.cancel')}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  {createError && <p className="text-sm text-destructive">{createError}</p>}
+                </form>
               ) : (
-                t('workspace.selectCurrentFolder')
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={openCreateForm}
+                    disabled={isCreatingFolder}
+                  >
+                    <FolderPlus className="h-4 w-4 mr-2" />
+                    {t('workspace.newFolder')}
+                  </Button>
+                  {selectError && <p className="text-sm text-destructive sm:ml-2">{selectError}</p>}
+                </div>
               )}
-            </Button>
+              {isCreateFormOpen && selectError && (
+                <p className="mt-2 text-sm text-destructive">{selectError}</p>
+              )}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                {t('workspace.cancel')}
+              </Button>
+              <Button onClick={handleSelectCurrentFolder} disabled={isSelecting}>
+                {isSelecting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    {t('workspace.loading')}
+                  </>
+                ) : (
+                  t('workspace.selectCurrentFolder')
+                )}
+              </Button>
+            </div>
           </div>
         </DialogFooter>
       </DialogContent>
