@@ -65,7 +65,10 @@ export function WorkspaceSelector({ value, onChange, disabled = false }: Workspa
           </Button>
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+        <DropdownMenuContent
+          align="start"
+          className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-[24rem] max-w-[calc(100vw-2rem)]"
+        >
           {recentWorkspaces.length > 0 && (
             <>
               <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">

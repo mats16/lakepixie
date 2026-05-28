@@ -659,135 +659,137 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
           return (
             <div key={source.id} className="space-y-2">
               <div className="flex min-w-0 items-center gap-2">
-                {source.type === 'databricks_workspace' && (
-                  <WorkspaceSelector
-                    value={source.workspaceSelection}
-                    onChange={workspaceSelection =>
-                      updateSourceSelection(source.id, current => ({
-                        ...current,
-                        workspaceSelection,
-                      }))
-                    }
-                    disabled={isSubmitting}
-                  />
-                )}
-
-                {source.type === 'git_repository' && (
-                  <>
-                    <Popover
-                      open={openGitRepositorySourceId === source.id}
-                      onOpenChange={open => handleGitRepositorySearchOpenChange(source.id, open)}
-                    >
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          role="combobox"
-                          aria-expanded={openGitRepositorySourceId === source.id}
-                          className="h-8 min-w-0 w-fit max-w-full justify-between gap-3 px-2 text-sm font-normal"
-                          disabled={isSubmitting}
-                        >
-                          <div className="flex min-w-0 items-center gap-2">
-                            <GitPullRequest className="h-3.5 w-3.5 shrink-0" />
-                            <span
-                              className={cn(
-                                'truncate',
-                                !source.gitRepositoryName && 'text-muted-foreground'
-                              )}
-                            >
-                              {source.gitRepositoryName ??
-                                t('welcome.sourceType.repositoryPlaceholder')}
-                            </span>
-                          </div>
-                          <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        className="w-[var(--radix-popover-trigger-width)] p-0"
-                        align="start"
-                      >
-                        <Command shouldFilter={false}>
-                          <CommandInput
-                            value={gitRepositorySearchQuery}
-                            onValueChange={setGitRepositorySearchQuery}
-                            placeholder={t('welcome.sourceType.repositorySearchPlaceholder')}
-                          />
-                          <CommandList>
-                            <CommandEmpty>{gitRepositoryEmptyMessage}</CommandEmpty>
-                            {filteredGitRepositories.map(repository => (
-                              <CommandItem
-                                key={repository.full_name}
-                                value={repository.full_name}
-                                onSelect={() => handleGitRepositorySelect(source.id, repository)}
-                              >
-                                <Check
-                                  className={cn(
-                                    'h-4 w-4',
-                                    source.gitRepositoryName === repository.full_name
-                                      ? 'opacity-100'
-                                      : 'opacity-0'
-                                  )}
-                                />
-                                <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                <span className="truncate">{repository.full_name}</span>
-                              </CommandItem>
-                            ))}
-                          </CommandList>
-                        </Command>
-                      </PopoverContent>
-                    </Popover>
-
-                    <Select
-                      value={source.gitRepositoryBranch ?? undefined}
-                      onValueChange={branch =>
+                <div className="flex min-w-0 items-center gap-1">
+                  {source.type === 'databricks_workspace' && (
+                    <WorkspaceSelector
+                      value={source.workspaceSelection}
+                      onChange={workspaceSelection =>
                         updateSourceSelection(source.id, current => ({
                           ...current,
-                          gitRepositoryBranch: branch,
+                          workspaceSelection,
                         }))
                       }
-                      disabled={
-                        isSubmitting ||
-                        !selectedGitRepository ||
-                        isLoadingSelectedGitRepositoryBranches
-                      }
-                    >
-                      <SelectTrigger className="h-8 min-w-0 w-fit max-w-[150px] px-2 text-sm font-normal">
-                        <div className="flex min-w-0 items-center gap-2">
-                          {isLoadingSelectedGitRepositoryBranches ? (
-                            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
-                          ) : (
-                            <GitBranch className="h-3.5 w-3.5 shrink-0" />
-                          )}
-                          <SelectValue placeholder={t('welcome.sourceType.branchPlaceholder')} />
-                        </div>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedGitRepositoryBranches.length === 0 ? (
-                          <SelectItem value="__no_branches__" disabled>
-                            {t('welcome.sourceType.noBranches')}
-                          </SelectItem>
-                        ) : (
-                          selectedGitRepositoryBranches.map(branch => (
-                            <SelectItem key={branch.name} value={branch.name}>
-                              {branch.name}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </>
-                )}
+                      disabled={isSubmitting}
+                    />
+                  )}
 
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => handleRemoveSourceSelection(source.id)}
-                  disabled={isSubmitting}
-                  aria-label={t('common.remove')}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </Button>
+                  {source.type === 'git_repository' && (
+                    <>
+                      <Popover
+                        open={openGitRepositorySourceId === source.id}
+                        onOpenChange={open => handleGitRepositorySearchOpenChange(source.id, open)}
+                      >
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={openGitRepositorySourceId === source.id}
+                            className="h-8 min-w-0 w-fit max-w-full justify-between gap-3 px-2 text-sm font-normal"
+                            disabled={isSubmitting}
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <GitPullRequest className="h-3.5 w-3.5 shrink-0" />
+                              <span
+                                className={cn(
+                                  'truncate',
+                                  !source.gitRepositoryName && 'text-muted-foreground'
+                                )}
+                              >
+                                {source.gitRepositoryName ??
+                                  t('welcome.sourceType.repositoryPlaceholder')}
+                              </span>
+                            </div>
+                            <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          className="w-[var(--radix-popover-trigger-width)] p-0"
+                          align="start"
+                        >
+                          <Command shouldFilter={false}>
+                            <CommandInput
+                              value={gitRepositorySearchQuery}
+                              onValueChange={setGitRepositorySearchQuery}
+                              placeholder={t('welcome.sourceType.repositorySearchPlaceholder')}
+                            />
+                            <CommandList>
+                              <CommandEmpty>{gitRepositoryEmptyMessage}</CommandEmpty>
+                              {filteredGitRepositories.map(repository => (
+                                <CommandItem
+                                  key={repository.full_name}
+                                  value={repository.full_name}
+                                  onSelect={() => handleGitRepositorySelect(source.id, repository)}
+                                >
+                                  <Check
+                                    className={cn(
+                                      'h-4 w-4',
+                                      source.gitRepositoryName === repository.full_name
+                                        ? 'opacity-100'
+                                        : 'opacity-0'
+                                    )}
+                                  />
+                                  <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                  <span className="truncate">{repository.full_name}</span>
+                                </CommandItem>
+                              ))}
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+
+                      <Select
+                        value={source.gitRepositoryBranch ?? undefined}
+                        onValueChange={branch =>
+                          updateSourceSelection(source.id, current => ({
+                            ...current,
+                            gitRepositoryBranch: branch,
+                          }))
+                        }
+                        disabled={
+                          isSubmitting ||
+                          !selectedGitRepository ||
+                          isLoadingSelectedGitRepositoryBranches
+                        }
+                      >
+                        <SelectTrigger className="h-8 min-w-0 w-fit max-w-[150px] px-2 text-sm font-normal">
+                          <div className="flex min-w-0 items-center gap-2">
+                            {isLoadingSelectedGitRepositoryBranches ? (
+                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                            ) : (
+                              <GitBranch className="h-3.5 w-3.5 shrink-0" />
+                            )}
+                            <SelectValue placeholder={t('welcome.sourceType.branchPlaceholder')} />
+                          </div>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {selectedGitRepositoryBranches.length === 0 ? (
+                            <SelectItem value="__no_branches__" disabled>
+                              {t('welcome.sourceType.noBranches')}
+                            </SelectItem>
+                          ) : (
+                            selectedGitRepositoryBranches.map(branch => (
+                              <SelectItem key={branch.name} value={branch.name}>
+                                {branch.name}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </>
+                  )}
+
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => handleRemoveSourceSelection(source.id)}
+                    disabled={isSubmitting}
+                    aria-label={t('common.remove')}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
 
                 {showAddButton ? renderAddSourceMenu('h-8 w-8') : <div />}
               </div>
