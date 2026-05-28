@@ -43,7 +43,7 @@ describe('github oauth route', () => {
     vi.clearAllMocks();
     app = Fastify({ logger: false });
     app.decorate('config', {
-      APP_EXTERNAL_URL: '',
+      DATABRICKS_APP_URL: '',
       DATABRICKS_HOST: 'workspace.example.com',
       NODE_ENV: 'development',
     } as FastifyInstance['config']);
@@ -90,6 +90,27 @@ describe('github oauth route', () => {
 
     expect(mockCreateGitHubOAuthAuthorizationUrl).toHaveBeenCalledWith(
       expect.objectContaining({ redirectAfter: '/settings' })
+    );
+  });
+
+  it('uses DATABRICKS_APP_URL for production OAuth callback redirect URI', async () => {
+    app.config.NODE_ENV = 'production';
+    app.config.DATABRICKS_APP_URL = 'https://ccbricks-dev-1444828305810485.aws.databricksapps.com';
+    mockCreateGitHubOAuthAuthorizationUrl.mockResolvedValue(
+      'https://github.com/login/oauth/authorize'
+    );
+
+    await app.inject({
+      method: 'GET',
+      url: '/api/github/oauth/authorize?redirect_after=/settings',
+      headers: TEST_USER_HEADERS,
+    });
+
+    expect(mockCreateGitHubOAuthAuthorizationUrl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        redirectUri:
+          'https://ccbricks-dev-1444828305810485.aws.databricksapps.com/api/github/oauth/callback',
+      })
     );
   });
 

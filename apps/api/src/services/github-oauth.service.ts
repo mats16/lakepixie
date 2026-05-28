@@ -1129,10 +1129,11 @@ export interface GitAuthEnvironment {
 export async function createGitHubUserGitAuthEnvironment(
   fastify: FastifyInstance,
   userId: string,
-  repository: string
+  repository: string,
+  accessToken?: string
 ): Promise<GitAuthEnvironment> {
   parseGitHubRepository(repository);
-  const token = await getValidGitHubUserAccessToken(fastify, userId);
+  const token = accessToken ?? (await getValidGitHubUserAccessToken(fastify, userId));
   const askpassPath = join(tmpdir(), `ccbricks-git-askpass-${randomUUID()}.sh`);
   await writeFile(
     askpassPath,

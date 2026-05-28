@@ -92,6 +92,11 @@ const schema = {
       default: 8000,
       description: 'The network port the app should listen on.',
     },
+    DATABRICKS_APP_URL: {
+      type: 'string',
+      default: '',
+      description: 'The public URL of the running Databricks App.',
+    },
     DATABRICKS_CLIENT_ID: {
       type: 'string',
       default: '',
@@ -101,11 +106,6 @@ const schema = {
       type: 'string',
       default: '',
       description: 'The OAuth secret for the Databricks service principal assigned to the app.',
-    },
-    APP_EXTERNAL_URL: {
-      type: 'string',
-      default: '',
-      description: 'Canonical external URL for this app. Used for OAuth redirect URI construction.',
     },
     // Anthropic
     ANTHROPIC_BASE_URL: {
@@ -170,12 +170,12 @@ declare module 'fastify' {
       DATABRICKS_HOST: string;
       /** The network port the app should listen on. */
       DATABRICKS_APP_PORT: number;
+      /** The public URL of the running Databricks App. */
+      DATABRICKS_APP_URL: string;
       /** The client ID for the Databricks service principal assigned to the app. */
       DATABRICKS_CLIENT_ID: string;
       /** The OAuth secret for the Databricks service principal assigned to the app. */
       DATABRICKS_CLIENT_SECRET: string;
-      /** Canonical external URL for this app. */
-      APP_EXTERNAL_URL: string;
       // Anthropic
       ANTHROPIC_BASE_URL: string;
       // System

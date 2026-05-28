@@ -3,12 +3,16 @@ import type { FastifyInstance } from 'fastify';
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionContextResponse } from '@repo/types';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionId } from '../models/session.model.js';
 
 const mockSpawn = vi.hoisted(() => vi.fn());
+const { mockRegisterGitCredential, mockRevokeGitCredential } = vi.hoisted(() => ({
+  mockRegisterGitCredential: vi.fn(),
+  mockRevokeGitCredential: vi.fn(),
+}));
 
 // Mock external modules
 vi.mock('node:child_process', () => ({
@@ -34,6 +38,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 vi.mock('../utils/directory.js', () => ({
   ensureDirectory: vi.fn().mockResolvedValue(undefined),
   removeDirectory: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('./git-credential.service.js', () => ({
+  buildGitCredentialHelperScript: (internalUrl: string, bearerToken: string) =>
+    `helper ${internalUrl} ${bearerToken}`,
+  registerGitCredential: mockRegisterGitCredential,
+  revokeGitCredential: mockRevokeGitCredential,
 }));
 
 vi.mock('../lib/databricks-auth.js', () => ({
@@ -101,9 +112,13 @@ describe('session.service', () => {
         info: vi.fn(),
         error: vi.fn(),
         debug: vi.fn(),
+        warn: vi.fn(),
       },
       config: {
         DATABRICKS_HOST: 'test.databricks.com',
+        DATABRICKS_APP_PORT: 8000,
+        NODE_ENV: 'development',
+        PORT: 8003,
         CCBRICKS_BASE_DIR: '/home/app',
         PATH: '/usr/bin',
         ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
@@ -177,6 +192,12 @@ describe('session.service', () => {
       queueMicrotask(() => child.emit('close', 0));
       return child;
     });
+    let credentialTokenIndex = 0;
+    mockRegisterGitCredential.mockImplementation(async () => {
+      credentialTokenIndex += 1;
+      return { bearerToken: `credential-token-${credentialTokenIndex}`, repoFullName: 'acme/repo' };
+    });
+    mockRevokeGitCredential.mockResolvedValue(undefined);
   });
 
   describe('Databricks App creation lock', () => {
@@ -607,6 +628,82 @@ describe('session.service', () => {
         __testing.prepareGitRepositoryCheckoutPath('/tmp/session-cwd', source, 2)
       ).resolves.toBe('/tmp/session-cwd/widgets');
       expect(removeDirectory).toHaveBeenCalledWith('/tmp/session-cwd/widgets');
+    });
+
+    it('should configure git credential helpers for every repository checkout', async () => {
+      const cwd = await mkdtemp(join(tmpdir(), 'ccbricks-session-'));
+      const widgetSource = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets',
+      };
+      const apiSource = {
+        ...widgetSource,
+        url: 'https://github.com/acme/api',
+      };
+
+      try {
+        await mkdir(join(cwd, 'widgets', '.git'), { recursive: true });
+        await mkdir(join(cwd, 'api', '.git'), { recursive: true });
+
+        const fastify = createMockFastify();
+        const cleanup = await __testing.configureGitCredentialHelpers(
+          fastify,
+          'test-user-id',
+          cwd,
+          [widgetSource, apiSource]
+        );
+
+        const widgetsHelper = join(cwd, 'widgets', '.git', 'ccbricks-credential-helper.mjs');
+        const apiHelper = join(cwd, 'api', '.git', 'ccbricks-credential-helper.mjs');
+
+        expect(mockRegisterGitCredential).toHaveBeenNthCalledWith(
+          1,
+          fastify,
+          'test-user-id',
+          widgetSource.url
+        );
+        expect(mockRegisterGitCredential).toHaveBeenNthCalledWith(
+          2,
+          fastify,
+          'test-user-id',
+          apiSource.url
+        );
+        expect(mockSpawn).toHaveBeenNthCalledWith(
+          1,
+          'git',
+          ['config', '--local', 'credential.helper', widgetsHelper],
+          expect.objectContaining({ cwd: join(cwd, 'widgets'), shell: false })
+        );
+        expect(mockSpawn).toHaveBeenNthCalledWith(
+          2,
+          'git',
+          ['config', '--local', 'credential.useHttpPath', 'true'],
+          expect.objectContaining({ cwd: join(cwd, 'widgets'), shell: false })
+        );
+        expect(mockSpawn).toHaveBeenNthCalledWith(
+          3,
+          'git',
+          ['config', '--local', 'credential.helper', apiHelper],
+          expect.objectContaining({ cwd: join(cwd, 'api'), shell: false })
+        );
+        expect(mockSpawn).toHaveBeenNthCalledWith(
+          4,
+          'git',
+          ['config', '--local', 'credential.useHttpPath', 'true'],
+          expect.objectContaining({ cwd: join(cwd, 'api'), shell: false })
+        );
+
+        cleanup?.();
+
+        expect(mockRevokeGitCredential).toHaveBeenCalledTimes(2);
+        expect(mockRevokeGitCredential).toHaveBeenNthCalledWith(1, fastify, 'credential-token-1');
+        expect(mockRevokeGitCredential).toHaveBeenNthCalledWith(2, fastify, 'credential-token-2');
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
     });
   });
 

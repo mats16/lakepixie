@@ -196,11 +196,12 @@ function useGitHubOAuth() {
 }
 
 interface GitHubOAuthGuideDialogProps {
+  callbackUrl: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-function GitHubOAuthGuideDialog({ open, onOpenChange }: GitHubOAuthGuideDialogProps) {
+function GitHubOAuthGuideDialog({ callbackUrl, open, onOpenChange }: GitHubOAuthGuideDialogProps) {
   const { t } = useTranslation();
   const steps = [
     t('admin.githubOAuthGuideStepCreate'),
@@ -244,9 +245,7 @@ function GitHubOAuthGuideDialog({ open, onOpenChange }: GitHubOAuthGuideDialogPr
             <h3 className="text-sm font-medium">{t('admin.githubOAuthGuideValuesTitle')}</h3>
             <dl className="mt-3 grid grid-cols-[160px_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
               <dt className="text-muted-foreground">{t('admin.githubOAuthGuideCallbackUrl')}</dt>
-              <dd className="break-all font-mono text-xs">
-                {`${window.location.origin}/api/github/oauth/callback`}
-              </dd>
+              <dd className="break-all font-mono text-xs">{callbackUrl}</dd>
               <dt className="text-muted-foreground">{t('admin.githubOAuthGuidePermissions')}</dt>
               <dd>{t('admin.githubOAuthGuidePermissionsValue')}</dd>
             </dl>
@@ -1085,6 +1084,9 @@ function AdminRepositoryContent() {
         </DialogContent>
       </Dialog>
       <GitHubOAuthGuideDialog
+        callbackUrl={
+          githubOAuth?.redirect_uri ?? `${window.location.origin}/api/github/oauth/callback`
+        }
         open={isGitHubOAuthGuideOpen}
         onOpenChange={setIsGitHubOAuthGuideOpen}
       />

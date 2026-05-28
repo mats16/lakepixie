@@ -36,6 +36,7 @@ import { getSession } from '../services/session.service.js';
 import { createUserContext } from '../lib/user-context.js';
 import { SessionId } from '../models/session.model.js';
 import { validatePathWithinBase } from '../utils/path-validation.js';
+import { getGitRepositoryNameFromFullName } from '../utils/github-repository.js';
 
 function decodePathParam(value: string): string {
   try {
@@ -50,9 +51,11 @@ function getRepositoryFullName(params: { owner: string; repo: string }): string 
 }
 
 function getGitRepositoryName(fullName: string): string | null {
-  const [, repoName] = fullName.split('/');
-  if (!repoName || repoName === '.' || repoName === '..' || repoName.includes('\\')) return null;
-  return repoName;
+  try {
+    return getGitRepositoryNameFromFullName(fullName);
+  } catch {
+    return null;
+  }
 }
 
 function getGitCheckoutCwd(

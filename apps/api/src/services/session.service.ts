@@ -46,6 +46,7 @@ import { sessionEvents, sessions } from '../db/schema.js';
 import { insertSessionEventInTx } from '../db/helpers.js';
 import { ensureDirectory, removeDirectory } from '../utils/directory.js';
 import { validatePathWithinBase } from '../utils/path-validation.js';
+import { getGitRepositoryNameFromFullName } from '../utils/github-repository.js';
 import { fromUUID } from 'typeid-js';
 import { DatabricksApiError, DatabricksAppsClient } from '../lib/databricks-apps-client.js';
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
@@ -65,7 +66,6 @@ import path from 'node:path';
 import { AppNameService, isValidDatabricksAppName } from './app-name.service.js';
 import {
   createGitHubUserGitAuthEnvironment,
-  getValidGitHubUserAccessToken,
   toGitHubRepositoryFullName,
 } from './github-oauth.service.js';
 import {
@@ -541,24 +541,8 @@ function validateSparseCheckoutPath(pathValue: string): void {
   }
 }
 
-function validateGitRepositoryDirectoryName(repoName: string): void {
-  if (
-    !repoName ||
-    repoName === '.' ||
-    repoName === '..' ||
-    repoName.includes('/') ||
-    repoName.includes('\\') ||
-    repoName.includes('\0') ||
-    !/^[a-zA-Z0-9._-]+$/.test(repoName)
-  ) {
-    throw new Error(`Invalid git repository name: ${repoName}`);
-  }
-}
-
 function getGitRepositoryName(url: string): string {
-  const [, repoName] = toGitHubRepositoryFullName(url).split('/');
-  validateGitRepositoryDirectoryName(repoName);
-  return repoName;
+  return getGitRepositoryNameFromFullName(toGitHubRepositoryFullName(url));
 }
 
 function getGitRepositoryCheckoutPath(
@@ -574,7 +558,7 @@ function shouldExportWorkspaceSources(
   workspaceSourceCount: number,
   gitSourceCount: number
 ): boolean {
-  return workspaceSourceCount > 0 && gitSourceCount !== 1;
+  return workspaceSourceCount > 0 && (gitSourceCount === 0 || gitSourceCount > 1);
 }
 
 async function prepareGitRepositoryCheckoutPath(
@@ -780,26 +764,64 @@ async function configureGitCredentialHelper(
 ): Promise<() => void> {
   const registration = await registerGitCredential(fastify, userId, repositoryUrl);
   const helperPath = path.join(cwd, '.git', 'ccbricks-credential-helper.mjs');
-  await writeFile(
-    helperPath,
-    buildGitCredentialHelperScript(getInternalGitCredentialUrl(fastify), registration.bearerToken),
-    'utf-8'
-  );
-  await chmod(helperPath, 0o700);
+  try {
+    await writeFile(
+      helperPath,
+      buildGitCredentialHelperScript(
+        getInternalGitCredentialUrl(fastify),
+        registration.bearerToken
+      ),
+      'utf-8'
+    );
+    await chmod(helperPath, 0o700);
 
-  await spawnAsync('git', ['config', '--local', 'credential.helper', helperPath], {
-    cwd,
-    timeout: GIT_COMMAND_TIMEOUT_MS,
-  });
-  await spawnAsync('git', ['config', '--local', 'credential.useHttpPath', 'true'], {
-    cwd,
-    timeout: GIT_COMMAND_TIMEOUT_MS,
-  });
+    await spawnAsync('git', ['config', '--local', 'credential.helper', helperPath], {
+      cwd,
+      timeout: GIT_COMMAND_TIMEOUT_MS,
+    });
+    await spawnAsync('git', ['config', '--local', 'credential.useHttpPath', 'true'], {
+      cwd,
+      timeout: GIT_COMMAND_TIMEOUT_MS,
+    });
+  } catch (error) {
+    void revokeGitCredential(fastify, registration.bearerToken).catch(revokeError => {
+      fastify.log.warn({ error: revokeError }, 'Failed to revoke git credential registration');
+    });
+    throw error;
+  }
 
   return () => {
     void revokeGitCredential(fastify, registration.bearerToken).catch(error => {
       fastify.log.warn({ error }, 'Failed to revoke git credential registration');
     });
+  };
+}
+
+async function configureGitCredentialHelpers(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionCwd: string,
+  gitSources: GitRepositorySource[]
+): Promise<(() => void) | undefined> {
+  if (gitSources.length === 0) return undefined;
+
+  const cleanups: Array<() => void> = [];
+  try {
+    for (const source of gitSources) {
+      const checkoutCwd = getGitRepositoryCheckoutPath(sessionCwd, source, gitSources.length);
+      cleanups.push(await configureGitCredentialHelper(fastify, userId, checkoutCwd, source.url));
+    }
+  } catch (error) {
+    for (const cleanup of cleanups) {
+      cleanup();
+    }
+    throw error;
+  }
+
+  return () => {
+    for (const cleanup of cleanups) {
+      cleanup();
+    }
   };
 }
 
@@ -1302,7 +1324,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       (o): o is GitRepositoryOutcome => o.type === 'git_repository'
     );
     const gitBranch = gitOutcome?.git_info.branches[0];
-    const gitSource = sessionContext.sources.find(
+    const gitSources = sessionContext.sources.filter(
       (source): source is GitRepositorySource => source.type === 'git_repository'
     );
 
@@ -1341,14 +1363,12 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
     });
     // ヘルパースクリプトを配置（apiKeyHelper / otelHeadersHelper）
     const helperPaths = await writeHelperScripts(userHome);
-    if (gitSource) {
-      cleanupGitCredential = await configureGitCredentialHelper(
-        fastify,
-        userId,
-        sessionContext.cwd,
-        gitSource.url
-      );
-    }
+    cleanupGitCredential = await configureGitCredentialHelpers(
+      fastify,
+      userId,
+      sessionContext.cwd,
+      gitSources
+    );
 
     fastify.log.info(
       {
@@ -1514,7 +1534,8 @@ async function cloneGitRepositorySource(
   source: GitRepositorySource,
   outcome: GitRepositoryOutcome,
   cwd: string,
-  fastify?: FastifyInstance
+  fastify?: FastifyInstance,
+  gitAccessToken?: string
 ): Promise<void> {
   validateGitRepositoryUrl(source.url);
   const sourceBranch = getGitBranchFromRevision(source.revision);
@@ -1526,7 +1547,7 @@ async function cloneGitRepositorySource(
   }
 
   const gitAuth = fastify
-    ? await createGitHubUserGitAuthEnvironment(fastify, userId, source.url)
+    ? await createGitHubUserGitAuthEnvironment(fastify, userId, source.url, gitAccessToken)
     : null;
   try {
     await spawnAsync(
@@ -1672,9 +1693,6 @@ export async function createSession(
   const gitSources = session_context.sources.filter(
     (s): s is GitRepositorySource => s.type === 'git_repository'
   );
-  if (gitSources.length > 0) {
-    await getValidGitHubUserAccessToken(fastify, userId);
-  }
 
   // 5. Apps outcome にアプリ名を割当
   const resolvedOutcomes = await Promise.all(
@@ -1808,19 +1826,25 @@ export async function createSession(
         throw new Error('Git repository source requires a git_repository outcome');
       }
 
-      for (const source of gitSources) {
-        const checkoutPath = await prepareGitRepositoryCheckoutPath(cwd, source, gitSources.length);
-        await cloneGitRepositorySource(userId, source, gitOutcome, checkoutPath, fastify);
-        fastify.log.info(
-          {
-            sessionId: sessionId.toString(),
-            repoUrl: source.url,
-            checkoutPath,
-            branch: gitOutcome.git_info.branches[0],
-          },
-          'Cloned git repository source to session cwd'
-        );
-      }
+      await Promise.all(
+        gitSources.map(async source => {
+          const checkoutPath = await prepareGitRepositoryCheckoutPath(
+            cwd,
+            source,
+            gitSources.length
+          );
+          await cloneGitRepositorySource(userId, source, gitOutcome, checkoutPath, fastify);
+          fastify.log.info(
+            {
+              sessionId: sessionId.toString(),
+              repoUrl: source.url,
+              checkoutPath,
+              branch: gitOutcome.git_info.branches[0],
+            },
+            'Cloned git repository source to session cwd'
+          );
+        })
+      );
     }
 
     // SDK query パイプラインを開始（export 完了後）
@@ -2628,6 +2652,7 @@ export const __testing = {
   buildEffectiveToolSettings,
   buildSessionToolSettings,
   cloneGitRepositorySource,
+  configureGitCredentialHelpers,
   buildDefaultSessionWorkspacePath,
   assertDatabricksAppYamlExists,
   buildSessionContextWithDatabricksAppOutcomes,
