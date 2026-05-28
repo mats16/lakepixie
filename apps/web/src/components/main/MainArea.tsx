@@ -700,8 +700,12 @@ export function MainArea({
     return <SessionNotFound onGoHome={() => navigate('/')} />;
   }
 
+  const showCreateAppButton = Boolean(activeSession && !databricksAppsOutcome);
   const createAppDisabled =
-    isAgentThinking || sessionControlPending || activeSession?.session_status === 'archived';
+    !activeSession ||
+    isAgentThinking ||
+    sessionControlPending ||
+    activeSession.session_status === 'archived';
 
   return (
     <AskUserQuestionProvider value={askUserQuestionCtx}>
@@ -716,7 +720,7 @@ export function MainArea({
           onOpenWorkspace={openWorkspace}
           isOpeningWorkspace={isOpeningWorkspace}
           showAppButton={!!databricksAppsOutcome}
-          showCreateAppButton={!databricksAppsOutcome}
+          showCreateAppButton={showCreateAppButton}
           onCreateApp={handleCreateApp}
           isCreatingApp={isCreatingApp}
           createAppDisabled={createAppDisabled}
