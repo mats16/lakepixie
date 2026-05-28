@@ -37,6 +37,17 @@ import {
   TelemetrySetupValidationError,
 } from '../services/telemetry-setup.service.js';
 
+const GITHUB_OAUTH_CLIENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const GITHUB_OAUTH_CLIENT_SECRET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._=-]{0,511}$/;
+
+function isGitHubOAuthClientId(value: string): boolean {
+  return GITHUB_OAUTH_CLIENT_ID_PATTERN.test(value);
+}
+
+function isGitHubOAuthClientSecret(value: string): boolean {
+  return GITHUB_OAUTH_CLIENT_SECRET_PATTERN.test(value);
+}
+
 function toTelemetryApiError(error: unknown): ApiError {
   if (error instanceof TelemetrySetupValidationError) {
     return {
@@ -345,10 +356,10 @@ const adminRoute: FastifyPluginAsync = async fastify => {
       }
 
       const value = body.client_id?.trim() ?? null;
-      if (value !== null && value !== '' && value.length > 128) {
+      if (value !== null && value !== '' && !isGitHubOAuthClientId(value)) {
         return reply.status(400).send({
           error: 'BadRequest',
-          message: 'client_id must be 128 characters or fewer',
+          message: 'client_id must be a GitHub OAuth client ID',
           statusCode: 400,
         });
       }
@@ -365,10 +376,10 @@ const adminRoute: FastifyPluginAsync = async fastify => {
       }
 
       const value = body.client_secret?.trim() ?? null;
-      if (value !== null && value !== '' && value.length > 512) {
+      if (value !== null && value !== '' && !isGitHubOAuthClientSecret(value)) {
         return reply.status(400).send({
           error: 'BadRequest',
-          message: 'client_secret must be 512 characters or fewer',
+          message: 'client_secret must be a GitHub OAuth client secret',
           statusCode: 400,
         });
       }

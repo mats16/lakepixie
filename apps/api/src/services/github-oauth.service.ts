@@ -462,10 +462,8 @@ export async function deleteGitHubOAuthStateByState(
   fastify: FastifyInstance,
   state: string
 ): Promise<void> {
-  await withEncryptionKeyLock(fastify, async () => {
-    await runAdminDatabaseTransaction(fastify, async tx => {
-      await tx.delete(githubOAuthStates).where(eq(githubOAuthStates.state, state));
-    });
+  await runAdminDatabaseTransaction(fastify, async tx => {
+    await tx.delete(githubOAuthStates).where(eq(githubOAuthStates.state, state));
   });
 }
 
@@ -659,7 +657,7 @@ async function validateNonExpiringAccessTokenWithinLock(
     await githubRequest<GitHubUserResponse>('https://api.github.com/user', token);
     return token;
   } catch (error) {
-    if (refreshTokenSecret(row)) {
+    if (error instanceof GitHubOAuthError && refreshTokenSecret(row)) {
       return refreshAuthorizationWithinLock(fastify, userId, row);
     }
     if (error instanceof GitHubOAuthError) {
@@ -927,7 +925,9 @@ async function listUserInstallations(token: string): Promise<GitHubInstallationR
       url.toString(),
       token
     );
-    installations.push(...(data.installations ?? []).filter(installation => installation.id));
+    installations.push(
+      ...(data.installations ?? []).filter(installation => installation.id !== undefined)
+    );
     if (!hasNextPage(headers)) break;
   }
   return installations;
@@ -1164,63 +1164,73 @@ export async function rotateGitHubOAuthEncryptionKey(
     const newKey = await createNextEncryptionKey(fastify);
     let reencryptedAuthorizations = 0;
 
-    await setActiveEncryptionKeyVersion(fastify, newKey.version);
+    try {
+      await setActiveEncryptionKeyVersion(fastify, newKey.version);
 
-    await runAdminDatabaseTransaction(fastify, async tx => {
-      await tx.delete(githubOAuthStates).where(lt(githubOAuthStates.expiresAt, new Date()));
-      const authorizationRows = (await tx
-        .select()
-        .from(githubUserAuthorizations)) as GithubUserAuthorization[];
-      const stateRows = (await tx.select().from(githubOAuthStates)) as GithubOAuthState[];
+      await runAdminDatabaseTransaction(fastify, async tx => {
+        await tx.delete(githubOAuthStates).where(lt(githubOAuthStates.expiresAt, new Date()));
+        const authorizationRows = (await tx
+          .select()
+          .from(githubUserAuthorizations)) as GithubUserAuthorization[];
+        const stateRows = (await tx.select().from(githubOAuthStates)) as GithubOAuthState[];
 
-      for (const row of authorizationRows) {
-        const accessKey = await getEncryptionKeyByVersionWithinLock(
-          fastify,
-          row.accessTokenKeyVersion
+        for (const row of authorizationRows) {
+          const accessKey = await getEncryptionKeyByVersionWithinLock(
+            fastify,
+            row.accessTokenKeyVersion
+          );
+          const accessToken = decryptWithKey(accessTokenSecret(row), accessKey);
+          const refreshSecret = refreshTokenSecret(row);
+          const refreshToken = refreshSecret
+            ? decryptWithKey(
+                refreshSecret,
+                await getEncryptionKeyByVersionWithinLock(fastify, refreshSecret.keyVersion)
+              )
+            : null;
+          const encryptedAccessToken = encryptWithKey(accessToken, newKey);
+          const encryptedRefreshToken = refreshToken ? encryptWithKey(refreshToken, newKey) : null;
+
+          decryptWithKey(encryptedAccessToken, newKey);
+          if (encryptedRefreshToken) decryptWithKey(encryptedRefreshToken, newKey);
+
+          await tx
+            .update(githubUserAuthorizations)
+            .set({
+              ...encryptedAccessTokenColumns(encryptedAccessToken),
+              ...encryptedRefreshTokenColumns(encryptedRefreshToken),
+            })
+            .where(eq(githubUserAuthorizations.userId, row.userId));
+          reencryptedAuthorizations += 1;
+        }
+
+        for (const row of stateRows) {
+          const stateSecret = getCodeVerifierSecret(row);
+          const codeVerifier = decryptWithKey(
+            stateSecret,
+            await getEncryptionKeyByVersionWithinLock(fastify, stateSecret.keyVersion)
+          );
+          const encryptedCodeVerifier = encryptWithKey(codeVerifier, newKey);
+          decryptWithKey(encryptedCodeVerifier, newKey);
+          await tx
+            .update(githubOAuthStates)
+            .set({
+              codeVerifierCiphertext: encryptedCodeVerifier.ciphertext,
+              codeVerifierIv: encryptedCodeVerifier.iv,
+              codeVerifierAuthTag: encryptedCodeVerifier.authTag,
+              codeVerifierKeyVersion: encryptedCodeVerifier.keyVersion,
+            })
+            .where(eq(githubOAuthStates.state, row.state));
+        }
+      });
+    } catch (error) {
+      await setActiveEncryptionKeyVersion(fastify, oldActiveKey.version).catch(restoreError => {
+        fastify.log.error(
+          { error: restoreError, version: oldActiveKey.version },
+          'Failed to restore active encryption key version after rotation failure'
         );
-        const accessToken = decryptWithKey(accessTokenSecret(row), accessKey);
-        const refreshSecret = refreshTokenSecret(row);
-        const refreshToken = refreshSecret
-          ? decryptWithKey(
-              refreshSecret,
-              await getEncryptionKeyByVersionWithinLock(fastify, refreshSecret.keyVersion)
-            )
-          : null;
-        const encryptedAccessToken = encryptWithKey(accessToken, newKey);
-        const encryptedRefreshToken = refreshToken ? encryptWithKey(refreshToken, newKey) : null;
-
-        decryptWithKey(encryptedAccessToken, newKey);
-        if (encryptedRefreshToken) decryptWithKey(encryptedRefreshToken, newKey);
-
-        await tx
-          .update(githubUserAuthorizations)
-          .set({
-            ...encryptedAccessTokenColumns(encryptedAccessToken),
-            ...encryptedRefreshTokenColumns(encryptedRefreshToken),
-          })
-          .where(eq(githubUserAuthorizations.userId, row.userId));
-        reencryptedAuthorizations += 1;
-      }
-
-      for (const row of stateRows) {
-        const stateSecret = getCodeVerifierSecret(row);
-        const codeVerifier = decryptWithKey(
-          stateSecret,
-          await getEncryptionKeyByVersionWithinLock(fastify, stateSecret.keyVersion)
-        );
-        const encryptedCodeVerifier = encryptWithKey(codeVerifier, newKey);
-        decryptWithKey(encryptedCodeVerifier, newKey);
-        await tx
-          .update(githubOAuthStates)
-          .set({
-            codeVerifierCiphertext: encryptedCodeVerifier.ciphertext,
-            codeVerifierIv: encryptedCodeVerifier.iv,
-            codeVerifierAuthTag: encryptedCodeVerifier.authTag,
-            codeVerifierKeyVersion: encryptedCodeVerifier.keyVersion,
-          })
-          .where(eq(githubOAuthStates.state, row.state));
-      }
-    });
+      });
+      throw error;
+    }
 
     if (oldActiveKey.version !== newKey.version) {
       let oldKeyStillReferenced = true;
