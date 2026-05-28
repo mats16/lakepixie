@@ -541,6 +541,54 @@ function validateSparseCheckoutPath(pathValue: string): void {
   }
 }
 
+function validateGitRepositoryDirectoryName(repoName: string): void {
+  if (
+    !repoName ||
+    repoName === '.' ||
+    repoName === '..' ||
+    repoName.includes('/') ||
+    repoName.includes('\\') ||
+    repoName.includes('\0') ||
+    !/^[a-zA-Z0-9._-]+$/.test(repoName)
+  ) {
+    throw new Error(`Invalid git repository name: ${repoName}`);
+  }
+}
+
+function getGitRepositoryName(url: string): string {
+  const [, repoName] = toGitHubRepositoryFullName(url).split('/');
+  validateGitRepositoryDirectoryName(repoName);
+  return repoName;
+}
+
+function getGitRepositoryCheckoutPath(
+  cwd: string,
+  source: GitRepositorySource,
+  gitSourceCount: number
+): string {
+  if (gitSourceCount <= 1) return cwd;
+  return path.join(cwd, getGitRepositoryName(source.url));
+}
+
+function shouldExportWorkspaceSources(
+  workspaceSourceCount: number,
+  gitSourceCount: number
+): boolean {
+  return workspaceSourceCount > 0 && gitSourceCount !== 1;
+}
+
+async function prepareGitRepositoryCheckoutPath(
+  cwd: string,
+  source: GitRepositorySource,
+  gitSourceCount: number
+): Promise<string> {
+  const checkoutPath = getGitRepositoryCheckoutPath(cwd, source, gitSourceCount);
+  if (gitSourceCount > 1) {
+    await removeDirectory(checkoutPath);
+  }
+  return checkoutPath;
+}
+
 function assertSessionValidation(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new SessionValidationError(message);
@@ -566,6 +614,11 @@ function validateGitSessionContext(sources: SessionSource[], outcomes: SessionOu
     return outcome.type === 'git_repository';
   });
 
+  assertSessionValidation(
+    workspaceSources.length <= 1,
+    'Only one Databricks Workspace source is supported'
+  );
+
   if (gitSources.length === 0) {
     assertSessionValidation(
       gitOutcomes.length === 0,
@@ -574,11 +627,6 @@ function validateGitSessionContext(sources: SessionSource[], outcomes: SessionOu
     return;
   }
 
-  assertSessionValidation(gitSources.length === 1, 'Only one git repository source is supported');
-  assertSessionValidation(
-    workspaceSources.length === 0,
-    'Git repository sources cannot be combined with Databricks Workspace sources'
-  );
   assertSessionValidation(
     gitOutcomes.length === 1,
     'Git repository source requires exactly one git repository outcome'
@@ -588,14 +636,6 @@ function validateGitSessionContext(sources: SessionSource[], outcomes: SessionOu
   const outcome = gitOutcomes[0];
   const gitInfo = outcome.git_info;
 
-  assertSessionValidation(
-    source.allow_unrestricted_git_push === true,
-    'Read-only git repository sessions are not supported yet'
-  );
-  assertSessionValidation(
-    Array.isArray(source.sparse_checkout_paths),
-    'Git repository sparse checkout paths must be an array'
-  );
   assertSessionValidation(
     gitInfo?.type === 'github',
     'Git repository outcome must describe a GitHub repository'
@@ -609,27 +649,61 @@ function validateGitSessionContext(sources: SessionSource[], outcomes: SessionOu
     'Git repository outcome requires exactly one branch'
   );
 
-  runGitSessionValidation(() => validateGitRepositoryUrl(source.url));
-  runGitSessionValidation(() => {
-    getGitBranchFromRevision(source.revision);
-  });
   runGitSessionValidation(() => validateGitBranchName(gitInfo.branches[0]));
-  for (const sparsePath of source.sparse_checkout_paths) {
-    runGitSessionValidation(() => validateSparseCheckoutPath(sparsePath));
+
+  const repoNames = new Set<string>();
+  for (const gitSource of gitSources) {
+    assertSessionValidation(
+      gitSource.allow_unrestricted_git_push === true,
+      'Read-only git repository sessions are not supported yet'
+    );
+    assertSessionValidation(
+      Array.isArray(gitSource.sparse_checkout_paths),
+      'Git repository sparse checkout paths must be an array'
+    );
+    runGitSessionValidation(() => validateGitRepositoryUrl(gitSource.url));
+    runGitSessionValidation(() => {
+      getGitBranchFromRevision(gitSource.revision);
+    });
+    for (const sparsePath of gitSource.sparse_checkout_paths) {
+      runGitSessionValidation(() => validateSparseCheckoutPath(sparsePath));
+    }
+
+    let repoName: string;
+    try {
+      repoName = getGitRepositoryName(gitSource.url);
+    } catch (error) {
+      throw new SessionValidationError(
+        error instanceof Error ? error.message : 'Invalid GitHub repository URL'
+      );
+    }
+
+    assertSessionValidation(
+      !repoNames.has(repoName),
+      `Duplicate git repository checkout directory: ${repoName}`
+    );
+    repoNames.add(repoName);
   }
 
-  let sourceRepo: string;
-  try {
-    sourceRepo = toGitHubRepositoryFullName(source.url);
-  } catch (error) {
-    throw new SessionValidationError(
-      error instanceof Error ? error.message : 'Invalid GitHub repository URL'
+  if (gitSources.length > 1) {
+    assertSessionValidation(
+      gitInfo.repo === undefined,
+      'Git repository outcome must not specify a repository when multiple git repository sources are used'
+    );
+  } else if (gitInfo.repo !== undefined) {
+    let sourceRepo: string;
+    try {
+      sourceRepo = toGitHubRepositoryFullName(source.url);
+    } catch (error) {
+      throw new SessionValidationError(
+        error instanceof Error ? error.message : 'Invalid GitHub repository URL'
+      );
+    }
+    assertSessionValidation(
+      gitInfo.repo === sourceRepo,
+      'Git repository source URL must match the git repository outcome'
     );
   }
-  assertSessionValidation(
-    gitInfo.repo === sourceRepo,
-    'Git repository source URL must match the git repository outcome'
-  );
 }
 
 function uniqueTools(tools: readonly string[]): string[] {
@@ -1187,7 +1261,10 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       buildPromptMessage(sessionId, rawPrompt, initialUserEvent)
     );
 
-    const systemPromptConfig = buildSystemPromptConfig(sessionContext.outcomes);
+    const systemPromptConfig = buildSystemPromptConfig(
+      sessionContext.outcomes,
+      sessionContext.sources
+    );
     const abortController = new AbortController();
     // MCP サーバーを構築（フロントエンドの mcp_config から、OBO トークンを注入）
     const mcpServers: Record<string, McpServerConfig> = {};
@@ -1328,7 +1405,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
           SESSION_ID: sessionId.toString(),
           ...(workspacePath ? { SESSION_WORKSPACE_PATH: workspacePath } : {}),
           ...(appsOutcomeName ? { SESSION_APP_NAME: appsOutcomeName } : {}),
-          ...(gitOutcome ? { SESSION_GIT_REPO: gitOutcome.git_info.repo } : {}),
+          ...(gitOutcome?.git_info.repo ? { SESSION_GIT_REPO: gitOutcome.git_info.repo } : {}),
           ...(gitBranch ? { SESSION_GIT_BRANCH: gitBranch } : {}),
           ANTHROPIC_BASE_URL: fastify.config.ANTHROPIC_BASE_URL,
           ANTHROPIC_DEFAULT_OPUS_MODEL: modelSettings.opusModel,
@@ -1678,7 +1755,7 @@ export async function createSession(
         ? userContent
         : '';
 
-  // 10. バックグラウンドで workspace export → query pipeline を実行
+  // 10. バックグラウンドで workspace export / git clone → query pipeline を実行
   let setupStage = 'session_setup';
   let queryPipelineStarted = false;
   (async () => {
@@ -1694,7 +1771,7 @@ export async function createSession(
 
     // Workspace ソースからファイルをインポート（OBO トークンで REST API 直接呼び出し）
     setupStage = 'workspace_export';
-    if (workspaceSources.length > 0) {
+    if (shouldExportWorkspaceSources(workspaceSources.length, gitSources.length)) {
       const oboToken = ctx.oboAccessToken;
       if (oboToken) {
         const wsClient = new DatabricksWorkspaceClient(fastify.config.DATABRICKS_HOST, oboToken);
@@ -1732,11 +1809,13 @@ export async function createSession(
       }
 
       for (const source of gitSources) {
-        await cloneGitRepositorySource(userId, source, gitOutcome, cwd, fastify);
+        const checkoutPath = await prepareGitRepositoryCheckoutPath(cwd, source, gitSources.length);
+        await cloneGitRepositorySource(userId, source, gitOutcome, checkoutPath, fastify);
         fastify.log.info(
           {
             sessionId: sessionId.toString(),
             repoUrl: source.url,
+            checkoutPath,
             branch: gitOutcome.git_info.branches[0],
           },
           'Cloned git repository source to session cwd'
@@ -2553,6 +2632,9 @@ export const __testing = {
   assertDatabricksAppYamlExists,
   buildSessionContextWithDatabricksAppOutcomes,
   extractEventUuid,
+  getGitRepositoryCheckoutPath,
+  prepareGitRepositoryCheckoutPath,
+  shouldExportWorkspaceSources,
   getGitBranchFromRevision,
   validateGitBranchName,
   validateGitSessionContext,

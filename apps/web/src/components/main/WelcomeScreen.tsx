@@ -291,6 +291,12 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
   );
 
   const hasGitRepositorySource = sourceSelections.some(source => source.type === 'git_repository');
+  const hasDatabricksWorkspaceSource = sourceSelections.some(
+    source => source.type === 'databricks_workspace'
+  );
+  const canAddDatabricksWorkspaceSource = !hasDatabricksWorkspaceSource;
+  const canAddGitRepositorySource = isGitHubIntegrationConfigured;
+  const canAddSource = canAddDatabricksWorkspaceSource || canAddGitRepositorySource;
 
   useEffect(() => {
     if (hasGitRepositorySource && canUseGitRepositorySource) {
@@ -326,8 +332,11 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
   }
 
   const loadGitRepositoryBranches = useCallback(
-    (repository: GitRepositoryCandidate) => {
+    (repository: GitRepositoryCandidate, force = false) => {
       const repositoryName = repository.full_name;
+      if (gitRepositoryBranchLoadErrors[repositoryName] === true && !force) {
+        return Promise.resolve();
+      }
       if (
         gitRepositoryBranches[repositoryName] &&
         gitRepositoryBranchLoadErrors[repositoryName] !== true
@@ -412,6 +421,8 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
   };
 
   const handleAddSourceSelection = (nextSourceType: NewSessionSourceType) => {
+    if (nextSourceType === 'databricks_workspace' && !canAddDatabricksWorkspaceSource) return;
+    if (nextSourceType === 'git_repository' && !canAddGitRepositorySource) return;
     if (nextSourceType === 'git_repository' && !canUseGitRepositorySource) {
       const redirectAfter = `${window.location.pathname}${window.location.search}${window.location.hash}`;
       window.open(
@@ -467,7 +478,7 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
     if (!repositoryName || gitRepositoryBranchLoadErrors[repositoryName] !== true) return;
     const repository = gitRepositoryByName.get(repositoryName);
     if (repository) {
-      void loadGitRepositoryBranches(repository);
+      void loadGitRepositoryBranches(repository, true);
     }
   };
 
@@ -579,35 +590,41 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
     },
   ];
 
-  const renderAddSourceMenu = (className: string, label?: string) => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size={label ? 'default' : 'icon'}
-          className={className}
-          disabled={isSubmitting}
-          aria-label={label ?? t('common.add')}
-        >
-          <Plus className="h-3.5 w-3.5 shrink-0" />
-          {label && <span className="truncate">{label}</span>}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
-        <DropdownMenuItem onClick={() => handleAddSourceSelection('databricks_workspace')}>
-          <Folder className="h-4 w-4" />
-          {t('welcome.sourceType.databricksWorkspace')}
-        </DropdownMenuItem>
-        {isGitHubIntegrationConfigured && (
-          <DropdownMenuItem onClick={() => handleAddSourceSelection('git_repository')}>
-            <GitPullRequest className="h-4 w-4" />
-            {t('welcome.sourceType.gitRepository')}
-          </DropdownMenuItem>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+  const renderAddSourceMenu = (className: string, label?: string) => {
+    if (!canAddSource) return null;
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size={label ? 'default' : 'icon'}
+            className={className}
+            disabled={isSubmitting}
+            aria-label={label ?? t('common.add')}
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            {label && <span className="truncate">{label}</span>}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {canAddDatabricksWorkspaceSource && (
+            <DropdownMenuItem onClick={() => handleAddSourceSelection('databricks_workspace')}>
+              <Folder className="h-4 w-4" />
+              {t('welcome.sourceType.databricksWorkspace')}
+            </DropdownMenuItem>
+          )}
+          {canAddGitRepositorySource && (
+            <DropdownMenuItem onClick={() => handleAddSourceSelection('git_repository')}>
+              <GitPullRequest className="h-4 w-4" />
+              {t('welcome.sourceType.gitRepository')}
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8">

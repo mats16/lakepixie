@@ -62,6 +62,7 @@ import {
   __testing as askUserQuestionTesting,
   resolveUserAnswer,
 } from './ask-user-question.service.js';
+import { removeDirectory } from '../utils/directory.js';
 
 describe('session.service', () => {
   // Mock FastifyInstance
@@ -442,6 +443,58 @@ describe('session.service', () => {
       );
     });
 
+    it('should clone multiple git sources into repository-named directories', async () => {
+      const widgetSource = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets',
+      };
+      const apiSource = {
+        ...widgetSource,
+        url: 'https://github.com/acme/api',
+      };
+
+      await __testing.cloneGitRepositorySource(
+        'test-user-id',
+        widgetSource,
+        {
+          type: 'git_repository',
+          git_info: {
+            type: 'github',
+            branches: ['ccbricks/test-branch'],
+          },
+        },
+        __testing.getGitRepositoryCheckoutPath('/tmp/session-cwd', widgetSource, 2)
+      );
+      await __testing.cloneGitRepositorySource(
+        'test-user-id',
+        apiSource,
+        {
+          type: 'git_repository',
+          git_info: {
+            type: 'github',
+            branches: ['ccbricks/test-branch'],
+          },
+        },
+        __testing.getGitRepositoryCheckoutPath('/tmp/session-cwd', apiSource, 2)
+      );
+
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        1,
+        'git',
+        expect.arrayContaining(['https://github.com/acme/widgets', '/tmp/session-cwd/widgets']),
+        expect.objectContaining({ shell: false })
+      );
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        4,
+        'git',
+        expect.arrayContaining(['https://github.com/acme/api', '/tmp/session-cwd/api']),
+        expect.objectContaining({ shell: false })
+      );
+    });
+
     it('should reject unsupported git repository URLs', () => {
       expect(() => __testing.validateGitRepositoryUrl('git@github.com:user/repo.git')).toThrow(
         'Invalid git repository URL'
@@ -470,14 +523,45 @@ describe('session.service', () => {
 
       expect(() => __testing.validateGitSessionContext([source], [outcome])).not.toThrow();
       expect(() => __testing.validateGitSessionContext([source, source], [outcome])).toThrow(
-        'Only one git repository source is supported'
+        'Duplicate git repository checkout directory'
       );
+      expect(() =>
+        __testing.validateGitSessionContext(
+          [source, { ...source, url: 'https://github.com/acme/api.git' }],
+          [{ ...outcome, git_info: { type: 'github', branches: ['ccbricks/test-branch'] } }]
+        )
+      ).not.toThrow();
+      expect(() =>
+        __testing.validateGitSessionContext(
+          [source, { ...source, url: 'https://github.com/acme/api.git' }],
+          [outcome]
+        )
+      ).toThrow('must not specify a repository');
       expect(() =>
         __testing.validateGitSessionContext(
           [source, { type: 'databricks_workspace', path: '/Workspace/test' }],
           [outcome]
         )
-      ).toThrow('cannot be combined');
+      ).not.toThrow();
+      expect(() =>
+        __testing.validateGitSessionContext(
+          [
+            source,
+            { ...source, url: 'https://github.com/acme/api.git' },
+            { type: 'databricks_workspace', path: '/Workspace/test' },
+          ],
+          [{ ...outcome, git_info: { type: 'github', branches: ['ccbricks/test-branch'] } }]
+        )
+      ).not.toThrow();
+      expect(() =>
+        __testing.validateGitSessionContext(
+          [
+            { type: 'databricks_workspace', path: '/Workspace/one' },
+            { type: 'databricks_workspace', path: '/Workspace/two' },
+          ],
+          []
+        )
+      ).toThrow('Only one Databricks Workspace source is supported');
       expect(() => __testing.validateGitSessionContext([source], [])).toThrow(
         'requires exactly one git repository outcome'
       );
@@ -496,6 +580,33 @@ describe('session.service', () => {
           [{ ...outcome, git_info: { ...outcome.git_info, repo: 'acme/other' } }]
         )
       ).toThrow('must match');
+    });
+
+    it('should export workspace sources except when exactly one git source is present', () => {
+      expect(__testing.shouldExportWorkspaceSources(0, 0)).toBe(false);
+      expect(__testing.shouldExportWorkspaceSources(1, 0)).toBe(true);
+      expect(__testing.shouldExportWorkspaceSources(1, 1)).toBe(false);
+      expect(__testing.shouldExportWorkspaceSources(1, 2)).toBe(true);
+    });
+
+    it('should remove repository checkout directories before multi-repository clone', async () => {
+      const source = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets.git',
+      };
+
+      await expect(
+        __testing.prepareGitRepositoryCheckoutPath('/tmp/session-cwd', source, 1)
+      ).resolves.toBe('/tmp/session-cwd');
+      expect(removeDirectory).not.toHaveBeenCalled();
+
+      await expect(
+        __testing.prepareGitRepositoryCheckoutPath('/tmp/session-cwd', source, 2)
+      ).resolves.toBe('/tmp/session-cwd/widgets');
+      expect(removeDirectory).toHaveBeenCalledWith('/tmp/session-cwd/widgets');
     });
   });
 

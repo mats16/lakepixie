@@ -39,7 +39,8 @@ export interface GitRepositoryOutcome {
   type: 'git_repository';
   git_info: {
     type: 'github';
-    repo: string;
+    /** Deprecated for multi-repository sessions. Prefer repository sources. */
+    repo?: string;
     branches: string[];
   };
 }

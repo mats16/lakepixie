@@ -131,6 +131,40 @@ describe('buildSystemPromptConfig', () => {
     expect(result.append).toContain('git push -u origin <branch-name>');
     expect(result.append).toContain('Do NOT create a pull request');
   });
+
+  it('should describe repository checkout directories for multi-repository git sessions', () => {
+    const outcomes: ResolvedSessionOutcome[] = [
+      {
+        type: 'git_repository',
+        git_info: {
+          type: 'github',
+          branches: ['ccbricks/multi-repo'],
+        },
+      },
+    ];
+
+    const result = buildSystemPromptConfig(outcomes, [
+      {
+        type: 'git_repository',
+        url: 'https://github.com/acme/widgets',
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        allow_unrestricted_git_push: true,
+      },
+      {
+        type: 'git_repository',
+        url: 'https://github.com/acme/api',
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        allow_unrestricted_git_push: true,
+      },
+    ]);
+
+    expect(result.append).toContain(
+      'widgets/ (acme/widgets): Develop on branch `ccbricks/multi-repo`'
+    );
+    expect(result.append).toContain('`api/`: acme/api');
+  });
 });
 
 describe('createDatabricksAppsInstruction', () => {

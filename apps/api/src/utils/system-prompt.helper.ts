@@ -1,8 +1,10 @@
 import type {
   DatabricksWorkspaceSource,
   GitRepositoryOutcome,
+  GitRepositorySource,
   ResolvedDatabricksAppsOutcome,
   ResolvedSessionOutcome,
+  SessionSource,
 } from '@repo/types';
 
 /** systemPrompt の設定型 */
@@ -25,7 +27,8 @@ export interface SystemPromptConfig {
  * ```
  */
 export function buildSystemPromptConfig(
-  outcomes: ResolvedSessionOutcome[] = []
+  outcomes: ResolvedSessionOutcome[] = [],
+  sources: SessionSource[] = []
 ): SystemPromptConfig {
   const workspaceOutcome = outcomes.find(
     (o): o is DatabricksWorkspaceSource => o.type === 'databricks_workspace'
@@ -44,7 +47,7 @@ export function buildSystemPromptConfig(
     instructions.push(createDatabricksAppsInstruction(appsOutcome.name));
   }
   if (gitOutcome?.git_info.branches.length) {
-    instructions.push(createGitRepositoryInstruction(gitOutcome));
+    instructions.push(createGitRepositoryInstruction(gitOutcome, sources));
   }
 
   if (instructions.length > 0) {
@@ -129,20 +132,93 @@ The app name is also available via the \`SESSION_APP_NAME\` environment variable
 `.trim();
 }
 
+function parseGitHubRepositoryFullName(value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== 'https:' || url.hostname !== 'github.com') return null;
+
+  const [owner, rawRepo] = url.pathname.replace(/^\/+/, '').split('/');
+  const repo = rawRepo?.replace(/\.git$/, '');
+  if (!owner || !repo) return null;
+  return `${owner}/${repo}`;
+}
+
+interface SourceRepositoryInfo {
+  fullName: string;
+  repoName: string;
+}
+
+function getGitSourceRepositories(sources: SessionSource[]): SourceRepositoryInfo[] {
+  return sources
+    .filter((source): source is GitRepositorySource => source.type === 'git_repository')
+    .map(source => {
+      const fullName = parseGitHubRepositoryFullName(source.url);
+      if (!fullName) return null;
+      const repoName = fullName.split('/')[1];
+      return repoName ? { fullName, repoName } : null;
+    })
+    .filter((source): source is SourceRepositoryInfo => source !== null);
+}
+
+function formatGitBranchLines(
+  outcome: GitRepositoryOutcome,
+  sourceRepositories: SourceRepositoryInfo[]
+): string {
+  const branches = outcome.git_info.branches;
+  const branch = branches[0];
+
+  if (sourceRepositories.length > 0 && branch) {
+    return sourceRepositories
+      .map(repository => {
+        if (sourceRepositories.length > 1) {
+          return `${repository.repoName}/ (${repository.fullName}): Develop on branch \`${branch}\``;
+        }
+        return `${repository.fullName}: Develop on branch \`${branch}\``;
+      })
+      .join('\n');
+  }
+
+  return branches
+    .map(branchName => {
+      if (outcome.git_info.repo) {
+        return `${outcome.git_info.repo}: Develop on branch \`${branchName}\``;
+      }
+      return `Develop on branch \`${branchName}\``;
+    })
+    .join('\n');
+}
+
+function formatGitCheckoutLines(sourceRepositories: SourceRepositoryInfo[]): string {
+  if (sourceRepositories.length <= 1) return '';
+
+  const directoryLines = sourceRepositories
+    .map(repository => `- \`${repository.repoName}/\`: ${repository.fullName}`)
+    .join('\n');
+  return `\n\nRepository checkout directories:\n${directoryLines}`;
+}
+
 /**
  * Git repository での開発ブランチ要件を systemPrompt に追加する。
  */
-export function createGitRepositoryInstruction(outcome: GitRepositoryOutcome): string {
-  const repo = outcome.git_info.repo;
-  const branches = outcome.git_info.branches;
-  const branchLines = branches.map(branch => `${repo}: Develop on branch \`${branch}\``).join('\n');
+export function createGitRepositoryInstruction(
+  outcome: GitRepositoryOutcome,
+  sources: SessionSource[] = []
+): string {
+  const sourceRepositories = getGitSourceRepositories(sources);
+  const branchLines = formatGitBranchLines(outcome, sourceRepositories);
+  const checkoutLines = formatGitCheckoutLines(sourceRepositories);
 
   return `
 ## Git Development Branch Requirements
 
 You are working on the following feature branches:
 
-${branchLines}
+${branchLines}${checkoutLines}
 
 ### Important Instructions:
 

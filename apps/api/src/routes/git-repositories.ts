@@ -9,6 +9,8 @@ import type {
   GitRepositoryPullRequestCreateRequest,
   GitRepositoryPullRequestListResponse,
   GitRepositoryPullRequestStateFilter,
+  GitRepositorySource,
+  SessionSource,
 } from '@repo/types';
 import {
   createGitHubUserPullRequest,
@@ -22,6 +24,7 @@ import {
   listGitHubUserRepositories,
   listGitHubUserRepositoryBranches,
   normalizePullRequestCreateHead,
+  toGitHubRepositoryFullName,
 } from '../services/github-oauth.service.js';
 import { getLocalGitPullRequestContext } from '../services/local-git.service.js';
 import {
@@ -44,6 +47,34 @@ function decodePathParam(value: string): string {
 
 function getRepositoryFullName(params: { owner: string; repo: string }): string {
   return `${decodePathParam(params.owner)}/${decodePathParam(params.repo)}`;
+}
+
+function getGitRepositoryName(fullName: string): string | null {
+  const [, repoName] = fullName.split('/');
+  if (!repoName || repoName === '.' || repoName === '..' || repoName.includes('\\')) return null;
+  return repoName;
+}
+
+function getGitCheckoutCwd(
+  sessionCwd: string,
+  sources: SessionSource[],
+  repository: string
+): string | null {
+  const gitSources = sources.filter(
+    (source): source is GitRepositorySource => source.type === 'git_repository'
+  );
+  const matchingSource = gitSources.find(source => {
+    try {
+      return toGitHubRepositoryFullName(source.url) === repository;
+    } catch {
+      return false;
+    }
+  });
+  if (!matchingSource) return null;
+  if (gitSources.length === 1) return sessionCwd;
+
+  const repoName = getGitRepositoryName(repository);
+  return repoName ? path.join(sessionCwd, repoName) : null;
 }
 
 function setRepositoryCacheHeaders(reply: FastifyReply, maxAgeSeconds: number): void {
@@ -329,13 +360,22 @@ const gitRepositoriesRoute: FastifyPluginAsync = async fastify => {
 
           const sessionsBaseDir = path.join(fastify.config.CCBRICKS_BASE_DIR, 'sessions');
           const cwd = await validatePathWithinBase(sessionContext.cwd, sessionsBaseDir);
+          const gitCheckoutCwd = getGitCheckoutCwd(cwd, sessionContext.sources, repository);
+          if (!gitCheckoutCwd) {
+            return reply.status(400).send({
+              error: 'BadRequest',
+              message: 'session_id does not contain the requested repository',
+              statusCode: 400,
+            });
+          }
+          const localRepositoryCwd = await validatePathWithinBase(gitCheckoutCwd, cwd);
           const localHead = normalizePullRequestCreateHead(
             decodePathParam(request.params.owner),
             trimmedHead
           );
           const [gitContext, templates, modelSettings] = await Promise.all([
-            getLocalGitPullRequestContext(cwd, trimmedBase, localHead),
-            readPullRequestTemplates(cwd),
+            getLocalGitPullRequestContext(localRepositoryCwd, trimmedBase, localHead),
+            readPullRequestTemplates(localRepositoryCwd),
             getModelSettings(fastify),
           ]);
           const ctx = createUserContext(fastify, request);

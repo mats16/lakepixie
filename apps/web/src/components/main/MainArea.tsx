@@ -21,7 +21,11 @@ import {
 import { MainHeader } from './MainHeader';
 import { MessageArea } from './MessageArea';
 import { InputArea } from './InputArea';
-import { WelcomeScreen, type NewSessionParams } from './WelcomeScreen';
+import {
+  WelcomeScreen,
+  type NewSessionParams,
+  type NewSessionSourceSelection,
+} from './WelcomeScreen';
 import { SessionNotFound } from './SessionNotFound';
 import { GitRepositoryStatusBar } from './GitRepositoryStatusBar';
 import { ExitPlanModeInputArea, type ExitPlanModeInputDecision } from './ExitPlanModeInputArea';
@@ -60,6 +64,21 @@ function parseRepositoryFullName(fullName: string): { owner: string; repo: strin
   return { owner, repo };
 }
 
+function parseRepositoryUrl(urlValue: string): { owner: string; repo: string } | null {
+  let url: URL;
+  try {
+    url = new URL(urlValue);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== 'https:' || url.hostname !== 'github.com') return null;
+  const [owner, rawRepo] = url.pathname.replace(/^\/+/, '').split('/');
+  const repo = rawRepo?.replace(/\.git$/, '');
+  if (!owner || !repo) return null;
+  return { owner, repo };
+}
+
 interface MainAreaProps {
   branchName?: string;
   onSendMessage?: (content: UserMessageContentBlock[]) => void;
@@ -68,6 +87,8 @@ interface MainAreaProps {
 }
 
 const GIT_DIFF_REFRESH_DEBOUNCE_MS = 750;
+
+type GitNewSessionSourceSelection = Extract<NewSessionSourceSelection, { type: 'git_repository' }>;
 
 function getResolvedSessionModelId(
   modelId: string,
@@ -360,14 +381,19 @@ export function MainArea({
     }, [activeSession?.session_context?.outcomes]);
 
   const gitRepositoryStatus = useMemo(() => {
-    const gitSource = activeSession?.session_context?.sources.find(
-      (source): source is GitRepositorySource => source.type === 'git_repository'
-    );
-    const repoInfo = gitRepositoryOutcome
+    const gitSources =
+      activeSession?.session_context?.sources.filter(
+        (source): source is GitRepositorySource => source.type === 'git_repository'
+      ) ?? [];
+    if (gitSources.length !== 1) return null;
+
+    const gitSource = gitSources[0];
+    const repoInfoFromOutcome = gitRepositoryOutcome?.git_info.repo
       ? parseRepositoryFullName(gitRepositoryOutcome.git_info.repo)
       : null;
+    const repoInfo = repoInfoFromOutcome ?? parseRepositoryUrl(gitSource.url);
     const headBranch = gitRepositoryOutcome?.git_info.branches[0];
-    const baseBranch = gitSource ? parseGitBranchRevision(gitSource.revision) : null;
+    const baseBranch = parseGitBranchRevision(gitSource.revision);
     if (!repoInfo || !headBranch || !baseBranch) return null;
     return {
       ...repoInfo,
@@ -551,6 +577,13 @@ export function MainArea({
       const branchName = titleResult?.branch_name ?? createFallbackBranchName(textContent);
       const sources: SessionSource[] = [];
       const outcomes: SessionOutcome[] = [];
+      const gitSourceSelections = sourceSelections.filter(
+        (sourceSelection): sourceSelection is GitNewSessionSourceSelection =>
+          sourceSelection.type === 'git_repository'
+      );
+      const workspaceSourceSelection = sourceSelections.find(
+        sourceSelection => sourceSelection.type === 'databricks_workspace'
+      );
 
       for (const sourceSelection of sourceSelections) {
         if (sourceSelection.type === 'git_repository') {
@@ -569,20 +602,23 @@ export function MainArea({
         }
       }
 
-      const primarySource = sourceSelections[0];
-      if (primarySource?.type === 'git_repository') {
+      if (workspaceSourceSelection?.type === 'databricks_workspace') {
+        outcomes.push({
+          type: 'databricks_workspace',
+          path: workspaceSourceSelection.workspaceSelection.path,
+        });
+      }
+
+      if (gitSourceSelections.length > 0) {
         outcomes.push({
           git_info: {
             branches: [branchName],
-            repo: primarySource.gitRepository.full_name,
             type: 'github',
+            ...(gitSourceSelections.length === 1
+              ? { repo: gitSourceSelections[0].gitRepository.full_name }
+              : {}),
           },
           type: 'git_repository',
-        });
-      } else if (primarySource?.type === 'databricks_workspace') {
-        outcomes.push({
-          type: 'databricks_workspace',
-          path: primarySource.workspaceSelection.path,
         });
       }
 
