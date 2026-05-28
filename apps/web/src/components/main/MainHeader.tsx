@@ -1,5 +1,14 @@
 import { useState } from 'react';
-import { GitBranch, ChevronDown, Pencil, Archive, Download } from 'lucide-react';
+import {
+  GitBranch,
+  ChevronDown,
+  Pencil,
+  Archive,
+  Download,
+  Folder,
+  Loader2,
+  Rocket,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,6 +29,7 @@ import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { downloadSessionSettings } from '@/lib/download-settings';
+import { SessionAppButton } from './SessionAppButton';
 
 interface MainHeaderProps {
   title?: string;
@@ -27,6 +37,14 @@ interface MainHeaderProps {
   sessionId?: string;
   onTitleUpdate?: (newTitle: string) => Promise<void>;
   onArchive?: () => Promise<void>;
+  workspacePath?: string;
+  onOpenWorkspace?: () => void;
+  isOpeningWorkspace?: boolean;
+  showAppButton?: boolean;
+  showCreateAppButton?: boolean;
+  onCreateApp?: () => void;
+  isCreatingApp?: boolean;
+  createAppDisabled?: boolean;
 }
 
 export function MainHeader({
@@ -35,6 +53,14 @@ export function MainHeader({
   sessionId,
   onTitleUpdate,
   onArchive,
+  workspacePath,
+  onOpenWorkspace,
+  isOpeningWorkspace = false,
+  showAppButton = false,
+  showCreateAppButton = false,
+  onCreateApp,
+  isCreatingApp = false,
+  createAppDisabled = false,
 }: MainHeaderProps) {
   const { t } = useTranslation();
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
@@ -72,6 +98,45 @@ export function MainHeader({
       toast.error(t('main.downloadSettingsError'));
     }
   };
+
+  const createAppButton = showCreateAppButton ? (
+    <Button
+      type="button"
+      size="sm"
+      className="h-8 shrink-0 gap-1.5"
+      onClick={onCreateApp}
+      disabled={isCreatingApp || createAppDisabled || !onCreateApp}
+      aria-label={t(isCreatingApp ? 'databricksApp.creating' : 'databricksApp.create')}
+    >
+      {isCreatingApp ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Rocket className="h-3.5 w-3.5" />
+      )}
+      <span className="hidden sm:inline">
+        {t(isCreatingApp ? 'databricksApp.creating' : 'databricksApp.createShort')}
+      </span>
+    </Button>
+  ) : null;
+  const openWorkspaceButton = workspacePath ? (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="h-8 shrink-0 gap-1.5"
+      onClick={onOpenWorkspace}
+      disabled={isOpeningWorkspace || !onOpenWorkspace}
+      aria-label={t('databricksApp.openWorkspace')}
+      title={workspacePath}
+    >
+      {isOpeningWorkspace ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Folder className="h-3.5 w-3.5" />
+      )}
+      <span className="hidden sm:inline">{t('databricksApp.workspace')}</span>
+    </Button>
+  ) : null;
 
   return (
     <>
@@ -118,6 +183,17 @@ export function MainHeader({
               </Tooltip>
             </TooltipProvider>
           )}
+          {openWorkspaceButton ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>{openWorkspaceButton}</TooltipTrigger>
+                <TooltipContent className="max-w-[420px]">
+                  <p className="break-all">{workspacePath}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
+          {showAppButton ? <SessionAppButton sessionId={sessionId} /> : createAppButton}
         </div>
       </div>
 

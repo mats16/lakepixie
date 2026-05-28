@@ -23,12 +23,12 @@ import { MessageArea } from './MessageArea';
 import { InputArea } from './InputArea';
 import { WelcomeScreen, type NewSessionParams } from './WelcomeScreen';
 import { SessionNotFound } from './SessionNotFound';
-import { FloatingButtons } from './FloatingButtons';
 import { GitRepositoryStatusBar } from './GitRepositoryStatusBar';
 import { ExitPlanModeInputArea, type ExitPlanModeInputDecision } from './ExitPlanModeInputArea';
 import type { ExitPlanModeOptimisticResult } from './tool-use/types';
 import { useSessionEvents } from '@/hooks/useSessionEvents';
 import { useSession } from '@/hooks/useSession';
+import { useOpenWorkspace } from '@/hooks/useOpenWorkspace';
 import { AskUserQuestionProvider } from '@/contexts/AskUserQuestionContext';
 import { sessionService } from '@/services/session.service';
 import { extractTextFromContent } from '@/lib/content-builder';
@@ -101,23 +101,13 @@ function getExitPlanOptimisticResult(
   }
 }
 
-function getFloatingButtonsBottomClassName(
-  hasActiveExitPlan: boolean,
-  hasGitRepositoryStatus: boolean
-): string | undefined {
-  if (hasActiveExitPlan && hasGitRepositoryStatus) return 'pb-[16rem]';
-  if (hasActiveExitPlan) return 'pb-[12.5rem]';
-  if (hasGitRepositoryStatus) return 'pb-[10.75rem]';
-  return undefined;
-}
-
 function buildAppCreateContext(params: {
   sessionTitle?: string | null;
-  workspacePath: string;
+  workspacePath?: string | null;
 }): string {
   return [
     params.sessionTitle ? `Session title: ${params.sessionTitle}` : null,
-    `Workspace path: ${params.workspacePath}`,
+    params.workspacePath ? `Workspace path: ${params.workspacePath}` : null,
   ]
     .filter((line): line is string => Boolean(line))
     .join('\n');
@@ -142,8 +132,6 @@ export function MainArea({
   const [optimisticPlanMode, setOptimisticPlanMode] = useState<boolean | null>(null);
   const [optimisticEffortLevel, setOptimisticEffortLevel] = useState<WsEffortLevel | null>(null);
   const [isCreatingApp, setIsCreatingApp] = useState(false);
-  const [hasAppYaml, setHasAppYaml] = useState<boolean | null>(null);
-  const [isCheckingAppYaml, setIsCheckingAppYaml] = useState(false);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gitRepositoryStatusRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -388,14 +376,9 @@ export function MainArea({
     };
   }, [gitRepositoryOutcome, activeSession?.session_context?.sources]);
 
-  // フローティングボタンを表示するかどうか
-  const hasFloatingButtons = !!databricksAppsOutcome || !!databricksWorkspaceOutcome;
-  const hasFloatingControls = hasFloatingButtons || !!gitRepositoryStatus;
-  const floatingButtonsBottomClassName = getFloatingButtonsBottomClassName(
-    !!activeExitPlan,
-    !!gitRepositoryStatus
-  );
+  const hasFloatingControls = !!gitRepositoryStatus;
   const gitStatusBottomClassName = activeExitPlan ? 'pb-[12.5rem]' : undefined;
+  const { openWorkspace, isOpeningWorkspace } = useOpenWorkspace(databricksWorkspaceOutcome?.path);
 
   const handleSend = (content: UserMessageContentBlock[]) => {
     onSendMessage?.(content);
@@ -505,36 +488,9 @@ export function MainArea({
     [isPlanMode, modeBeforePlan, refetchSession, sessionId, setPermissionMode, t]
   );
 
-  useEffect(() => {
-    const workspacePath = databricksWorkspaceOutcome?.path;
-    if (!sessionId || !workspacePath || databricksAppsOutcome) {
-      setHasAppYaml(null);
-      setIsCheckingAppYaml(false);
-      return;
-    }
-
-    let cancelled = false;
-    setIsCheckingAppYaml(true);
-    sessionService
-      .getAppCreatePrerequisites(sessionId)
-      .then(result => {
-        if (!cancelled) setHasAppYaml(result.has_app_yaml);
-      })
-      .catch(() => {
-        if (!cancelled) setHasAppYaml(null);
-      })
-      .finally(() => {
-        if (!cancelled) setIsCheckingAppYaml(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [databricksAppsOutcome, databricksWorkspaceOutcome?.path, sessionId]);
-
   const handleCreateApp = useCallback(async () => {
     const workspacePath = databricksWorkspaceOutcome?.path;
-    if (!sessionId || !workspacePath || isCreatingApp || hasAppYaml === false) return;
+    if (!sessionId || isCreatingApp) return;
 
     setIsCreatingApp(true);
     try {
@@ -559,7 +515,6 @@ export function MainArea({
   }, [
     activeSession?.title,
     databricksWorkspaceOutcome?.path,
-    hasAppYaml,
     isCreatingApp,
     refetchSession,
     sessionId,
@@ -712,13 +667,7 @@ export function MainArea({
   }
 
   const createAppDisabled =
-    isCheckingAppYaml ||
-    hasAppYaml === false ||
-    isAgentThinking ||
-    sessionControlPending ||
-    activeSession?.session_status === 'archived';
-  const createAppTooltip =
-    hasAppYaml === false ? t('databricksApp.missingAppYamlWarning') : undefined;
+    isAgentThinking || sessionControlPending || activeSession?.session_status === 'archived';
 
   return (
     <AskUserQuestionProvider value={askUserQuestionCtx}>
@@ -729,6 +678,14 @@ export function MainArea({
           sessionId={sessionId}
           onTitleUpdate={handleTitleUpdate}
           onArchive={handleArchive}
+          workspacePath={databricksWorkspaceOutcome?.path}
+          onOpenWorkspace={openWorkspace}
+          isOpeningWorkspace={isOpeningWorkspace}
+          showAppButton={!!databricksAppsOutcome}
+          showCreateAppButton={!databricksAppsOutcome}
+          onCreateApp={handleCreateApp}
+          isCreatingApp={isCreatingApp}
+          createAppDisabled={createAppDisabled}
         />
         <MessageArea
           events={events}
@@ -765,18 +722,6 @@ export function MainArea({
             onModelChange={handleSessionModelChange}
             onEffortChange={handleSessionEffortChange}
             onPlanModeChange={handlePlanModeChange}
-          />
-        )}
-        {hasFloatingButtons && (
-          <FloatingButtons
-            sessionId={sessionId}
-            showAppButton={!!databricksAppsOutcome}
-            workspacePath={databricksWorkspaceOutcome?.path}
-            bottomClassName={floatingButtonsBottomClassName}
-            onCreateApp={handleCreateApp}
-            isCreatingApp={isCreatingApp}
-            createAppDisabled={createAppDisabled}
-            createAppTooltip={createAppTooltip}
           />
         )}
         {gitRepositoryStatus && (

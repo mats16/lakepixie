@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import configPlugin from '../plugins/config.js';
 import requestDecoratorPlugin from '../plugins/request-decorator.js';
 import sessionAppRoute from './session-app.js';
 import { SessionId } from '../models/session.model.js';
-import { createDatabricksAppForSession, getSession } from '../services/session.service.js';
+import { createDatabricksAppForSession } from '../services/session.service.js';
 
 vi.mock('../services/session.service.js', () => {
   class SessionAppCreateError extends Error {
@@ -22,7 +22,6 @@ vi.mock('../services/session.service.js', () => {
 
   return {
     createDatabricksAppForSession: vi.fn(),
-    getSession: vi.fn(),
     SessionAppCreateError,
   };
 });
@@ -68,36 +67,6 @@ describe('session app route', () => {
     await app.register(requestDecoratorPlugin);
     await app.register(sessionAppRoute, { prefix: '/api' });
   }
-
-  it('returns create prerequisites from local session app.yaml presence', async () => {
-    const sessionId = new SessionId();
-    const cwd = join(tempDir, 'sessions', sessionId.toString());
-    await mkdir(cwd, { recursive: true });
-    await writeFile(join(cwd, 'app.yaml'), 'command: ["python", "app.py"]');
-    vi.mocked(getSession).mockResolvedValue({
-      id: sessionId.toString(),
-      title: 'Test',
-      session_status: 'idle',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      session_context: {
-        cwd,
-        model: 'sonnet',
-        sources: [],
-        outcomes: [],
-      },
-    });
-    await registerPlugins();
-
-    const response = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${sessionId.toString()}/app/create-prerequisites`,
-      headers: TEST_USER_HEADERS,
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ has_app_yaml: true });
-  });
 
   it('passes request body context to the create service', async () => {
     const sessionId = new SessionId();

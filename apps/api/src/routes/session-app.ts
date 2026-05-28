@@ -1,10 +1,7 @@
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
-import path from 'node:path';
-import { access } from 'node:fs/promises';
 import type {
   ApiError,
   ResolvedDatabricksAppsOutcome,
-  SessionAppCreatePrerequisitesResponse,
   SessionAppCreateRequest,
   SessionAppCreateResponse,
 } from '@repo/types';
@@ -17,7 +14,6 @@ import {
 import { DatabricksAppsClient, DatabricksApiError } from '../lib/databricks-apps-client.js';
 import { getAuthProvider } from '../lib/databricks-auth.js';
 import { createUserContext } from '../lib/user-context.js';
-import { validatePathWithinBase } from '../utils/path-validation.js';
 
 function sendError(
   reply: FastifyReply,
@@ -52,36 +48,6 @@ function parseSessionId(sessionIdStr: string): SessionId | null {
 }
 
 const sessionAppRoute: FastifyPluginAsync = async fastify => {
-  fastify.get<{
-    Params: { session_id: string };
-    Reply: SessionAppCreatePrerequisitesResponse | ApiError;
-  }>('/sessions/:session_id/app/create-prerequisites', async (request, reply) => {
-    const { user } = request.ctx!;
-
-    if (!user.id) {
-      return sendError(reply, 401, 'Unauthorized', 'User ID not found in request context');
-    }
-
-    const sessionId = parseSessionId(request.params.session_id);
-    if (!sessionId) {
-      return sendError(reply, 404, 'NotFound', 'Session not found');
-    }
-
-    const session = await getSession(fastify, user.id, sessionId);
-    if (!session?.session_context) {
-      return sendError(reply, 404, 'NotFound', 'Session not found');
-    }
-
-    try {
-      const sessionsBaseDir = path.join(fastify.config.CCBRICKS_BASE_DIR, 'sessions');
-      const cwd = await validatePathWithinBase(session.session_context.cwd, sessionsBaseDir);
-      await access(path.join(cwd, 'app.yaml'));
-      return reply.send({ has_app_yaml: true });
-    } catch {
-      return reply.send({ has_app_yaml: false });
-    }
-  });
-
   fastify.post<{
     Params: { session_id: string };
     Body: SessionAppCreateRequest;

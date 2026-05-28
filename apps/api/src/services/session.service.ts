@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, and, inArray, lt, asc } from 'drizzle-orm';
 import { accessSync, constants as fsConstants } from 'node:fs';
-import { access, chmod, writeFile } from 'node:fs/promises';
+import { chmod, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { spawnAsync } from '../utils/spawn.js';
 import {
@@ -205,6 +205,50 @@ function findDatabricksWorkspaceOutcome(
   return context.outcomes.find(
     (outcome): outcome is DatabricksWorkspaceSource => outcome.type === 'databricks_workspace'
   );
+}
+
+function buildDefaultSessionWorkspacePath(ccbricksAppName: string, sessionId: SessionId): string {
+  const appName = ccbricksAppName.trim();
+  if (!appName) {
+    throw new SessionAppCreateError(
+      500,
+      'DATABRICKS_APP_NAME is required to derive the default Workspace path'
+    );
+  }
+  return `/Workspace/Shared/${appName}/sessions/${sessionId.toString()}`;
+}
+
+function buildSessionContextWithDatabricksAppOutcomes(
+  context: SessionContextResponse,
+  workspacePath: string,
+  appName: string
+): SessionContextResponse {
+  const existingWorkspaceOutcome = findDatabricksWorkspaceOutcome(context);
+  const existingAppsOutcome = findDatabricksAppsOutcome(context);
+  if (existingAppsOutcome && existingAppsOutcome.name !== appName) {
+    throw new SessionAppCreateError(
+      400,
+      `Session already has Databricks Apps outcome '${existingAppsOutcome.name}'`
+    );
+  }
+
+  const workspaceOutcome: DatabricksWorkspaceSource = {
+    type: 'databricks_workspace',
+    path: workspacePath,
+  };
+  const appOutcome: ResolvedDatabricksAppsOutcome = {
+    type: 'databricks_apps',
+    name: appName,
+  };
+
+  return {
+    ...context,
+    outcomes: [
+      ...context.outcomes,
+      ...(existingWorkspaceOutcome ? [] : [workspaceOutcome]),
+      ...(existingAppsOutcome ? [] : [appOutcome]),
+    ],
+  };
 }
 
 function hasControlCharacter(value: string): boolean {
@@ -2060,6 +2104,7 @@ async function appendDatabricksAppsOutcome(
   userId: string,
   sessionId: SessionId,
   context: SessionContextResponse,
+  workspacePath: string,
   appName: string
 ): Promise<{ canNotifyAgent: boolean }> {
   return fastify.withUserContext(userId, async tx => {
@@ -2077,9 +2122,10 @@ async function appendDatabricksAppsOutcome(
     }
 
     const currentContext = (row.context as SessionContextResponse | null) ?? context;
+    const existingWorkspaceOutcome = findDatabricksWorkspaceOutcome(currentContext);
     const existingAppsOutcome = findDatabricksAppsOutcome(currentContext);
     const canNotifyAgent = canNotifyAgentAfterAppCreation(row.status);
-    if (existingAppsOutcome) {
+    if (existingAppsOutcome && existingWorkspaceOutcome) {
       if (existingAppsOutcome.name !== appName) {
         throw new SessionAppCreateError(
           400,
@@ -2089,10 +2135,11 @@ async function appendDatabricksAppsOutcome(
       return { canNotifyAgent };
     }
 
-    const nextContext: SessionContextResponse = {
-      ...currentContext,
-      outcomes: [...currentContext.outcomes, { type: 'databricks_apps', name: appName }],
-    };
+    const nextContext = buildSessionContextWithDatabricksAppOutcomes(
+      currentContext,
+      workspacePath,
+      appName
+    );
 
     await tx
       .update(sessions)
@@ -2168,19 +2215,13 @@ async function createDatabricksAppForSessionUnlocked(
   }
 
   const workspaceOutcome = findDatabricksWorkspaceOutcome(sessionContext);
-  if (!workspaceOutcome?.path) {
-    throw new SessionAppCreateError(400, 'Databricks Workspace outcome is required');
-  }
-  const workspacePath = workspaceOutcome.path.trim();
+  const workspacePath = workspaceOutcome
+    ? workspaceOutcome.path.trim()
+    : buildDefaultSessionWorkspacePath(fastify.config.DATABRICKS_APP_NAME, sessionId);
   assertValidDatabricksWorkspacePath(workspacePath);
 
   const sessionsBaseDir = path.join(fastify.config.CCBRICKS_BASE_DIR, 'sessions');
   const cwd = await validatePathWithinBase(sessionContext.cwd, sessionsBaseDir);
-  try {
-    await access(path.join(cwd, 'app.yaml'));
-  } catch {
-    throw new SessionAppCreateError(400, 'app.yaml is required to create a Databricks App');
-  }
 
   let metadataAccessToken: string;
   try {
@@ -2239,6 +2280,7 @@ async function createDatabricksAppForSessionUnlocked(
     userId,
     sessionId,
     sessionContext,
+    workspacePath,
     appName
   );
 
@@ -2498,6 +2540,8 @@ export const __testing = {
   buildEffectiveToolSettings,
   buildSessionToolSettings,
   cloneGitRepositorySource,
+  buildDefaultSessionWorkspacePath,
+  buildSessionContextWithDatabricksAppOutcomes,
   extractEventUuid,
   getGitBranchFromRevision,
   validateGitBranchName,

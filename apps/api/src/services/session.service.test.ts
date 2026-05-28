@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SessionContextResponse } from '@repo/types';
 import { EventEmitter } from 'node:events';
 import { SessionId } from '../models/session.model.js';
 
@@ -186,6 +187,99 @@ describe('session.service', () => {
       release();
       const releaseAfterRetry = __testing.acquireDatabricksAppCreateLock(sessionId);
       releaseAfterRetry();
+    });
+  });
+
+  describe('buildDefaultSessionWorkspacePath', () => {
+    it('uses the running ccbricks app name and session id under Workspace Shared', () => {
+      const sessionId = new SessionId();
+
+      expect(__testing.buildDefaultSessionWorkspacePath('ccbricks-prod', sessionId)).toBe(
+        `/Workspace/Shared/ccbricks-prod/sessions/${sessionId.toString()}`
+      );
+    });
+
+    it('requires DATABRICKS_APP_NAME when no workspace outcome is configured', () => {
+      const sessionId = new SessionId();
+
+      expect(() => __testing.buildDefaultSessionWorkspacePath('  ', sessionId)).toThrow(
+        'DATABRICKS_APP_NAME is required'
+      );
+    });
+  });
+
+  describe('buildSessionContextWithDatabricksAppOutcomes', () => {
+    it('adds the default workspace target and Databricks Apps outcome when workspace is absent', () => {
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [],
+        outcomes: [
+          {
+            type: 'git_repository',
+            git_info: {
+              type: 'github',
+              repo: 'acme/widgets',
+              branches: ['ccbricks/test-branch'],
+            },
+          },
+        ],
+      };
+
+      const nextContext = __testing.buildSessionContextWithDatabricksAppOutcomes(
+        context,
+        '/Workspace/Shared/ccbricks-prod/sessions/session-test',
+        'generated-app'
+      );
+
+      expect(nextContext.outcomes).toEqual([
+        context.outcomes[0],
+        {
+          type: 'databricks_workspace',
+          path: '/Workspace/Shared/ccbricks-prod/sessions/session-test',
+        },
+        { type: 'databricks_apps', name: 'generated-app' },
+      ]);
+    });
+
+    it('does not duplicate existing workspace or Databricks Apps outcomes', () => {
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [],
+        outcomes: [
+          {
+            type: 'databricks_workspace',
+            path: '/Workspace/Users/test/app',
+          },
+          { type: 'databricks_apps', name: 'generated-app' },
+        ],
+      };
+
+      const nextContext = __testing.buildSessionContextWithDatabricksAppOutcomes(
+        context,
+        '/Workspace/Users/test/app',
+        'generated-app'
+      );
+
+      expect(nextContext.outcomes).toEqual(context.outcomes);
+    });
+
+    it('rejects replacing an existing Databricks Apps outcome', () => {
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [],
+        outcomes: [{ type: 'databricks_apps', name: 'existing-app' }],
+      };
+
+      expect(() =>
+        __testing.buildSessionContextWithDatabricksAppOutcomes(
+          context,
+          '/Workspace/Shared/ccbricks-prod/sessions/session-test',
+          'generated-app'
+        )
+      ).toThrow("Session already has Databricks Apps outcome 'existing-app'");
     });
   });
 
