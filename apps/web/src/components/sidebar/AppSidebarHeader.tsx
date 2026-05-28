@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { WandSparkles, PlusCircle, PanelLeft, PanelLeftClose } from 'lucide-react';
+import { Layers, PlusCircle, PanelLeft, PanelLeftClose } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useSidebar } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -30,7 +30,7 @@ export function AppSidebarHeader() {
                 aria-label={t('sidebar.openSidebar')}
                 className="group relative flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-colors"
               >
-                <WandSparkles className="h-5 w-5 shrink-0 group-hover:hidden" />
+                <Layers className="h-5 w-5 shrink-0 group-hover:hidden" />
                 <PanelLeft className="h-5 w-5 shrink-0 hidden group-hover:block" />
               </button>
             </TooltipTrigger>
@@ -39,7 +39,7 @@ export function AppSidebarHeader() {
         ) : (
           <>
             <div className="flex min-w-0 items-center gap-2">
-              <WandSparkles className="h-5 w-5 shrink-0" />
+              <Layers className="h-5 w-5 shrink-0" />
               <span className="font-semibold text-foreground truncate" title={appTitle}>
                 {appTitle || t('app.title')}
               </span>

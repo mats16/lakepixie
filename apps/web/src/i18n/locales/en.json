@@ -103,7 +103,7 @@
     "updateError": "Failed to update settings",
     "githubAuthorization": "GitHub",
     "githubAuthorizationDescription": "GitHub credentials used for repository clone, push, and pull request operations.",
-    "githubAccount": "GitHub account",
+    "githubAccount": "GitHub",
     "githubNoAccount": "No account connected",
     "connectGitHub": "Connect",
     "reconnectGitHub": "Reconnect",
@@ -125,6 +125,7 @@
     "cancel": "Cancel",
     "save": "Save",
     "add": "Add",
+    "remove": "Remove",
     "clear": "Clear",
     "loadMore": "Load more"
   },
@@ -322,7 +323,7 @@
     "comingSoon": "This feature is coming soon",
     "databricksSqlWriteToggle": "Allow write operations (INSERT/UPDATE/DELETE) on Databricks SQL",
     "sourceType": {
-      "placeholder": "Select source type",
+      "placeholder": "Select source",
       "repositoryPlaceholder": "Select repository",
       "repositorySearchPlaceholder": "Search repositories...",
       "noRepositories": "No repositories found",
@@ -334,7 +335,7 @@
       "repositoryRequired": "Select a Git repository",
       "branchRequired": "Select a Git branch",
       "databricksWorkspace": "Databricks Workspace",
-      "gitRepository": "Git repository"
+      "gitRepository": "GitHub"
     },
     "quickstarts": {
       "lakeflow": {
@@ -364,12 +365,13 @@
     "logs": "View logs",
     "console": "Console",
     "actions": "App actions",
-    "create": "Create Databricks App",
+    "openWorkspace": "Open Workspace",
+    "create": "Create App",
     "createShort": "Create App",
-    "creating": "Creating Databricks App",
-    "createSuccess": "Databricks App created and Agent was asked to deploy it",
-    "createNotificationFailed": "Databricks App was created, but Agent notification failed. Ask the Agent to deploy it manually.",
-    "createError": "Failed to create Databricks App",
+    "creating": "Creating App",
+    "createSuccess": "App created and Agent was asked to deploy it",
+    "createNotificationFailed": "App was created, but Agent notification failed. Ask the Agent to deploy it manually.",
+    "createError": "Failed to create App",
     "deploy": "Deploy to Databricks Apps",
     "deployShort": "Deploy to Apps",
     "deploying": "Deploying to Databricks Apps",

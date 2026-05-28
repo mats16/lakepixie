@@ -305,7 +305,7 @@ describe('session route - invalid session ID handling', () => {
       const { createSession, SessionValidationError } =
         await import('../services/session.service.js');
       vi.mocked(createSession).mockRejectedValue(
-        new SessionValidationError('Only one git repository source is supported')
+        new SessionValidationError('Only one Databricks Workspace source is supported')
       );
 
       await registerPlugins();
@@ -338,7 +338,7 @@ describe('session route - invalid session ID handling', () => {
       expect(response.statusCode).toBe(400);
       expect(response.json()).toMatchObject({
         error: 'BadRequest',
-        message: 'Only one git repository source is supported',
+        message: 'Only one Databricks Workspace source is supported',
         statusCode: 400,
       });
     });

@@ -11,12 +11,13 @@ import {
 } from '../services/github-oauth.service.js';
 
 function getConfiguredOrigin(request: FastifyRequest): string | null {
-  const configuredUrl = request.server.config.APP_EXTERNAL_URL.trim();
+  const configuredUrl = request.server.config.DATABRICKS_APP_URL.trim();
   if (!configuredUrl) return null;
+
   try {
     return new URL(configuredUrl).origin;
   } catch {
-    request.log.warn({ configuredUrl }, 'Ignoring invalid APP_EXTERNAL_URL');
+    request.log.warn({ configuredUrl }, 'Ignoring invalid DATABRICKS_APP_URL');
     return null;
   }
 }

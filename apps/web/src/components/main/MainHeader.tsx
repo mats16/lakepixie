@@ -1,7 +1,17 @@
 import { useState } from 'react';
-import { GitBranch, ChevronDown, Pencil, Archive, Download } from 'lucide-react';
+import {
+  GitBranch,
+  ChevronDown,
+  Pencil,
+  Archive,
+  Download,
+  Folder,
+  Loader2,
+  Rocket,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
+import { SidebarTrigger } from '@/components/ui/sidebar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +30,7 @@ import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { downloadSessionSettings } from '@/lib/download-settings';
+import { SessionAppButton } from './SessionAppButton';
 
 interface MainHeaderProps {
   title?: string;
@@ -27,6 +38,14 @@ interface MainHeaderProps {
   sessionId?: string;
   onTitleUpdate?: (newTitle: string) => Promise<void>;
   onArchive?: () => Promise<void>;
+  workspacePath?: string;
+  onOpenWorkspace?: () => void;
+  isOpeningWorkspace?: boolean;
+  showAppButton?: boolean;
+  showCreateAppButton?: boolean;
+  onCreateApp?: () => void;
+  isCreatingApp?: boolean;
+  createAppDisabled?: boolean;
 }
 
 export function MainHeader({
@@ -35,6 +54,14 @@ export function MainHeader({
   sessionId,
   onTitleUpdate,
   onArchive,
+  workspacePath,
+  onOpenWorkspace,
+  isOpeningWorkspace = false,
+  showAppButton = false,
+  showCreateAppButton = false,
+  onCreateApp,
+  isCreatingApp = false,
+  createAppDisabled = false,
 }: MainHeaderProps) {
   const { t } = useTranslation();
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
@@ -73,14 +100,57 @@ export function MainHeader({
     }
   };
 
+  const createAppButton = showCreateAppButton ? (
+    <Button
+      type="button"
+      size="sm"
+      className="h-8 shrink-0 gap-1.5"
+      onClick={onCreateApp}
+      disabled={isCreatingApp || createAppDisabled || !onCreateApp}
+      aria-label={t(isCreatingApp ? 'databricksApp.creating' : 'databricksApp.create')}
+    >
+      {isCreatingApp ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Rocket className="h-3.5 w-3.5" />
+      )}
+      <span className="hidden sm:inline">
+        {t(isCreatingApp ? 'databricksApp.creating' : 'databricksApp.createShort')}
+      </span>
+    </Button>
+  ) : null;
+  const openWorkspaceButton = workspacePath ? (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="h-8 shrink-0 gap-1.5"
+      onClick={onOpenWorkspace}
+      disabled={isOpeningWorkspace || !onOpenWorkspace}
+      aria-label={t('databricksApp.openWorkspace')}
+      title={workspacePath}
+    >
+      {isOpeningWorkspace ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Folder className="h-3.5 w-3.5" />
+      )}
+      <span className="hidden sm:inline">{t('databricksApp.workspace')}</span>
+    </Button>
+  ) : null;
+
   return (
     <>
       <div className="flex items-center justify-between h-[50px] px-4 border-b border-border">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2">
+          <SidebarTrigger
+            aria-label={t('sidebar.openSidebar')}
+            className="h-8 w-8 shrink-0 md:hidden"
+          />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="gap-1 font-medium text-foreground">
-                <span className="truncate max-w-[300px]">{title}</span>
+              <Button variant="ghost" className="min-w-0 gap-1 px-2 font-medium text-foreground">
+                <span className="min-w-0 max-w-[300px] truncate">{title}</span>
                 <ChevronDown className="h-4 w-4 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
@@ -102,7 +172,7 @@ export function MainHeader({
           </DropdownMenu>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           {branchName && (
             <TooltipProvider>
               <Tooltip>
@@ -118,6 +188,17 @@ export function MainHeader({
               </Tooltip>
             </TooltipProvider>
           )}
+          {openWorkspaceButton ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>{openWorkspaceButton}</TooltipTrigger>
+                <TooltipContent className="max-w-[420px]">
+                  <p className="break-all">{workspacePath}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
+          {showAppButton ? <SessionAppButton sessionId={sessionId} /> : createAppButton}
         </div>
       </div>
 

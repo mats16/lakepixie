@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   __testing,
+  deleteGitHubOAuthStateByState,
   parseGitHubRepository,
   toGitHubRepositoryFullName,
 } from './github-oauth.service.js';
+import type { FastifyInstance } from 'fastify';
 
 describe('github-oauth.service', () => {
   it('creates RFC 7636 S256 PKCE code challenges', () => {
@@ -29,6 +31,48 @@ describe('github-oauth.service', () => {
     expect(__testing.normalizePullRequestListHead('acme', 'feature-x')).toBe('acme:feature-x');
     expect(__testing.normalizePullRequestListHead('fork', 'alice:feature-x')).toBe(
       'alice:feature-x'
+    );
+  });
+
+  it('does not open async admin transactions for SQLite cleanup queries', async () => {
+    let whereCalled = false;
+    const db = {
+      delete: () => ({
+        where: () => {
+          whereCalled = true;
+          return Promise.resolve();
+        },
+      }),
+      transaction: () => {
+        throw new Error('SQLite transaction should not be used');
+      },
+    };
+    const fastify = {
+      db,
+      isSqlite: true,
+    } as unknown as FastifyInstance;
+
+    await expect(deleteGitHubOAuthStateByState(fastify, 'state-1')).resolves.toBeUndefined();
+    expect(whereCalled).toBe(true);
+  });
+
+  it('propagates SQLite cleanup query failures from async Drizzle calls', async () => {
+    const dbError = new Error('delete failed');
+    const db = {
+      delete: () => ({
+        where: () => Promise.reject(dbError),
+      }),
+      transaction: () => {
+        throw new Error('SQLite transaction should not be used');
+      },
+    };
+    const fastify = {
+      db,
+      isSqlite: true,
+    } as unknown as FastifyInstance;
+
+    await expect(deleteGitHubOAuthStateByState(fastify, 'state-1')).rejects.toThrow(
+      'delete failed'
     );
   });
 });

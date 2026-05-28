@@ -1,10 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SessionContextResponse } from '@repo/types';
 import { EventEmitter } from 'node:events';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { SessionId } from '../models/session.model.js';
 
 const mockSpawn = vi.hoisted(() => vi.fn());
+const { mockRegisterGitCredential, mockRevokeGitCredential } = vi.hoisted(() => ({
+  mockRegisterGitCredential: vi.fn(),
+  mockRevokeGitCredential: vi.fn(),
+}));
 
 // Mock external modules
 vi.mock('node:child_process', () => ({
@@ -30,6 +38,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 vi.mock('../utils/directory.js', () => ({
   ensureDirectory: vi.fn().mockResolvedValue(undefined),
   removeDirectory: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('./git-credential.service.js', () => ({
+  buildGitCredentialHelperScript: (internalUrl: string, bearerToken: string) =>
+    `helper ${internalUrl} ${bearerToken}`,
+  registerGitCredential: mockRegisterGitCredential,
+  revokeGitCredential: mockRevokeGitCredential,
 }));
 
 vi.mock('../lib/databricks-auth.js', () => ({
@@ -58,6 +73,7 @@ import {
   __testing as askUserQuestionTesting,
   resolveUserAnswer,
 } from './ask-user-question.service.js';
+import { removeDirectory } from '../utils/directory.js';
 
 describe('session.service', () => {
   // Mock FastifyInstance
@@ -96,9 +112,13 @@ describe('session.service', () => {
         info: vi.fn(),
         error: vi.fn(),
         debug: vi.fn(),
+        warn: vi.fn(),
       },
       config: {
         DATABRICKS_HOST: 'test.databricks.com',
+        DATABRICKS_APP_PORT: 8000,
+        NODE_ENV: 'development',
+        PORT: 8003,
         CCBRICKS_BASE_DIR: '/home/app',
         PATH: '/usr/bin',
         ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
@@ -172,6 +192,12 @@ describe('session.service', () => {
       queueMicrotask(() => child.emit('close', 0));
       return child;
     });
+    let credentialTokenIndex = 0;
+    mockRegisterGitCredential.mockImplementation(async () => {
+      credentialTokenIndex += 1;
+      return { bearerToken: `credential-token-${credentialTokenIndex}`, repoFullName: 'acme/repo' };
+    });
+    mockRevokeGitCredential.mockResolvedValue(undefined);
   });
 
   describe('Databricks App creation lock', () => {
@@ -186,6 +212,116 @@ describe('session.service', () => {
       release();
       const releaseAfterRetry = __testing.acquireDatabricksAppCreateLock(sessionId);
       releaseAfterRetry();
+    });
+  });
+
+  describe('buildDefaultSessionWorkspacePath', () => {
+    it('uses the running ccbricks app name and session id under Workspace Shared', () => {
+      const sessionId = new SessionId();
+
+      expect(__testing.buildDefaultSessionWorkspacePath('ccbricks-prod', sessionId)).toBe(
+        `/Workspace/Shared/ccbricks-prod/sessions/${sessionId.toString()}`
+      );
+    });
+
+    it('requires DATABRICKS_APP_NAME when no workspace outcome is configured', () => {
+      const sessionId = new SessionId();
+
+      expect(() => __testing.buildDefaultSessionWorkspacePath('  ', sessionId)).toThrow(
+        'DATABRICKS_APP_NAME is required'
+      );
+    });
+  });
+
+  describe('assertDatabricksAppYamlExists', () => {
+    it('requires app.yaml before creating a Databricks App', async () => {
+      const cwd = await mkdtemp(join(tmpdir(), 'ccbricks-session-'));
+      try {
+        await expect(__testing.assertDatabricksAppYamlExists(cwd)).rejects.toThrow(
+          'app.yaml is required to create a Databricks App'
+        );
+
+        await writeFile(join(cwd, 'app.yaml'), 'command: ["npm", "start"]\n');
+
+        await expect(__testing.assertDatabricksAppYamlExists(cwd)).resolves.toBeUndefined();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('buildSessionContextWithDatabricksAppOutcomes', () => {
+    it('adds the default workspace target and Databricks Apps outcome when workspace is absent', () => {
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [],
+        outcomes: [
+          {
+            type: 'git_repository',
+            git_info: {
+              type: 'github',
+              repo: 'acme/widgets',
+              branches: ['ccbricks/test-branch'],
+            },
+          },
+        ],
+      };
+
+      const nextContext = __testing.buildSessionContextWithDatabricksAppOutcomes(
+        context,
+        '/Workspace/Shared/ccbricks-prod/sessions/session-test',
+        'generated-app'
+      );
+
+      expect(nextContext.outcomes).toEqual([
+        context.outcomes[0],
+        {
+          type: 'databricks_workspace',
+          path: '/Workspace/Shared/ccbricks-prod/sessions/session-test',
+        },
+        { type: 'databricks_apps', name: 'generated-app' },
+      ]);
+    });
+
+    it('does not duplicate existing workspace or Databricks Apps outcomes', () => {
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [],
+        outcomes: [
+          {
+            type: 'databricks_workspace',
+            path: '/Workspace/Users/test/app',
+          },
+          { type: 'databricks_apps', name: 'generated-app' },
+        ],
+      };
+
+      const nextContext = __testing.buildSessionContextWithDatabricksAppOutcomes(
+        context,
+        '/Workspace/Users/test/app',
+        'generated-app'
+      );
+
+      expect(nextContext.outcomes).toEqual(context.outcomes);
+    });
+
+    it('rejects replacing an existing Databricks Apps outcome', () => {
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [],
+        outcomes: [{ type: 'databricks_apps', name: 'existing-app' }],
+      };
+
+      expect(() =>
+        __testing.buildSessionContextWithDatabricksAppOutcomes(
+          context,
+          '/Workspace/Shared/ccbricks-prod/sessions/session-test',
+          'generated-app'
+        )
+      ).toThrow("Session already has Databricks Apps outcome 'existing-app'");
     });
   });
 
@@ -328,6 +464,58 @@ describe('session.service', () => {
       );
     });
 
+    it('should clone multiple git sources into repository-named directories', async () => {
+      const widgetSource = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets',
+      };
+      const apiSource = {
+        ...widgetSource,
+        url: 'https://github.com/acme/api',
+      };
+
+      await __testing.cloneGitRepositorySource(
+        'test-user-id',
+        widgetSource,
+        {
+          type: 'git_repository',
+          git_info: {
+            type: 'github',
+            branches: ['ccbricks/test-branch'],
+          },
+        },
+        __testing.getGitRepositoryCheckoutPath('/tmp/session-cwd', widgetSource, 2)
+      );
+      await __testing.cloneGitRepositorySource(
+        'test-user-id',
+        apiSource,
+        {
+          type: 'git_repository',
+          git_info: {
+            type: 'github',
+            branches: ['ccbricks/test-branch'],
+          },
+        },
+        __testing.getGitRepositoryCheckoutPath('/tmp/session-cwd', apiSource, 2)
+      );
+
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        1,
+        'git',
+        expect.arrayContaining(['https://github.com/acme/widgets', '/tmp/session-cwd/widgets']),
+        expect.objectContaining({ shell: false })
+      );
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        4,
+        'git',
+        expect.arrayContaining(['https://github.com/acme/api', '/tmp/session-cwd/api']),
+        expect.objectContaining({ shell: false })
+      );
+    });
+
     it('should reject unsupported git repository URLs', () => {
       expect(() => __testing.validateGitRepositoryUrl('git@github.com:user/repo.git')).toThrow(
         'Invalid git repository URL'
@@ -356,14 +544,45 @@ describe('session.service', () => {
 
       expect(() => __testing.validateGitSessionContext([source], [outcome])).not.toThrow();
       expect(() => __testing.validateGitSessionContext([source, source], [outcome])).toThrow(
-        'Only one git repository source is supported'
+        'Duplicate git repository checkout directory'
       );
+      expect(() =>
+        __testing.validateGitSessionContext(
+          [source, { ...source, url: 'https://github.com/acme/api.git' }],
+          [{ ...outcome, git_info: { type: 'github', branches: ['ccbricks/test-branch'] } }]
+        )
+      ).not.toThrow();
+      expect(() =>
+        __testing.validateGitSessionContext(
+          [source, { ...source, url: 'https://github.com/acme/api.git' }],
+          [outcome]
+        )
+      ).toThrow('must not specify a repository');
       expect(() =>
         __testing.validateGitSessionContext(
           [source, { type: 'databricks_workspace', path: '/Workspace/test' }],
           [outcome]
         )
-      ).toThrow('cannot be combined');
+      ).not.toThrow();
+      expect(() =>
+        __testing.validateGitSessionContext(
+          [
+            source,
+            { ...source, url: 'https://github.com/acme/api.git' },
+            { type: 'databricks_workspace', path: '/Workspace/test' },
+          ],
+          [{ ...outcome, git_info: { type: 'github', branches: ['ccbricks/test-branch'] } }]
+        )
+      ).not.toThrow();
+      expect(() =>
+        __testing.validateGitSessionContext(
+          [
+            { type: 'databricks_workspace', path: '/Workspace/one' },
+            { type: 'databricks_workspace', path: '/Workspace/two' },
+          ],
+          []
+        )
+      ).toThrow('Only one Databricks Workspace source is supported');
       expect(() => __testing.validateGitSessionContext([source], [])).toThrow(
         'requires exactly one git repository outcome'
       );
@@ -382,6 +601,109 @@ describe('session.service', () => {
           [{ ...outcome, git_info: { ...outcome.git_info, repo: 'acme/other' } }]
         )
       ).toThrow('must match');
+    });
+
+    it('should export workspace sources except when exactly one git source is present', () => {
+      expect(__testing.shouldExportWorkspaceSources(0, 0)).toBe(false);
+      expect(__testing.shouldExportWorkspaceSources(1, 0)).toBe(true);
+      expect(__testing.shouldExportWorkspaceSources(1, 1)).toBe(false);
+      expect(__testing.shouldExportWorkspaceSources(1, 2)).toBe(true);
+    });
+
+    it('should remove repository checkout directories before multi-repository clone', async () => {
+      const source = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets.git',
+      };
+
+      await expect(
+        __testing.prepareGitRepositoryCheckoutPath('/tmp/session-cwd', source, 1)
+      ).resolves.toBe('/tmp/session-cwd');
+      expect(removeDirectory).not.toHaveBeenCalled();
+
+      await expect(
+        __testing.prepareGitRepositoryCheckoutPath('/tmp/session-cwd', source, 2)
+      ).resolves.toBe('/tmp/session-cwd/widgets');
+      expect(removeDirectory).toHaveBeenCalledWith('/tmp/session-cwd/widgets');
+    });
+
+    it('should configure git credential helpers for every repository checkout', async () => {
+      const cwd = await mkdtemp(join(tmpdir(), 'ccbricks-session-'));
+      const widgetSource = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets',
+      };
+      const apiSource = {
+        ...widgetSource,
+        url: 'https://github.com/acme/api',
+      };
+
+      try {
+        await mkdir(join(cwd, 'widgets', '.git'), { recursive: true });
+        await mkdir(join(cwd, 'api', '.git'), { recursive: true });
+
+        const fastify = createMockFastify();
+        const cleanup = await __testing.configureGitCredentialHelpers(
+          fastify,
+          'test-user-id',
+          cwd,
+          [widgetSource, apiSource]
+        );
+
+        const widgetsHelper = join(cwd, 'widgets', '.git', 'ccbricks-credential-helper.mjs');
+        const apiHelper = join(cwd, 'api', '.git', 'ccbricks-credential-helper.mjs');
+
+        expect(mockRegisterGitCredential).toHaveBeenNthCalledWith(
+          1,
+          fastify,
+          'test-user-id',
+          widgetSource.url
+        );
+        expect(mockRegisterGitCredential).toHaveBeenNthCalledWith(
+          2,
+          fastify,
+          'test-user-id',
+          apiSource.url
+        );
+        expect(mockSpawn).toHaveBeenNthCalledWith(
+          1,
+          'git',
+          ['config', '--local', 'credential.helper', widgetsHelper],
+          expect.objectContaining({ cwd: join(cwd, 'widgets'), shell: false })
+        );
+        expect(mockSpawn).toHaveBeenNthCalledWith(
+          2,
+          'git',
+          ['config', '--local', 'credential.useHttpPath', 'true'],
+          expect.objectContaining({ cwd: join(cwd, 'widgets'), shell: false })
+        );
+        expect(mockSpawn).toHaveBeenNthCalledWith(
+          3,
+          'git',
+          ['config', '--local', 'credential.helper', apiHelper],
+          expect.objectContaining({ cwd: join(cwd, 'api'), shell: false })
+        );
+        expect(mockSpawn).toHaveBeenNthCalledWith(
+          4,
+          'git',
+          ['config', '--local', 'credential.useHttpPath', 'true'],
+          expect.objectContaining({ cwd: join(cwd, 'api'), shell: false })
+        );
+
+        cleanup?.();
+
+        expect(mockRevokeGitCredential).toHaveBeenCalledTimes(2);
+        expect(mockRevokeGitCredential).toHaveBeenNthCalledWith(1, fastify, 'credential-token-1');
+        expect(mockRevokeGitCredential).toHaveBeenNthCalledWith(2, fastify, 'credential-token-2');
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
     });
   });
 

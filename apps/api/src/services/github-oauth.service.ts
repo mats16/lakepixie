@@ -438,10 +438,13 @@ async function runAdminDatabaseTransaction(
   fastify: FastifyInstance,
   callback: (tx: typeof fastify.db) => Promise<void>
 ): Promise<void> {
+  if (fastify.isSqlite) {
+    await callback(fastify.db);
+    return;
+  }
+
   await fastify.db.transaction(async tx => {
-    if (!fastify.isSqlite) {
-      await tx.execute(sql`set local row_security = off`);
-    }
+    await tx.execute(sql`set local row_security = off`);
     await callback(tx as unknown as typeof fastify.db);
   });
 }
@@ -1126,10 +1129,11 @@ export interface GitAuthEnvironment {
 export async function createGitHubUserGitAuthEnvironment(
   fastify: FastifyInstance,
   userId: string,
-  repository: string
+  repository: string,
+  accessToken?: string
 ): Promise<GitAuthEnvironment> {
   parseGitHubRepository(repository);
-  const token = await getValidGitHubUserAccessToken(fastify, userId);
+  const token = accessToken ?? (await getValidGitHubUserAccessToken(fastify, userId));
   const askpassPath = join(tmpdir(), `ccbricks-git-askpass-${randomUUID()}.sh`);
   await writeFile(
     askpassPath,
@@ -1165,8 +1169,6 @@ export async function rotateGitHubOAuthEncryptionKey(
     let reencryptedAuthorizations = 0;
 
     try {
-      await setActiveEncryptionKeyVersion(fastify, newKey.version);
-
       await runAdminDatabaseTransaction(fastify, async tx => {
         await tx.delete(githubOAuthStates).where(lt(githubOAuthStates.expiresAt, new Date()));
         const authorizationRows = (await tx
@@ -1222,6 +1224,8 @@ export async function rotateGitHubOAuthEncryptionKey(
             .where(eq(githubOAuthStates.state, row.state));
         }
       });
+
+      await setActiveEncryptionKeyVersion(fastify, newKey.version);
     } catch (error) {
       await setActiveEncryptionKeyVersion(fastify, oldActiveKey.version).catch(restoreError => {
         fastify.log.error(

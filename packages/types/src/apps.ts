@@ -68,15 +68,6 @@ export interface DatabricksApp {
 export type SessionAppResponse = DatabricksApp;
 
 /**
- * GET /api/sessions/:session_id/app/create-prerequisites のレスポンス型
- */
-export interface SessionAppCreatePrerequisitesResponse {
-  has_app_yaml: boolean;
-}
-
-export type SessionAppDeployPrerequisitesResponse = SessionAppCreatePrerequisitesResponse;
-
-/**
  * POST /api/generate_app_name のリクエスト型
  */
 export interface GenerateAppNameRequest {

@@ -7,6 +7,8 @@ import {
   ChevronDown,
   Check,
   Loader2,
+  Plus,
+  X,
   Bug,
   Construction,
   DatabaseZap,
@@ -14,8 +16,10 @@ import {
   Cable,
   Sparkles,
   Network,
+  Folder,
   FolderGit2,
   GitBranch,
+  GitPullRequest,
   ListTodo,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -53,7 +57,7 @@ import { WorkspaceSelector } from '@/components/workspace/WorkspaceSelector';
 import { useImageAttachment } from '@/hooks/useImageAttachment';
 import { useDragDrop } from '@/hooks/useDragDrop';
 import { buildMessageContent } from '@/lib/content-builder';
-import { gitRepositoryService } from '@/services';
+import { githubOAuthService, gitRepositoryService } from '@/services';
 import {
   SESSION_MODELS,
   DEFAULT_SESSION_MODEL,
@@ -74,16 +78,32 @@ import type {
 
 export type NewSessionSourceType = 'databricks_workspace' | 'git_repository';
 
+interface DraftSourceSelection {
+  id: string;
+  type: NewSessionSourceType | null;
+  workspaceSelection: WorkspaceSelection | null;
+  gitRepositoryName: string | null;
+  gitRepositoryBranch: string | null;
+}
+
+export type NewSessionSourceSelection =
+  | {
+      type: 'databricks_workspace';
+      workspaceSelection: WorkspaceSelection;
+    }
+  | {
+      type: 'git_repository';
+      gitRepository: GitRepositoryCandidate;
+      gitRepositoryBranch: string;
+    };
+
 export interface NewSessionParams {
   content: UserMessageContentBlock[];
   modelId: string;
   effortLevel: WsEffortLevel;
-  sourceType: NewSessionSourceType;
-  gitRepository: GitRepositoryCandidate | null;
-  gitRepositoryBranch: string | null;
+  sourceSelections: NewSessionSourceSelection[];
   enableDatabricksSqlWrite: boolean;
   isPlanMode: boolean;
-  workspaceSelection: WorkspaceSelection | null;
   mcpConfig?: McpConfig;
   allowedTools?: string[];
   disallowedTools?: string[];
@@ -112,9 +132,21 @@ function McpItemIcon({ item }: { item: McpSelectionItem }) {
   return <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />;
 }
 
+function createDraftSourceSelection(): DraftSourceSelection {
+  return {
+    id: crypto.randomUUID(),
+    type: null,
+    workspaceSelection: null,
+    gitRepositoryName: null,
+    gitRepositoryBranch: null,
+  };
+}
+
 export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps) {
   const { t } = useTranslation();
   const { welcomeHeading, githubOAuthAuthorization, modelSettings } = useUser();
+  const isGitHubIntegrationConfigured =
+    githubOAuthAuthorization !== null && githubOAuthAuthorization.status !== 'not_configured';
   const canUseGitRepositorySource = githubOAuthAuthorization?.status === 'connected';
   const [selectedQuickstart, setSelectedQuickstart] = useState<QuickstartType | null>(null);
   const [content, setContent] = useLocalStorageState('chat-draft-new-session', {
@@ -133,17 +165,12 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
   const selectedEffort = EFFORT_LEVEL_OPTIONS.includes(selectedEffortLevel)
     ? selectedEffortLevel
     : 'high';
-  const [sourceType, setSourceType] = useState<NewSessionSourceType>('databricks_workspace');
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelection | null>(null);
+  const [sourceSelections, setSourceSelections] = useState<DraftSourceSelection[]>([]);
   const [gitRepositories, setGitRepositories] = useState<GitRepositoryCandidate[]>([]);
-  const [selectedGitRepositoryName, setSelectedGitRepositoryName] = useState<string | null>(null);
   const [gitRepositoryBranches, setGitRepositoryBranches] = useState<
     Record<string, GitRepositoryBranchCandidate[]>
   >({});
-  const [selectedGitRepositoryBranch, setSelectedGitRepositoryBranch] = useState<string | null>(
-    null
-  );
-  const [gitRepositorySearchOpen, setGitRepositorySearchOpen] = useState(false);
+  const [openGitRepositorySourceId, setOpenGitRepositorySourceId] = useState<string | null>(null);
   const [gitRepositorySearchQuery, setGitRepositorySearchQuery] = useState('');
   const [isSearchingGitRepositories, setIsSearchingGitRepositories] = useState(false);
   const [gitRepositoryLoadError, setGitRepositoryLoadError] = useState(false);
@@ -170,7 +197,6 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
   const containerRef = useRef<HTMLDivElement>(null);
   const gitRepositoryLoadPromiseRef = useRef<Promise<void> | null>(null);
   const gitRepositoryBranchLoadPromisesRef = useRef<Map<string, Promise<void>>>(new Map());
-  const lastSelectedGitRepositoryNameRef = useRef<string | null>(null);
   const isMountedRef = useRef(true);
 
   // 画像添付フック
@@ -217,16 +243,38 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
           const repositories = response.repositories;
           setGitRepositories(repositories);
           setHasLoadedGitRepositories(true);
-          setSelectedGitRepositoryName(current =>
-            current && repositories.some(repository => repository.full_name === current)
-              ? current
-              : (repositories[0]?.full_name ?? null)
+          setSourceSelections(current =>
+            current.map(source => {
+              if (source.type !== 'git_repository') return source;
+              const gitRepositoryName =
+                source.gitRepositoryName &&
+                repositories.some(repository => repository.full_name === source.gitRepositoryName)
+                  ? source.gitRepositoryName
+                  : (repositories[0]?.full_name ?? null);
+              const repository = repositories.find(
+                candidate => candidate.full_name === gitRepositoryName
+              );
+              return {
+                ...source,
+                gitRepositoryName,
+                gitRepositoryBranch:
+                  source.gitRepositoryName === gitRepositoryName
+                    ? source.gitRepositoryBranch
+                    : (repository?.default_branch ?? null),
+              };
+            })
           );
         })
         .catch(() => {
           if (!isMountedRef.current) return;
           setGitRepositories([]);
-          setSelectedGitRepositoryName(null);
+          setSourceSelections(current =>
+            current.map(source =>
+              source.type === 'git_repository'
+                ? { ...source, gitRepositoryName: null, gitRepositoryBranch: null }
+                : source
+            )
+          );
           setGitRepositoryLoadError(true);
           setHasLoadedGitRepositories(false);
         })
@@ -242,41 +290,39 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
     [canUseGitRepositorySource, hasLoadedGitRepositories]
   );
 
+  const hasGitRepositorySource = sourceSelections.some(source => source.type === 'git_repository');
+  const hasDatabricksWorkspaceSource = sourceSelections.some(
+    source => source.type === 'databricks_workspace'
+  );
+  const canAddDatabricksWorkspaceSource = !hasDatabricksWorkspaceSource;
+  const canAddGitRepositorySource = isGitHubIntegrationConfigured;
+  const canAddSource = canAddDatabricksWorkspaceSource || canAddGitRepositorySource;
+
   useEffect(() => {
-    if (sourceType === 'git_repository' && canUseGitRepositorySource) {
+    if (hasGitRepositorySource && canUseGitRepositorySource) {
       void loadGitRepositories();
     }
-  }, [canUseGitRepositorySource, loadGitRepositories, sourceType]);
+  }, [canUseGitRepositorySource, hasGitRepositorySource, loadGitRepositories]);
 
   useEffect(() => {
     if (canUseGitRepositorySource) return;
-    if (sourceType === 'git_repository') {
-      setSourceType('databricks_workspace');
-    }
+    setSourceSelections(current => current.filter(source => source.type !== 'git_repository'));
     setGitRepositories([]);
-    setSelectedGitRepositoryName(null);
-    setSelectedGitRepositoryBranch(null);
+    setOpenGitRepositorySourceId(null);
     setGitRepositoryLoadError(false);
     setHasLoadedGitRepositories(false);
-  }, [canUseGitRepositorySource, sourceType]);
+  }, [canUseGitRepositorySource]);
 
   const filteredGitRepositories = useMemo(() => {
     const query = gitRepositorySearchQuery.trim().toLowerCase();
     if (!query) return gitRepositories;
     return gitRepositories.filter(repository => repository.full_name.toLowerCase().includes(query));
   }, [gitRepositories, gitRepositorySearchQuery]);
+  const gitRepositoryByName = useMemo(
+    () => new Map(gitRepositories.map(repository => [repository.full_name, repository])),
+    [gitRepositories]
+  );
 
-  const selectedGitRepository =
-    gitRepositories.find(repository => repository.full_name === selectedGitRepositoryName) ?? null;
-  const selectedGitRepositoryBranches = selectedGitRepositoryName
-    ? (gitRepositoryBranches[selectedGitRepositoryName] ?? [])
-    : [];
-  const isLoadingSelectedGitRepositoryBranches =
-    selectedGitRepositoryName !== null &&
-    loadingGitRepositoryBranchName === selectedGitRepositoryName;
-  const selectedGitRepositoryBranchLoadError =
-    selectedGitRepositoryName !== null &&
-    gitRepositoryBranchLoadErrors[selectedGitRepositoryName] === true;
   let gitRepositoryEmptyMessage = t('welcome.sourceType.noRepositories');
   if (gitRepositoryLoadError) {
     gitRepositoryEmptyMessage = t('welcome.sourceType.repositoriesLoadError');
@@ -286,8 +332,11 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
   }
 
   const loadGitRepositoryBranches = useCallback(
-    (repository: GitRepositoryCandidate) => {
+    (repository: GitRepositoryCandidate, force = false) => {
       const repositoryName = repository.full_name;
+      if (gitRepositoryBranchLoadErrors[repositoryName] === true && !force) {
+        return Promise.resolve();
+      }
       if (
         gitRepositoryBranches[repositoryName] &&
         gitRepositoryBranchLoadErrors[repositoryName] !== true
@@ -305,24 +354,36 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
           if (!isMountedRef.current) return;
           const branches = response.branches;
           setGitRepositoryBranches(current => ({ ...current, [repositoryName]: branches }));
-          setSelectedGitRepositoryBranch(current => {
-            if (lastSelectedGitRepositoryNameRef.current !== repositoryName) return current;
-            if (current && branches.some(branch => branch.name === current)) return current;
-            if (
-              repository.default_branch &&
-              branches.some(branch => branch.name === repository.default_branch)
-            ) {
-              return repository.default_branch;
-            }
-            return branches[0]?.name ?? null;
-          });
+          setSourceSelections(current =>
+            current.map(source => {
+              if (
+                source.type !== 'git_repository' ||
+                source.gitRepositoryName !== repositoryName ||
+                (source.gitRepositoryBranch &&
+                  branches.some(branch => branch.name === source.gitRepositoryBranch))
+              ) {
+                return source;
+              }
+
+              const defaultBranch =
+                repository.default_branch &&
+                branches.some(branch => branch.name === repository.default_branch)
+                  ? repository.default_branch
+                  : (branches[0]?.name ?? null);
+              return { ...source, gitRepositoryBranch: defaultBranch };
+            })
+          );
         })
         .catch(() => {
           if (!isMountedRef.current) return;
           setGitRepositoryBranches(current => ({ ...current, [repositoryName]: [] }));
           setGitRepositoryBranchLoadErrors(current => ({ ...current, [repositoryName]: true }));
-          setSelectedGitRepositoryBranch(current =>
-            lastSelectedGitRepositoryNameRef.current === repositoryName ? null : current
+          setSourceSelections(current =>
+            current.map(source =>
+              source.type === 'git_repository' && source.gitRepositoryName === repositoryName
+                ? { ...source, gitRepositoryBranch: null }
+                : source
+            )
           );
         })
         .finally(() => {
@@ -341,34 +402,71 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
   );
 
   useEffect(() => {
-    if (sourceType !== 'git_repository' || !selectedGitRepository) {
-      lastSelectedGitRepositoryNameRef.current = null;
-      setSelectedGitRepositoryBranch(null);
+    for (const source of sourceSelections) {
+      if (source.type !== 'git_repository' || !source.gitRepositoryName) continue;
+      const repository = gitRepositoryByName.get(source.gitRepositoryName);
+      if (repository) {
+        void loadGitRepositoryBranches(repository);
+      }
+    }
+  }, [gitRepositoryByName, loadGitRepositoryBranches, sourceSelections]);
+
+  const updateSourceSelection = (
+    sourceId: string,
+    updater: (source: DraftSourceSelection) => DraftSourceSelection
+  ) => {
+    setSourceSelections(current =>
+      current.map(source => (source.id === sourceId ? updater(source) : source))
+    );
+  };
+
+  const handleAddSourceSelection = (nextSourceType: NewSessionSourceType) => {
+    if (nextSourceType === 'databricks_workspace' && !canAddDatabricksWorkspaceSource) return;
+    if (nextSourceType === 'git_repository' && !canAddGitRepositorySource) return;
+    if (nextSourceType === 'git_repository' && !canUseGitRepositorySource) {
+      const redirectAfter = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      window.open(
+        githubOAuthService.getAuthorizeUrl(redirectAfter),
+        '_blank',
+        'noopener,noreferrer'
+      );
       return;
     }
-
-    if (lastSelectedGitRepositoryNameRef.current !== selectedGitRepository.full_name) {
-      lastSelectedGitRepositoryNameRef.current = selectedGitRepository.full_name;
-      setSelectedGitRepositoryBranch(selectedGitRepository.default_branch ?? null);
-    }
-
-    void loadGitRepositoryBranches(selectedGitRepository);
-  }, [loadGitRepositoryBranches, selectedGitRepository, sourceType]);
-
-  const handleSourceTypeChange = (value: string) => {
-    const nextSourceType = value as NewSessionSourceType;
-    if (nextSourceType === 'git_repository' && !canUseGitRepositorySource) return;
-    setSourceType(nextSourceType);
+    const gitRepository = nextSourceType === 'git_repository' ? (gitRepositories[0] ?? null) : null;
+    setSourceSelections(current => [
+      ...current,
+      {
+        ...createDraftSourceSelection(),
+        type: nextSourceType,
+        gitRepositoryName: gitRepository?.full_name ?? null,
+        gitRepositoryBranch: gitRepository?.default_branch ?? null,
+      },
+    ]);
     if (nextSourceType === 'git_repository') {
       void loadGitRepositories();
     }
   };
 
-  const handleGitRepositorySearchOpenChange = (open: boolean) => {
-    setGitRepositorySearchOpen(open);
+  const handleGitRepositorySearchOpenChange = (sourceId: string, open: boolean) => {
+    setOpenGitRepositorySourceId(open ? sourceId : null);
     if (open && canUseGitRepositorySource) {
       void loadGitRepositories();
     }
+  };
+
+  const handleGitRepositorySelect = (sourceId: string, repository: GitRepositoryCandidate) => {
+    updateSourceSelection(sourceId, source => ({
+      ...source,
+      gitRepositoryName: repository.full_name,
+      gitRepositoryBranch: repository.default_branch ?? null,
+    }));
+    setOpenGitRepositorySourceId(null);
+    void loadGitRepositoryBranches(repository);
+  };
+
+  const handleRemoveSourceSelection = (sourceId: string) => {
+    setSourceSelections(current => current.filter(source => source.id !== sourceId));
+    setOpenGitRepositorySourceId(current => (current === sourceId ? null : current));
   };
 
   const handleGitRepositoryRetry = () => {
@@ -376,21 +474,56 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
     void loadGitRepositories(true);
   };
 
-  const handleGitRepositoryBranchRetry = () => {
-    if (selectedGitRepository) {
-      void loadGitRepositoryBranches(selectedGitRepository);
+  const handleGitRepositoryBranchRetry = (repositoryName: string | null) => {
+    if (!repositoryName || gitRepositoryBranchLoadErrors[repositoryName] !== true) return;
+    const repository = gitRepositoryByName.get(repositoryName);
+    if (repository) {
+      void loadGitRepositoryBranches(repository, true);
     }
   };
+
+  const finalizedSourceSelections = useMemo(
+    () =>
+      sourceSelections.flatMap((source): NewSessionSourceSelection[] => {
+        if (source.type === 'databricks_workspace') {
+          return source.workspaceSelection
+            ? [{ type: 'databricks_workspace', workspaceSelection: source.workspaceSelection }]
+            : [];
+        }
+        if (source.type === 'git_repository') {
+          const repository = source.gitRepositoryName
+            ? (gitRepositoryByName.get(source.gitRepositoryName) ?? null)
+            : null;
+          return repository && source.gitRepositoryBranch
+            ? [
+                {
+                  type: 'git_repository',
+                  gitRepository: repository,
+                  gitRepositoryBranch: source.gitRepositoryBranch,
+                },
+              ]
+            : [];
+        }
+        return [];
+      }),
+    [gitRepositoryByName, sourceSelections]
+  );
+
+  const hasIncompleteGitRepositorySource = sourceSelections.some(source => {
+    if (source.type !== 'git_repository') return false;
+    if (!canUseGitRepositorySource) return true;
+    if (gitRepositoryLoadError || isSearchingGitRepositories) return true;
+    if (!source.gitRepositoryName || !source.gitRepositoryBranch) return true;
+    return (
+      gitRepositoryBranchLoadErrors[source.gitRepositoryName] === true ||
+      loadingGitRepositoryBranchName === source.gitRepositoryName
+    );
+  });
 
   const handleSubmit = async () => {
     const hasContent = content.trim() || hasImages;
     if (!hasContent || isSubmitting) return;
-    if (sourceType === 'git_repository' && !canUseGitRepositorySource) return;
-    if (sourceType === 'git_repository' && !selectedGitRepository) return;
-    if (sourceType === 'git_repository' && !selectedGitRepositoryBranch) return;
-    if (sourceType === 'git_repository' && gitRepositoryLoadError) return;
-    if (sourceType === 'git_repository' && selectedGitRepositoryBranchLoadError) return;
-    if (sourceType === 'git_repository' && isLoadingSelectedGitRepositoryBranches) return;
+    if (hasIncompleteGitRepositorySource) return;
 
     setIsSubmitting(true);
     try {
@@ -402,12 +535,9 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
         content: messageContent,
         modelId: selectedModel.id,
         effortLevel: selectedEffort,
-        sourceType,
-        gitRepository: selectedGitRepository,
-        gitRepositoryBranch: sourceType === 'git_repository' ? selectedGitRepositoryBranch : null,
+        sourceSelections: finalizedSourceSelections,
         enableDatabricksSqlWrite,
         isPlanMode,
-        workspaceSelection: sourceType === 'databricks_workspace' ? selectedWorkspace : null,
         mcpConfig,
         allowedTools,
         disallowedTools,
@@ -435,19 +565,8 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
     [addImages]
   );
 
-  const hasSelectedGitRepository =
-    sourceType !== 'git_repository' ||
-    (selectedGitRepository !== null && !gitRepositoryLoadError && !isSearchingGitRepositories);
-  const hasSelectedGitRepositoryBranch =
-    sourceType !== 'git_repository' ||
-    (selectedGitRepositoryBranch !== null &&
-      !selectedGitRepositoryBranchLoadError &&
-      !isLoadingSelectedGitRepositoryBranches);
   const canSubmit =
-    (content.trim() || hasImages) &&
-    !isSubmitting &&
-    hasSelectedGitRepository &&
-    hasSelectedGitRepositoryBranch;
+    (content.trim() || hasImages) && !isSubmitting && !hasIncompleteGitRepositorySource;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -471,6 +590,42 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
     },
   ];
 
+  const renderAddSourceMenu = (className: string, label?: string) => {
+    if (!canAddSource) return null;
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size={label ? 'default' : 'icon'}
+            className={className}
+            disabled={isSubmitting}
+            aria-label={label ?? t('common.add')}
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            {label && <span className="truncate">{label}</span>}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {canAddDatabricksWorkspaceSource && (
+            <DropdownMenuItem onClick={() => handleAddSourceSelection('databricks_workspace')}>
+              <Folder className="h-4 w-4" />
+              {t('welcome.sourceType.databricksWorkspace')}
+            </DropdownMenuItem>
+          )}
+          {canAddGitRepositorySource && (
+            <DropdownMenuItem onClick={() => handleAddSourceSelection('git_repository')}>
+              <GitPullRequest className="h-4 w-4" />
+              {t('welcome.sourceType.gitRepository')}
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
+
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8">
       {/* Title */}
@@ -481,153 +636,190 @@ export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps
       </div>
 
       {/* Source Selector */}
-      <div className="w-full max-w-3xl mb-4 grid grid-cols-1 gap-2 sm:grid-cols-[220px_minmax(0,1fr)]">
-        <Select value={sourceType} onValueChange={handleSourceTypeChange} disabled={isSubmitting}>
-          <SelectTrigger>
-            <SelectValue placeholder={t('welcome.sourceType.placeholder')} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="databricks_workspace">
-              {t('welcome.sourceType.databricksWorkspace')}
-            </SelectItem>
-            {canUseGitRepositorySource && (
-              <SelectItem value="git_repository">
-                {t('welcome.sourceType.gitRepository')}
-              </SelectItem>
-            )}
-          </SelectContent>
-        </Select>
-
-        {sourceType === 'databricks_workspace' ? (
-          <WorkspaceSelector
-            value={selectedWorkspace}
-            onChange={setSelectedWorkspace}
-            disabled={isSubmitting}
-          />
-        ) : (
-          <div className="min-w-0 space-y-2">
-            <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_180px]">
-              <Popover
-                open={gitRepositorySearchOpen}
-                onOpenChange={handleGitRepositorySearchOpenChange}
-              >
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={gitRepositorySearchOpen}
-                    className="h-10 w-full justify-between px-3 font-normal"
-                    disabled={isSubmitting}
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      {selectedGitRepositoryName && <FolderGit2 className="h-4 w-4 shrink-0" />}
-                      <span
-                        className={cn(
-                          'truncate',
-                          !selectedGitRepositoryName && 'text-muted-foreground'
-                        )}
-                      >
-                        {selectedGitRepositoryName ?? t('welcome.sourceType.repositoryPlaceholder')}
-                      </span>
-                    </div>
-                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-[var(--radix-popover-trigger-width)] p-0"
-                  align="start"
-                >
-                  <Command shouldFilter={false}>
-                    <CommandInput
-                      value={gitRepositorySearchQuery}
-                      onValueChange={setGitRepositorySearchQuery}
-                      placeholder={t('welcome.sourceType.repositorySearchPlaceholder')}
-                    />
-                    <CommandList>
-                      <CommandEmpty>{gitRepositoryEmptyMessage}</CommandEmpty>
-                      {filteredGitRepositories.map(repository => (
-                        <CommandItem
-                          key={repository.full_name}
-                          value={repository.full_name}
-                          onSelect={() => {
-                            setSelectedGitRepositoryName(repository.full_name);
-                            setGitRepositorySearchOpen(false);
-                          }}
-                        >
-                          <Check
-                            className={cn(
-                              'h-4 w-4',
-                              selectedGitRepositoryName === repository.full_name
-                                ? 'opacity-100'
-                                : 'opacity-0'
-                            )}
-                          />
-                          <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span className="truncate">{repository.full_name}</span>
-                        </CommandItem>
-                      ))}
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-
-              <Select
-                value={selectedGitRepositoryBranch ?? undefined}
-                onValueChange={setSelectedGitRepositoryBranch}
-                disabled={
-                  isSubmitting || !selectedGitRepository || isLoadingSelectedGitRepositoryBranches
-                }
-              >
-                <SelectTrigger className="h-10 w-full px-3 font-normal">
-                  <div className="flex min-w-0 items-center gap-2">
-                    {isLoadingSelectedGitRepositoryBranches ? (
-                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-                    ) : (
-                      <GitBranch className="h-4 w-4 shrink-0" />
-                    )}
-                    <SelectValue placeholder={t('welcome.sourceType.branchPlaceholder')} />
-                  </div>
-                </SelectTrigger>
-                <SelectContent>
-                  {selectedGitRepositoryBranches.length === 0 ? (
-                    <SelectItem value="__no_branches__" disabled>
-                      {t('welcome.sourceType.noBranches')}
-                    </SelectItem>
-                  ) : (
-                    selectedGitRepositoryBranches.map(branch => (
-                      <SelectItem key={branch.name} value={branch.name}>
-                        {branch.name}
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {(gitRepositoryLoadError || selectedGitRepositoryBranchLoadError) && (
-              <div className="flex items-center justify-between gap-2 rounded-md border border-destructive/30 px-3 py-2 text-xs text-destructive">
-                <span>
-                  {gitRepositoryLoadError
-                    ? t('welcome.sourceType.repositoriesLoadError')
-                    : t('welcome.sourceType.branchesLoadError')}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 px-2 text-xs"
-                  onClick={
-                    gitRepositoryLoadError
-                      ? handleGitRepositoryRetry
-                      : handleGitRepositoryBranchRetry
-                  }
-                >
-                  {t('common.retry')}
-                </Button>
-              </div>
-            )}
-          </div>
+      <div className="w-full max-w-3xl mb-4 space-y-2">
+        {sourceSelections.length === 0 && (
+          <div className="flex min-w-0 items-center gap-2">{renderAddSourceMenu('h-8 w-8')}</div>
         )}
+
+        {sourceSelections.map((source, index) => {
+          const selectedGitRepository = source.gitRepositoryName
+            ? (gitRepositoryByName.get(source.gitRepositoryName) ?? null)
+            : null;
+          const selectedGitRepositoryBranches = source.gitRepositoryName
+            ? (gitRepositoryBranches[source.gitRepositoryName] ?? [])
+            : [];
+          const isLoadingSelectedGitRepositoryBranches =
+            source.gitRepositoryName !== null &&
+            loadingGitRepositoryBranchName === source.gitRepositoryName;
+          const selectedGitRepositoryBranchLoadError =
+            source.gitRepositoryName !== null &&
+            gitRepositoryBranchLoadErrors[source.gitRepositoryName] === true;
+          const showAddButton = index === sourceSelections.length - 1;
+
+          return (
+            <div key={source.id} className="space-y-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="flex min-w-0 items-center gap-1">
+                  {source.type === 'databricks_workspace' && (
+                    <WorkspaceSelector
+                      value={source.workspaceSelection}
+                      onChange={workspaceSelection =>
+                        updateSourceSelection(source.id, current => ({
+                          ...current,
+                          workspaceSelection,
+                        }))
+                      }
+                      disabled={isSubmitting}
+                    />
+                  )}
+
+                  {source.type === 'git_repository' && (
+                    <>
+                      <Popover
+                        open={openGitRepositorySourceId === source.id}
+                        onOpenChange={open => handleGitRepositorySearchOpenChange(source.id, open)}
+                      >
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={openGitRepositorySourceId === source.id}
+                            className="h-8 min-w-0 w-fit max-w-full justify-between gap-3 px-2 text-sm font-normal"
+                            disabled={isSubmitting}
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <GitPullRequest className="h-3.5 w-3.5 shrink-0" />
+                              <span
+                                className={cn(
+                                  'truncate',
+                                  !source.gitRepositoryName && 'text-muted-foreground'
+                                )}
+                              >
+                                {source.gitRepositoryName ??
+                                  t('welcome.sourceType.repositoryPlaceholder')}
+                              </span>
+                            </div>
+                            <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          className="w-[var(--radix-popover-trigger-width)] p-0"
+                          align="start"
+                        >
+                          <Command shouldFilter={false}>
+                            <CommandInput
+                              value={gitRepositorySearchQuery}
+                              onValueChange={setGitRepositorySearchQuery}
+                              placeholder={t('welcome.sourceType.repositorySearchPlaceholder')}
+                            />
+                            <CommandList>
+                              <CommandEmpty>{gitRepositoryEmptyMessage}</CommandEmpty>
+                              {filteredGitRepositories.map(repository => (
+                                <CommandItem
+                                  key={repository.full_name}
+                                  value={repository.full_name}
+                                  onSelect={() => handleGitRepositorySelect(source.id, repository)}
+                                >
+                                  <Check
+                                    className={cn(
+                                      'h-4 w-4',
+                                      source.gitRepositoryName === repository.full_name
+                                        ? 'opacity-100'
+                                        : 'opacity-0'
+                                    )}
+                                  />
+                                  <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                  <span className="truncate">{repository.full_name}</span>
+                                </CommandItem>
+                              ))}
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+
+                      <Select
+                        value={source.gitRepositoryBranch ?? undefined}
+                        onValueChange={branch =>
+                          updateSourceSelection(source.id, current => ({
+                            ...current,
+                            gitRepositoryBranch: branch,
+                          }))
+                        }
+                        disabled={
+                          isSubmitting ||
+                          !selectedGitRepository ||
+                          isLoadingSelectedGitRepositoryBranches
+                        }
+                      >
+                        <SelectTrigger className="h-8 min-w-0 w-fit max-w-[150px] px-2 text-sm font-normal">
+                          <div className="flex min-w-0 items-center gap-2">
+                            {isLoadingSelectedGitRepositoryBranches ? (
+                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                            ) : (
+                              <GitBranch className="h-3.5 w-3.5 shrink-0" />
+                            )}
+                            <SelectValue placeholder={t('welcome.sourceType.branchPlaceholder')} />
+                          </div>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {selectedGitRepositoryBranches.length === 0 ? (
+                            <SelectItem value="__no_branches__" disabled>
+                              {t('welcome.sourceType.noBranches')}
+                            </SelectItem>
+                          ) : (
+                            selectedGitRepositoryBranches.map(branch => (
+                              <SelectItem key={branch.name} value={branch.name}>
+                                {branch.name}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </>
+                  )}
+
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => handleRemoveSourceSelection(source.id)}
+                    disabled={isSubmitting}
+                    aria-label={t('common.remove')}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+
+                {showAddButton ? renderAddSourceMenu('h-8 w-8') : <div />}
+              </div>
+
+              {source.type === 'git_repository' &&
+                (gitRepositoryLoadError || selectedGitRepositoryBranchLoadError) && (
+                  <div className="flex items-center justify-between gap-2 rounded-md border border-destructive/30 px-3 py-2 text-xs text-destructive">
+                    <span>
+                      {gitRepositoryLoadError
+                        ? t('welcome.sourceType.repositoriesLoadError')
+                        : t('welcome.sourceType.branchesLoadError')}
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={
+                        gitRepositoryLoadError
+                          ? handleGitRepositoryRetry
+                          : () => handleGitRepositoryBranchRetry(source.gitRepositoryName)
+                      }
+                    >
+                      {t('common.retry')}
+                    </Button>
+                  </div>
+                )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Chat Input Area */}

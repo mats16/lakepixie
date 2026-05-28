@@ -21,14 +21,18 @@ import {
 import { MainHeader } from './MainHeader';
 import { MessageArea } from './MessageArea';
 import { InputArea } from './InputArea';
-import { WelcomeScreen, type NewSessionParams } from './WelcomeScreen';
+import {
+  WelcomeScreen,
+  type NewSessionParams,
+  type NewSessionSourceSelection,
+} from './WelcomeScreen';
 import { SessionNotFound } from './SessionNotFound';
-import { FloatingButtons } from './FloatingButtons';
 import { GitRepositoryStatusBar } from './GitRepositoryStatusBar';
 import { ExitPlanModeInputArea, type ExitPlanModeInputDecision } from './ExitPlanModeInputArea';
 import type { ExitPlanModeOptimisticResult } from './tool-use/types';
 import { useSessionEvents } from '@/hooks/useSessionEvents';
 import { useSession } from '@/hooks/useSession';
+import { useOpenWorkspace } from '@/hooks/useOpenWorkspace';
 import { AskUserQuestionProvider } from '@/contexts/AskUserQuestionContext';
 import { sessionService } from '@/services/session.service';
 import { extractTextFromContent } from '@/lib/content-builder';
@@ -60,6 +64,21 @@ function parseRepositoryFullName(fullName: string): { owner: string; repo: strin
   return { owner, repo };
 }
 
+function parseRepositoryUrl(urlValue: string): { owner: string; repo: string } | null {
+  let url: URL;
+  try {
+    url = new URL(urlValue);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== 'https:' || url.hostname !== 'github.com') return null;
+  const [owner, rawRepo] = url.pathname.replace(/^\/+/, '').split('/');
+  const repo = rawRepo?.replace(/\.git$/, '');
+  if (!owner || !repo) return null;
+  return { owner, repo };
+}
+
 interface MainAreaProps {
   branchName?: string;
   onSendMessage?: (content: UserMessageContentBlock[]) => void;
@@ -68,6 +87,8 @@ interface MainAreaProps {
 }
 
 const GIT_DIFF_REFRESH_DEBOUNCE_MS = 750;
+
+type GitNewSessionSourceSelection = Extract<NewSessionSourceSelection, { type: 'git_repository' }>;
 
 function getResolvedSessionModelId(
   modelId: string,
@@ -101,23 +122,13 @@ function getExitPlanOptimisticResult(
   }
 }
 
-function getFloatingButtonsBottomClassName(
-  hasActiveExitPlan: boolean,
-  hasGitRepositoryStatus: boolean
-): string | undefined {
-  if (hasActiveExitPlan && hasGitRepositoryStatus) return 'pb-[16rem]';
-  if (hasActiveExitPlan) return 'pb-[12.5rem]';
-  if (hasGitRepositoryStatus) return 'pb-[10.75rem]';
-  return undefined;
-}
-
 function buildAppCreateContext(params: {
   sessionTitle?: string | null;
-  workspacePath: string;
+  workspacePath?: string | null;
 }): string {
   return [
     params.sessionTitle ? `Session title: ${params.sessionTitle}` : null,
-    `Workspace path: ${params.workspacePath}`,
+    params.workspacePath ? `Workspace path: ${params.workspacePath}` : null,
   ]
     .filter((line): line is string => Boolean(line))
     .join('\n');
@@ -142,8 +153,6 @@ export function MainArea({
   const [optimisticPlanMode, setOptimisticPlanMode] = useState<boolean | null>(null);
   const [optimisticEffortLevel, setOptimisticEffortLevel] = useState<WsEffortLevel | null>(null);
   const [isCreatingApp, setIsCreatingApp] = useState(false);
-  const [hasAppYaml, setHasAppYaml] = useState<boolean | null>(null);
-  const [isCheckingAppYaml, setIsCheckingAppYaml] = useState(false);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gitRepositoryStatusRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -372,14 +381,19 @@ export function MainArea({
     }, [activeSession?.session_context?.outcomes]);
 
   const gitRepositoryStatus = useMemo(() => {
-    const gitSource = activeSession?.session_context?.sources.find(
-      (source): source is GitRepositorySource => source.type === 'git_repository'
-    );
-    const repoInfo = gitRepositoryOutcome
+    const gitSources =
+      activeSession?.session_context?.sources.filter(
+        (source): source is GitRepositorySource => source.type === 'git_repository'
+      ) ?? [];
+    if (gitSources.length !== 1) return null;
+
+    const gitSource = gitSources[0];
+    const repoInfoFromOutcome = gitRepositoryOutcome?.git_info.repo
       ? parseRepositoryFullName(gitRepositoryOutcome.git_info.repo)
       : null;
+    const repoInfo = repoInfoFromOutcome ?? parseRepositoryUrl(gitSource.url);
     const headBranch = gitRepositoryOutcome?.git_info.branches[0];
-    const baseBranch = gitSource ? parseGitBranchRevision(gitSource.revision) : null;
+    const baseBranch = parseGitBranchRevision(gitSource.revision);
     if (!repoInfo || !headBranch || !baseBranch) return null;
     return {
       ...repoInfo,
@@ -388,14 +402,9 @@ export function MainArea({
     };
   }, [gitRepositoryOutcome, activeSession?.session_context?.sources]);
 
-  // フローティングボタンを表示するかどうか
-  const hasFloatingButtons = !!databricksAppsOutcome || !!databricksWorkspaceOutcome;
-  const hasFloatingControls = hasFloatingButtons || !!gitRepositoryStatus;
-  const floatingButtonsBottomClassName = getFloatingButtonsBottomClassName(
-    !!activeExitPlan,
-    !!gitRepositoryStatus
-  );
+  const hasFloatingControls = !!gitRepositoryStatus;
   const gitStatusBottomClassName = activeExitPlan ? 'pb-[12.5rem]' : undefined;
+  const { openWorkspace, isOpeningWorkspace } = useOpenWorkspace(databricksWorkspaceOutcome?.path);
 
   const handleSend = (content: UserMessageContentBlock[]) => {
     onSendMessage?.(content);
@@ -505,36 +514,9 @@ export function MainArea({
     [isPlanMode, modeBeforePlan, refetchSession, sessionId, setPermissionMode, t]
   );
 
-  useEffect(() => {
-    const workspacePath = databricksWorkspaceOutcome?.path;
-    if (!sessionId || !workspacePath || databricksAppsOutcome) {
-      setHasAppYaml(null);
-      setIsCheckingAppYaml(false);
-      return;
-    }
-
-    let cancelled = false;
-    setIsCheckingAppYaml(true);
-    sessionService
-      .getAppCreatePrerequisites(sessionId)
-      .then(result => {
-        if (!cancelled) setHasAppYaml(result.has_app_yaml);
-      })
-      .catch(() => {
-        if (!cancelled) setHasAppYaml(null);
-      })
-      .finally(() => {
-        if (!cancelled) setIsCheckingAppYaml(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [databricksAppsOutcome, databricksWorkspaceOutcome?.path, sessionId]);
-
   const handleCreateApp = useCallback(async () => {
     const workspacePath = databricksWorkspaceOutcome?.path;
-    if (!sessionId || !workspacePath || isCreatingApp || hasAppYaml === false) return;
+    if (!sessionId || isCreatingApp) return;
 
     setIsCreatingApp(true);
     try {
@@ -559,7 +541,6 @@ export function MainArea({
   }, [
     activeSession?.title,
     databricksWorkspaceOutcome?.path,
-    hasAppYaml,
     isCreatingApp,
     refetchSession,
     sessionId,
@@ -572,27 +553,18 @@ export function MainArea({
     effortLevel,
     enableDatabricksSqlWrite,
     isPlanMode,
-    sourceType,
-    gitRepository,
-    gitRepositoryBranch,
-    workspaceSelection,
+    sourceSelections,
     mcpConfig,
     allowedTools,
     disallowedTools,
   }: NewSessionParams) => {
     try {
       setCreateSessionError(null);
-      const gitRepositoryForSession = sourceType === 'git_repository' ? gitRepository : null;
-      if (sourceType === 'git_repository' && githubOAuthAuthorization?.status !== 'connected') {
+      const hasGitRepositorySource = sourceSelections.some(
+        source => source.type === 'git_repository'
+      );
+      if (hasGitRepositorySource && githubOAuthAuthorization?.status !== 'connected') {
         setCreateSessionError(t('welcome.sourceType.githubAuthorizationRequired'));
-        return;
-      }
-      if (sourceType === 'git_repository' && !gitRepositoryForSession) {
-        setCreateSessionError(t('welcome.sourceType.repositoryRequired'));
-        return;
-      }
-      if (sourceType === 'git_repository' && !gitRepositoryBranch) {
-        setCreateSessionError(t('welcome.sourceType.branchRequired'));
         return;
       }
 
@@ -605,31 +577,48 @@ export function MainArea({
       const branchName = titleResult?.branch_name ?? createFallbackBranchName(textContent);
       const sources: SessionSource[] = [];
       const outcomes: SessionOutcome[] = [];
+      const gitSourceSelections = sourceSelections.filter(
+        (sourceSelection): sourceSelection is GitNewSessionSourceSelection =>
+          sourceSelection.type === 'git_repository'
+      );
+      const workspaceSourceSelection = sourceSelections.find(
+        sourceSelection => sourceSelection.type === 'databricks_workspace'
+      );
 
-      if (gitRepositoryForSession) {
-        sources.push({
-          allow_unrestricted_git_push: true,
-          revision: `refs/heads/${gitRepositoryBranch}`,
-          sparse_checkout_paths: [],
-          type: 'git_repository',
-          url: gitRepositoryForSession.url,
+      for (const sourceSelection of sourceSelections) {
+        if (sourceSelection.type === 'git_repository') {
+          sources.push({
+            allow_unrestricted_git_push: true,
+            revision: `refs/heads/${sourceSelection.gitRepositoryBranch}`,
+            sparse_checkout_paths: [],
+            type: 'git_repository',
+            url: sourceSelection.gitRepository.url,
+          });
+        } else {
+          sources.push({
+            type: 'databricks_workspace',
+            path: sourceSelection.workspaceSelection.path,
+          });
+        }
+      }
+
+      if (workspaceSourceSelection?.type === 'databricks_workspace') {
+        outcomes.push({
+          type: 'databricks_workspace',
+          path: workspaceSourceSelection.workspaceSelection.path,
         });
+      }
+
+      if (gitSourceSelections.length > 0) {
         outcomes.push({
           git_info: {
             branches: [branchName],
-            repo: gitRepositoryForSession.full_name,
             type: 'github',
+            ...(gitSourceSelections.length === 1
+              ? { repo: gitSourceSelections[0].gitRepository.full_name }
+              : {}),
           },
           type: 'git_repository',
-        });
-      } else if (workspaceSelection) {
-        sources.push({
-          type: 'databricks_workspace',
-          path: workspaceSelection.path,
-        });
-        outcomes.push({
-          type: 'databricks_workspace',
-          path: workspaceSelection.path,
         });
       }
 
@@ -711,14 +700,12 @@ export function MainArea({
     return <SessionNotFound onGoHome={() => navigate('/')} />;
   }
 
+  const showCreateAppButton = Boolean(activeSession && !databricksAppsOutcome);
   const createAppDisabled =
-    isCheckingAppYaml ||
-    hasAppYaml === false ||
+    !activeSession ||
     isAgentThinking ||
     sessionControlPending ||
-    activeSession?.session_status === 'archived';
-  const createAppTooltip =
-    hasAppYaml === false ? t('databricksApp.missingAppYamlWarning') : undefined;
+    activeSession.session_status === 'archived';
 
   return (
     <AskUserQuestionProvider value={askUserQuestionCtx}>
@@ -729,6 +716,14 @@ export function MainArea({
           sessionId={sessionId}
           onTitleUpdate={handleTitleUpdate}
           onArchive={handleArchive}
+          workspacePath={databricksWorkspaceOutcome?.path}
+          onOpenWorkspace={openWorkspace}
+          isOpeningWorkspace={isOpeningWorkspace}
+          showAppButton={!!databricksAppsOutcome}
+          showCreateAppButton={showCreateAppButton}
+          onCreateApp={handleCreateApp}
+          isCreatingApp={isCreatingApp}
+          createAppDisabled={createAppDisabled}
         />
         <MessageArea
           events={events}
@@ -765,18 +760,6 @@ export function MainArea({
             onModelChange={handleSessionModelChange}
             onEffortChange={handleSessionEffortChange}
             onPlanModeChange={handlePlanModeChange}
-          />
-        )}
-        {hasFloatingButtons && (
-          <FloatingButtons
-            sessionId={sessionId}
-            showAppButton={!!databricksAppsOutcome}
-            workspacePath={databricksWorkspaceOutcome?.path}
-            bottomClassName={floatingButtonsBottomClassName}
-            onCreateApp={handleCreateApp}
-            isCreatingApp={isCreatingApp}
-            createAppDisabled={createAppDisabled}
-            createAppTooltip={createAppTooltip}
           />
         )}
         {gitRepositoryStatus && (

@@ -136,12 +136,6 @@ function getLastEventIdHeader(value: string | string[] | undefined): string | un
   return value;
 }
 
-function parseRepositoryFullName(fullName: string): { owner: string; repo: string } | null {
-  const [owner, repo] = fullName.split('/');
-  if (!owner || !repo) return null;
-  return { owner, repo };
-}
-
 function createAuthStatusMessage(sessionId: SessionId, error: unknown): SDKAuthStatusMessage {
   const errorCode = (error as Error & { code?: string }).code;
   return {
@@ -652,13 +646,13 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
       const gitOutcome = context.outcomes.find(
         (outcome): outcome is GitRepositoryOutcome => outcome.type === 'git_repository'
       );
-      const gitSource = context.sources.find(
+      const gitSources = context.sources.filter(
         (source): source is GitRepositorySource => source.type === 'git_repository'
       );
-      const repo = gitOutcome ? parseRepositoryFullName(gitOutcome.git_info.repo) : null;
+      const gitSource = gitSources.length === 1 ? gitSources[0] : null;
       const headBranch = gitOutcome?.git_info.branches[0];
       const baseBranch = gitSource ? parseGitBranchRevision(gitSource.revision) : null;
-      if (!repo || !headBranch || !baseBranch) {
+      if (!gitSource || !headBranch || !baseBranch) {
         return sendError(reply, 404, 'NotFound', 'Git repository context not found');
       }
 
