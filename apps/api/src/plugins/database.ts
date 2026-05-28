@@ -359,6 +359,14 @@ async function initSqlite(fastify: FastifyInstance) {
       "expires_at" INTEGER NOT NULL,
       "created_at" INTEGER NOT NULL DEFAULT ${TS}
     );
+    CREATE TABLE IF NOT EXISTS "git_credential_registrations" (
+      "bearer_token" TEXT PRIMARY KEY,
+      "user_id" TEXT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+      "repo_full_name" TEXT NOT NULL,
+      "expires_at" INTEGER NOT NULL,
+      "created_at" INTEGER NOT NULL DEFAULT ${TS},
+      "updated_at" INTEGER NOT NULL DEFAULT ${TS}
+    );
     INSERT OR IGNORE INTO "app_settings" ("key", "value") VALUES ('app_title', 'ccbricks');
     INSERT OR IGNORE INTO "app_settings" ("key", "value") VALUES ('welcome_heading', 'Claude Code on Databricks');
     INSERT OR IGNORE INTO "app_settings" ("key", "value") VALUES ('default_new_user_role', 'admin');
@@ -369,6 +377,8 @@ async function initSqlite(fastify: FastifyInstance) {
     CREATE INDEX IF NOT EXISTS "github_user_authorizations_login_idx" ON "github_user_authorizations" ("github_login");
     CREATE INDEX IF NOT EXISTS "github_oauth_states_user_id_idx" ON "github_oauth_states" ("user_id");
     CREATE INDEX IF NOT EXISTS "github_oauth_states_expires_at_idx" ON "github_oauth_states" ("expires_at");
+    CREATE INDEX IF NOT EXISTS "git_credential_registrations_expires_at_idx" ON "git_credential_registrations" ("expires_at");
+    CREATE INDEX IF NOT EXISTS "git_credential_registrations_user_id_idx" ON "git_credential_registrations" ("user_id");
 
     -- updated_at 自動更新トリガー（ミリ秒精度）
     -- WHEN ガードで updated_at が変更されていない場合のみ発火（再帰防止）
@@ -402,6 +412,11 @@ async function initSqlite(fastify: FastifyInstance) {
       AFTER UPDATE ON "github_user_authorizations" FOR EACH ROW
       WHEN NEW."updated_at" = OLD."updated_at"
       BEGIN UPDATE "github_user_authorizations" SET "updated_at" = ${TS} WHERE "user_id" = NEW."user_id"; END;
+    DROP TRIGGER IF EXISTS "set_updated_at_git_credential_registrations";
+    CREATE TRIGGER "set_updated_at_git_credential_registrations"
+      AFTER UPDATE ON "git_credential_registrations" FOR EACH ROW
+      WHEN NEW."updated_at" = OLD."updated_at"
+      BEGIN UPDATE "git_credential_registrations" SET "updated_at" = ${TS} WHERE "bearer_token" = NEW."bearer_token"; END;
   `);
 
   // Drizzle ORM 初期化

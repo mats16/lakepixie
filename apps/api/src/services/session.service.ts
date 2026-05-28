@@ -652,7 +652,7 @@ async function configureGitCredentialHelper(
   cwd: string,
   repositoryUrl: string
 ): Promise<() => void> {
-  const registration = registerGitCredential(userId, repositoryUrl);
+  const registration = await registerGitCredential(fastify, userId, repositoryUrl);
   const helperPath = path.join(cwd, '.git', 'ccbricks-credential-helper.mjs');
   await writeFile(
     helperPath,
@@ -671,7 +671,9 @@ async function configureGitCredentialHelper(
   });
 
   return () => {
-    revokeGitCredential(registration.bearerToken);
+    void revokeGitCredential(fastify, registration.bearerToken).catch(error => {
+      fastify.log.warn({ error }, 'Failed to revoke git credential registration');
+    });
   };
 }
 

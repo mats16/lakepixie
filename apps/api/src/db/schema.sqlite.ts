@@ -203,6 +203,32 @@ export const githubOAuthStates = sqliteTable(
   })
 );
 
+/**
+ * git_credential_registrations テーブル
+ * Git credential helper の bearer token をレプリカ間で共有する
+ */
+export const gitCredentialRegistrations = sqliteTable(
+  'git_credential_registrations',
+  {
+    bearerToken: text('bearer_token').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    repoFullName: text('repo_full_name').notNull(),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(CURRENT_TIMESTAMP_MS),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(CURRENT_TIMESTAMP_MS),
+  },
+  table => ({
+    expiresAtIdx: index('git_credential_registrations_expires_at_idx').on(table.expiresAt),
+    userIdIdx: index('git_credential_registrations_user_id_idx').on(table.userId),
+  })
+);
+
 // =====================================================
 // Type Exports
 // =====================================================
@@ -215,6 +241,7 @@ export type InsertAppSettings = typeof appSettings.$inferInsert;
 export type InsertMcpServer = typeof mcpServers.$inferInsert;
 export type InsertGithubUserAuthorization = typeof githubUserAuthorizations.$inferInsert;
 export type InsertGithubOAuthState = typeof githubOAuthStates.$inferInsert;
+export type InsertGitCredentialRegistration = typeof gitCredentialRegistrations.$inferInsert;
 
 export type User = typeof users.$inferSelect;
 export type UserSettings = typeof userSettings.$inferSelect;
@@ -224,3 +251,4 @@ export type AppSettings = typeof appSettings.$inferSelect;
 export type McpServer = typeof mcpServers.$inferSelect;
 export type GithubUserAuthorization = typeof githubUserAuthorizations.$inferSelect;
 export type GithubOAuthState = typeof githubOAuthStates.$inferSelect;
+export type GitCredentialRegistrationRow = typeof gitCredentialRegistrations.$inferSelect;

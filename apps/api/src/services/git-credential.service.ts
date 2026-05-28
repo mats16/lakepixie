@@ -1,51 +1,56 @@
 import type { FastifyInstance } from 'fastify';
+import { eq, lt } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import {
+  GitHubOAuthAuthorizationRequiredError,
+  GitHubOAuthExpiredError,
+  GitHubOAuthNotConfiguredError,
   getValidGitHubUserAccessToken,
   toGitHubRepositoryFullName,
 } from './github-oauth.service.js';
+import { gitCredentialRegistrations } from '../db/schema.js';
 
 const CREDENTIAL_REGISTRATION_TTL_MS = 12 * 60 * 60 * 1000;
-
-interface RegisteredGitCredential {
-  userId: string;
-  repoFullName: string;
-  expiresAt: number;
-}
-
-const registeredCredentials = new Map<string, RegisteredGitCredential>();
 
 export interface GitCredentialRegistration {
   bearerToken: string;
   repoFullName: string;
 }
 
-function cleanupExpiredRegistrations(): void {
-  const now = Date.now();
-  for (const [token, registration] of registeredCredentials.entries()) {
-    if (registration.expiresAt <= now) {
-      registeredCredentials.delete(token);
-    }
-  }
+function nextExpiresAt(): Date {
+  return new Date(Date.now() + CREDENTIAL_REGISTRATION_TTL_MS);
 }
 
-export function registerGitCredential(
+async function cleanupExpiredRegistrations(fastify: FastifyInstance): Promise<void> {
+  await fastify.db
+    .delete(gitCredentialRegistrations)
+    .where(lt(gitCredentialRegistrations.expiresAt, new Date()));
+}
+
+export async function registerGitCredential(
+  fastify: FastifyInstance,
   userId: string,
   repository: string
-): GitCredentialRegistration {
-  cleanupExpiredRegistrations();
+): Promise<GitCredentialRegistration> {
+  await cleanupExpiredRegistrations(fastify);
   const repoFullName = toGitHubRepositoryFullName(repository);
   const bearerToken = randomBytes(32).toString('base64url');
-  registeredCredentials.set(bearerToken, {
+  await fastify.db.insert(gitCredentialRegistrations).values({
+    bearerToken,
     userId,
     repoFullName,
-    expiresAt: Date.now() + CREDENTIAL_REGISTRATION_TTL_MS,
+    expiresAt: nextExpiresAt(),
   });
   return { bearerToken, repoFullName };
 }
 
-export function revokeGitCredential(bearerToken: string): boolean {
-  return registeredCredentials.delete(bearerToken);
+export async function revokeGitCredential(
+  fastify: FastifyInstance,
+  bearerToken: string
+): Promise<void> {
+  await fastify.db
+    .delete(gitCredentialRegistrations)
+    .where(eq(gitCredentialRegistrations.bearerToken, bearerToken));
 }
 
 function parseCredentialInput(input: string): Record<string, string> {
@@ -98,8 +103,12 @@ export async function resolveGitCredentialRequest(
   bearerToken: string,
   input: string
 ): Promise<string> {
-  cleanupExpiredRegistrations();
-  const registration = registeredCredentials.get(bearerToken);
+  await cleanupExpiredRegistrations(fastify);
+  const [registration] = await fastify.db
+    .select()
+    .from(gitCredentialRegistrations)
+    .where(eq(gitCredentialRegistrations.bearerToken, bearerToken))
+    .limit(1);
   if (!registration) return '';
 
   const parsed = parseCredentialInput(input);
@@ -112,7 +121,24 @@ export async function resolveGitCredentialRequest(
     return '';
   }
 
-  const token = await getValidGitHubUserAccessToken(fastify, registration.userId);
+  let token: string;
+  try {
+    token = await getValidGitHubUserAccessToken(fastify, registration.userId);
+  } catch (error) {
+    if (
+      error instanceof GitHubOAuthAuthorizationRequiredError ||
+      error instanceof GitHubOAuthExpiredError ||
+      error instanceof GitHubOAuthNotConfiguredError
+    ) {
+      return '';
+    }
+    throw error;
+  }
+
+  await fastify.db
+    .update(gitCredentialRegistrations)
+    .set({ expiresAt: nextExpiresAt() })
+    .where(eq(gitCredentialRegistrations.bearerToken, bearerToken));
 
   return [
     'protocol=https',
@@ -129,6 +155,4 @@ export const __testing = {
   buildGitCredentialHelperScript,
   normalizeCredentialPath,
   parseCredentialInput,
-  revokeGitCredential,
-  registeredCredentials,
 };

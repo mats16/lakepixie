@@ -24,4 +24,11 @@ describe('github-oauth.service', () => {
       'Only HTTPS GitHub repository URLs are supported'
     );
   });
+
+  it('formats pull request head filters with the repository owner prefix', () => {
+    expect(__testing.normalizePullRequestListHead('acme', 'feature-x')).toBe('acme:feature-x');
+    expect(__testing.normalizePullRequestListHead('fork', 'alice:feature-x')).toBe(
+      'alice:feature-x'
+    );
+  });
 });

@@ -5,6 +5,7 @@ import {
   DatabricksSecretNotFoundError,
   deleteSecret,
   getSecret,
+  listSecretKeys,
   putSecret,
 } from './databricks-secrets.service.js';
 
@@ -67,6 +68,21 @@ function generateRawKey(): string {
   return randomBytes(KEY_LENGTH_BYTES).toString('hex');
 }
 
+function parseEncryptionKeyVersion(secretKey: string): string | null {
+  if (!secretKey.startsWith(ENCRYPTION_KEY_SECRET_PREFIX)) return null;
+  const version = secretKey.slice(ENCRYPTION_KEY_SECRET_PREFIX.length).trim();
+  return version || null;
+}
+
+function compareEncryptionKeyVersions(a: string, b: string): number {
+  const numericA = Number(a);
+  const numericB = Number(b);
+  if (Number.isFinite(numericA) && Number.isFinite(numericB)) {
+    return numericA - numericB;
+  }
+  return a.localeCompare(b);
+}
+
 function parseRawKey(value: string, version: string): Buffer {
   const trimmed = value.trim();
   if (!/^[0-9a-fA-F]{64}$/.test(trimmed)) {
@@ -86,6 +102,17 @@ async function getEncryptionKeyByVersionUnlocked(
 
 async function bootstrapInitialEncryptionKey(fastify: FastifyInstance): Promise<EncryptionKey> {
   const scope = getAppSecretScope(fastify);
+
+  const existingVersions = (await listSecretKeys(fastify, scope))
+    .map(parseEncryptionKeyVersion)
+    .filter((version): version is string => version !== null)
+    .sort(compareEncryptionKeyVersions);
+  const newestExistingVersion = existingVersions.at(-1);
+  if (newestExistingVersion && newestExistingVersion !== INITIAL_KEY_VERSION) {
+    const existingKey = await getEncryptionKeyByVersionUnlocked(fastify, newestExistingVersion);
+    await putSecret(fastify, scope, ACTIVE_KEY_VERSION_SECRET_KEY, newestExistingVersion);
+    return existingKey;
+  }
 
   let rawKey: string;
   try {
@@ -232,5 +259,6 @@ export const __testing = {
   INITIAL_KEY_VERSION,
   ACTIVE_KEY_VERSION_SECRET_KEY,
   getEncryptionKeySecretKey,
+  parseEncryptionKeyVersion,
   parseRawKey,
 };

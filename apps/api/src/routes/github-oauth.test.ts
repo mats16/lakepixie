@@ -5,11 +5,13 @@ import requestDecoratorPlugin from '../plugins/request-decorator.js';
 const {
   mockCompleteGitHubOAuthCallback,
   mockCreateGitHubOAuthAuthorizationUrl,
+  mockDeleteGitHubOAuthStateByState,
   mockGetGitHubOAuthAuthorizationStatus,
   mockRevokeGitHubOAuthAuthorization,
 } = vi.hoisted(() => ({
   mockCompleteGitHubOAuthCallback: vi.fn(),
   mockCreateGitHubOAuthAuthorizationUrl: vi.fn(),
+  mockDeleteGitHubOAuthStateByState: vi.fn(),
   mockGetGitHubOAuthAuthorizationStatus: vi.fn(),
   mockRevokeGitHubOAuthAuthorization: vi.fn(),
 }));
@@ -19,6 +21,7 @@ vi.mock('../services/github-oauth.service.js', () => ({
   GitHubOAuthNotConfiguredError: class GitHubOAuthNotConfiguredError extends Error {},
   completeGitHubOAuthCallback: mockCompleteGitHubOAuthCallback,
   createGitHubOAuthAuthorizationUrl: mockCreateGitHubOAuthAuthorizationUrl,
+  deleteGitHubOAuthStateByState: mockDeleteGitHubOAuthStateByState,
   getGitHubOAuthAuthorizationStatus: mockGetGitHubOAuthAuthorizationStatus,
   revokeGitHubOAuthAuthorization: mockRevokeGitHubOAuthAuthorization,
 }));
@@ -39,6 +42,11 @@ describe('github oauth route', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     app = Fastify({ logger: false });
+    app.decorate('config', {
+      APP_EXTERNAL_URL: '',
+      DATABRICKS_HOST: 'workspace.example.com',
+      NODE_ENV: 'development',
+    } as FastifyInstance['config']);
     await app.register(requestDecoratorPlugin);
     await app.register(githubOAuthRoute, { prefix: '/api' });
   });

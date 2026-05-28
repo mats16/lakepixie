@@ -280,6 +280,32 @@ export const githubOAuthStatesPolicy = pgPolicy('github_oauth_states_user_isolat
   withCheck: sql`user_id = current_setting('app.user_id', true)`,
 }).link(githubOAuthStates);
 
+/**
+ * git_credential_registrations テーブル
+ * Git credential helper の bearer token をレプリカ間で共有する
+ */
+export const gitCredentialRegistrations = pgTable(
+  'git_credential_registrations',
+  {
+    bearerToken: text('bearer_token').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    repoFullName: text('repo_full_name').notNull(),
+    expiresAt: timestamp('expires_at', { mode: 'date' }).notNull(),
+    createdAt: timestamp('created_at', { mode: 'date' })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp('updated_at', { mode: 'date' })
+      .notNull()
+      .default(sql`now()`),
+  },
+  table => ({
+    expiresAtIdx: index('git_credential_registrations_expires_at_idx').on(table.expiresAt),
+    userIdIdx: index('git_credential_registrations_user_id_idx').on(table.userId),
+  })
+);
+
 // =====================================================
 // Type Exports
 // =====================================================
@@ -293,6 +319,7 @@ export type InsertAppSettings = typeof appSettings.$inferInsert;
 export type InsertMcpServer = typeof mcpServers.$inferInsert;
 export type InsertGithubUserAuthorization = typeof githubUserAuthorizations.$inferInsert;
 export type InsertGithubOAuthState = typeof githubOAuthStates.$inferInsert;
+export type InsertGitCredentialRegistration = typeof gitCredentialRegistrations.$inferInsert;
 
 // Select types (for querying records)
 export type User = typeof users.$inferSelect;
@@ -303,3 +330,4 @@ export type AppSettings = typeof appSettings.$inferSelect;
 export type McpServer = typeof mcpServers.$inferSelect;
 export type GithubUserAuthorization = typeof githubUserAuthorizations.$inferSelect;
 export type GithubOAuthState = typeof githubOAuthStates.$inferSelect;
+export type GitCredentialRegistrationRow = typeof gitCredentialRegistrations.$inferSelect;

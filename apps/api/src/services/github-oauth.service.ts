@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { and, eq, lt } from 'drizzle-orm';
+import { and, eq, lt, sql } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { chmod, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -168,6 +168,14 @@ function hasNextPage(headers: Headers): boolean {
   );
 }
 
+async function parseResponseDetails(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return response.text().catch(() => undefined);
+  }
+}
+
 function getEncryptedSecret(row: {
   ciphertext: string;
   iv: string;
@@ -334,6 +342,10 @@ export function normalizePullRequestCreateHead(repositoryOwner: string, head: st
   return head.startsWith(ownerPrefix) ? head.slice(ownerPrefix.length) : head;
 }
 
+export function normalizePullRequestListHead(repositoryOwner: string, head: string): string {
+  return head.includes(':') ? head : `${repositoryOwner}:${head}`;
+}
+
 async function githubFetch<T>(
   url: string,
   token: string,
@@ -352,12 +364,7 @@ async function githubFetch<T>(
   });
 
   if (!response.ok) {
-    let details: unknown;
-    try {
-      details = await response.json();
-    } catch {
-      details = await response.text().catch(() => undefined);
-    }
+    const details = await parseResponseDetails(response);
     throw new GitHubOAuthError(`GitHub API returned ${response.status}`, details);
   }
 
@@ -425,6 +432,41 @@ async function getGitHubOAuthClientConfig(
   ]);
   if (!clientId || !clientSecret) throw new GitHubOAuthNotConfiguredError();
   return { clientId, clientSecret };
+}
+
+async function runAdminDatabaseTransaction(
+  fastify: FastifyInstance,
+  callback: (tx: typeof fastify.db) => Promise<void>
+): Promise<void> {
+  await fastify.db.transaction(async tx => {
+    if (!fastify.isSqlite) {
+      await tx.execute(sql`set local row_security = off`);
+    }
+    await callback(tx as unknown as typeof fastify.db);
+  });
+}
+
+async function deleteExpiredOAuthStates(fastify: FastifyInstance): Promise<void> {
+  await runAdminDatabaseTransaction(fastify, async tx => {
+    await tx.delete(githubOAuthStates).where(lt(githubOAuthStates.expiresAt, new Date()));
+  });
+}
+
+async function deleteOAuthStatesForUser(fastify: FastifyInstance, userId: string): Promise<void> {
+  await fastify.withUserContext(userId, async tx => {
+    await tx.delete(githubOAuthStates).where(eq(githubOAuthStates.userId, userId));
+  });
+}
+
+export async function deleteGitHubOAuthStateByState(
+  fastify: FastifyInstance,
+  state: string
+): Promise<void> {
+  await withEncryptionKeyLock(fastify, async () => {
+    await runAdminDatabaseTransaction(fastify, async tx => {
+      await tx.delete(githubOAuthStates).where(eq(githubOAuthStates.state, state));
+    });
+  });
 }
 
 export async function getGitHubOAuthAdminStatus(
@@ -522,6 +564,29 @@ async function saveAuthorizationWithinLock(params: {
   };
 
   await fastify.withUserContext(userId, async tx => {
+    const [existing] = (await tx
+      .select({
+        githubUserId: githubUserAuthorizations.githubUserId,
+        githubLogin: githubUserAuthorizations.githubLogin,
+      })
+      .from(githubUserAuthorizations)
+      .where(eq(githubUserAuthorizations.userId, userId))
+      .limit(1)) as Array<{ githubUserId: string; githubLogin: string }>;
+
+    if (existing && existing.githubUserId !== params.githubUserId) {
+      fastify.log.warn(
+        {
+          userId,
+          currentGitHubUserId: existing.githubUserId,
+          currentGitHubLogin: existing.githubLogin,
+          attemptedGitHubUserId: params.githubUserId,
+          attemptedGitHubLogin: params.githubLogin,
+        },
+        'Rejected GitHub OAuth account switch without explicit confirmation'
+      );
+      throw new GitHubOAuthError('GitHub account switch requires explicit confirmation');
+    }
+
     await tx.insert(githubUserAuthorizations).values(values).onConflictDoUpdate({
       target: githubUserAuthorizations.userId,
       set: values,
@@ -584,6 +649,26 @@ async function refreshAuthorizationWithinLock(
   return tokenResponse.access_token;
 }
 
+async function validateNonExpiringAccessTokenWithinLock(
+  fastify: FastifyInstance,
+  userId: string,
+  row: GithubUserAuthorization
+): Promise<string> {
+  const token = await decryptSecretWithinLock(fastify, accessTokenSecret(row));
+  try {
+    await githubRequest<GitHubUserResponse>('https://api.github.com/user', token);
+    return token;
+  } catch (error) {
+    if (refreshTokenSecret(row)) {
+      return refreshAuthorizationWithinLock(fastify, userId, row);
+    }
+    if (error instanceof GitHubOAuthError) {
+      throw new GitHubOAuthExpiredError();
+    }
+    throw error;
+  }
+}
+
 export async function getValidGitHubUserAccessToken(
   fastify: FastifyInstance,
   userId: string
@@ -593,10 +678,11 @@ export async function getValidGitHubUserAccessToken(
     const row = await getAuthorizationRow(fastify, userId);
     if (!row) throw new GitHubOAuthAuthorizationRequiredError();
 
-    if (
-      !row.tokenExpiresAt ||
-      row.tokenExpiresAt.getTime() - TOKEN_REFRESH_BUFFER_MS > Date.now()
-    ) {
+    if (!row.tokenExpiresAt) {
+      return validateNonExpiringAccessTokenWithinLock(fastify, userId, row);
+    }
+
+    if (row.tokenExpiresAt.getTime() - TOKEN_REFRESH_BUFFER_MS > Date.now()) {
       return decryptSecretWithinLock(fastify, accessTokenSecret(row));
     }
 
@@ -651,11 +737,11 @@ export async function createGitHubOAuthAuthorizationUrl(params: {
   const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MS);
 
   await withEncryptionKeyLock(params.fastify, async () => {
+    await deleteExpiredOAuthStates(params.fastify);
     const encryptionKey = await getActiveEncryptionKeyWithinLock(params.fastify);
     const encryptedCodeVerifier = encryptWithKey(codeVerifier, encryptionKey);
 
     await params.fastify.withUserContext(params.userId, async tx => {
-      await tx.delete(githubOAuthStates).where(lt(githubOAuthStates.expiresAt, new Date()));
       await tx.insert(githubOAuthStates).values({
         state,
         userId: params.userId,
@@ -736,8 +822,16 @@ export async function completeGitHubOAuthCallback(params: {
       throw new GitHubOAuthError('GitHub OAuth state has expired');
     }
 
+    const codeVerifier = await decryptSecretWithinLock(
+      params.fastify,
+      getCodeVerifierSecret(stateRow)
+    );
+    await params.fastify.withUserContext(params.userId, async tx => {
+      await tx.delete(githubOAuthStates).where(eq(githubOAuthStates.state, params.state));
+    });
+
     return {
-      codeVerifier: await decryptSecretWithinLock(params.fastify, getCodeVerifierSecret(stateRow)),
+      codeVerifier,
       redirectAfter: stateRow.redirectAfter || '/settings',
     };
   });
@@ -765,9 +859,6 @@ export async function completeGitHubOAuthCallback(params: {
     tokenExpiresAt: expiresAtFromSeconds(tokenResponse.expires_in),
     refreshTokenExpiresAt: expiresAtFromSeconds(tokenResponse.refresh_token_expires_in),
   });
-  await params.fastify.withUserContext(params.userId, async tx => {
-    await tx.delete(githubOAuthStates).where(eq(githubOAuthStates.state, params.state));
-  });
 
   return redirectAfter;
 }
@@ -781,31 +872,49 @@ export async function revokeGitHubOAuthAuthorization(
     if (!row) return null;
     return decryptSecretWithinLock(fastify, accessTokenSecret(row));
   });
-  if (!accessToken) return;
+  if (!accessToken) {
+    await deleteOAuthStatesForUser(fastify, userId);
+    return;
+  }
 
-  try {
-    const config = await getGitHubOAuthClientConfig(fastify);
-    await fetch(
-      `https://api.github.com/applications/${encodeURIComponent(config.clientId)}/token`,
-      {
-        method: 'DELETE',
-        headers: {
-          accept: 'application/vnd.github+json',
-          authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64')}`,
-          'content-type': 'application/json',
-          'user-agent': 'ccbricks',
-          'x-github-api-version': GITHUB_API_VERSION,
-        },
-        body: JSON.stringify({ access_token: accessToken }),
-      }
-    );
-  } catch (error) {
-    fastify.log.warn({ error, userId }, 'Failed to revoke GitHub OAuth token remotely');
+  const config = await getGitHubOAuthClientConfig(fastify);
+  const response = await fetch(
+    `https://api.github.com/applications/${encodeURIComponent(config.clientId)}/token`,
+    {
+      method: 'DELETE',
+      headers: {
+        accept: 'application/vnd.github+json',
+        authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64')}`,
+        'content-type': 'application/json',
+        'user-agent': 'ccbricks',
+        'x-github-api-version': GITHUB_API_VERSION,
+      },
+      body: JSON.stringify({ access_token: accessToken }),
+    }
+  );
+  if (!response.ok) {
+    const details = await parseResponseDetails(response);
+    throw new GitHubOAuthError(`GitHub token revocation returned ${response.status}`, details);
   }
 
   await fastify.withUserContext(userId, async tx => {
     await tx.delete(githubUserAuthorizations).where(eq(githubUserAuthorizations.userId, userId));
+    await tx.delete(githubOAuthStates).where(eq(githubOAuthStates.userId, userId));
   });
+}
+
+function isEncryptionKeyReferenced(
+  version: string,
+  authorizationRows: Array<
+    Pick<GithubUserAuthorization, 'accessTokenKeyVersion' | 'refreshTokenKeyVersion'>
+  >,
+  stateRows: Array<Pick<GithubOAuthState, 'codeVerifierKeyVersion'>>
+): boolean {
+  return (
+    authorizationRows.some(
+      row => row.accessTokenKeyVersion === version || row.refreshTokenKeyVersion === version
+    ) || stateRows.some(row => row.codeVerifierKeyVersion === version)
+  );
 }
 
 async function listUserInstallations(token: string): Promise<GitHubInstallationResponse[]> {
@@ -936,16 +1045,25 @@ export async function listGitHubUserPullRequests(
 ): Promise<GitRepositoryPullRequest[]> {
   const token = await getValidGitHubUserAccessToken(fastify, userId);
   const { owner, repo } = parseGitHubRepository(repository);
-  const url = new URL(
-    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`
-  );
-  if (query.head) url.searchParams.set('head', query.head);
-  if (query.base) url.searchParams.set('base', query.base);
-  if (query.state) url.searchParams.set('state', query.state);
-  const pulls = await githubRequest<GitHubPullRequestResponse[]>(url.toString(), token);
-  return pulls
-    .map(normalizePullRequest)
-    .filter((pull): pull is GitRepositoryPullRequest => pull !== null);
+  const pulls: GitRepositoryPullRequest[] = [];
+  for (let page = 1; page <= GITHUB_MAX_PAGES; page += 1) {
+    const url = new URL(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`
+    );
+    url.searchParams.set('per_page', GITHUB_PAGE_SIZE);
+    url.searchParams.set('page', String(page));
+    if (query.head) url.searchParams.set('head', normalizePullRequestListHead(owner, query.head));
+    if (query.base) url.searchParams.set('base', query.base);
+    if (query.state) url.searchParams.set('state', query.state);
+    const { data, headers } = await githubFetch<GitHubPullRequestResponse[]>(url.toString(), token);
+    pulls.push(
+      ...data
+        .map(normalizePullRequest)
+        .filter((pull): pull is GitRepositoryPullRequest => pull !== null)
+    );
+    if (!hasNextPage(headers)) break;
+  }
+  return pulls;
 }
 
 export async function getGitHubUserPullRequest(
@@ -975,7 +1093,7 @@ export async function createGitHubUserPullRequest(
     head: request.head,
     base: request.base,
     state: 'open',
-  }).catch(() => []);
+  });
   if (existingPulls[0]) return existingPulls[0];
 
   const token = await getValidGitHubUserAccessToken(fastify, userId);
@@ -1046,17 +1164,10 @@ export async function rotateGitHubOAuthEncryptionKey(
     const newKey = await createNextEncryptionKey(fastify);
     let reencryptedAuthorizations = 0;
 
-    const runRotationTransaction = async (
-      callback: (tx: typeof fastify.db) => Promise<void>
-    ): Promise<void> => {
-      if (fastify.isSqlite) {
-        await callback(fastify.db);
-        return;
-      }
-      await fastify.db.transaction(async tx => callback(tx as unknown as typeof fastify.db));
-    };
+    await setActiveEncryptionKeyVersion(fastify, newKey.version);
 
-    await runRotationTransaction(async tx => {
+    await runAdminDatabaseTransaction(fastify, async tx => {
+      await tx.delete(githubOAuthStates).where(lt(githubOAuthStates.expiresAt, new Date()));
       const authorizationRows = (await tx
         .select()
         .from(githubUserAuthorizations)) as GithubUserAuthorization[];
@@ -1111,19 +1222,19 @@ export async function rotateGitHubOAuthEncryptionKey(
       }
     });
 
-    await setActiveEncryptionKeyVersion(fastify, newKey.version);
-
     if (oldActiveKey.version !== newKey.version) {
-      const [authorizationRows, stateRows] = await Promise.all([
-        fastify.db.select().from(githubUserAuthorizations),
-        fastify.db.select().from(githubOAuthStates),
-      ]);
-      const oldKeyStillReferenced =
-        authorizationRows.some(
-          row =>
-            row.accessTokenKeyVersion === oldActiveKey.version ||
-            row.refreshTokenKeyVersion === oldActiveKey.version
-        ) || stateRows.some(row => row.codeVerifierKeyVersion === oldActiveKey.version);
+      let oldKeyStillReferenced = true;
+      await runAdminDatabaseTransaction(fastify, async tx => {
+        const [authorizationRows, stateRows] = (await Promise.all([
+          tx.select().from(githubUserAuthorizations),
+          tx.select().from(githubOAuthStates),
+        ])) as [GithubUserAuthorization[], GithubOAuthState[]];
+        oldKeyStillReferenced = isEncryptionKeyReferenced(
+          oldActiveKey.version,
+          authorizationRows,
+          stateRows
+        );
+      });
       if (!oldKeyStillReferenced) {
         await deleteEncryptionKeyVersion(fastify, oldActiveKey.version).catch(error => {
           fastify.log.warn(
@@ -1143,6 +1254,7 @@ export async function rotateGitHubOAuthEncryptionKey(
 
 export const __testing = {
   createCodeChallenge,
+  normalizePullRequestListHead,
   normalizeRepositoryCandidate,
   parseGitHubRepository,
   toGitHubRepositoryFullName,

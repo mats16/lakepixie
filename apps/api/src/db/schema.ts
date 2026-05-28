@@ -25,6 +25,7 @@ export const appSettings = mod.appSettings;
 export const mcpServers = mod.mcpServers;
 export const githubUserAuthorizations = mod.githubUserAuthorizations;
 export const githubOAuthStates = mod.githubOAuthStates;
+export const gitCredentialRegistrations = mod.gitCredentialRegistrations;
 
 // 行型は PG スキーマから re-export（canonical types）
 export type {
@@ -42,6 +43,8 @@ export type {
   McpServer,
   InsertGithubUserAuthorization,
   InsertGithubOAuthState,
+  InsertGitCredentialRegistration,
   GithubUserAuthorization,
   GithubOAuthState,
+  GitCredentialRegistrationRow,
 } from './schema.pg.js';

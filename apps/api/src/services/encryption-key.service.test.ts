@@ -21,6 +21,11 @@ vi.mock('./databricks-secrets.service.js', async importOriginal => {
     deleteSecret: vi.fn(async (_fastify: FastifyInstance, scope: string, key: string) => {
       secretStore.delete(`${scope}:${key}`);
     }),
+    listSecretKeys: vi.fn(async (_fastify: FastifyInstance, scope: string) =>
+      [...secretStore.keys()]
+        .filter(key => key.startsWith(`${scope}:`))
+        .map(key => key.slice(scope.length + 1))
+    ),
   };
 });
 
@@ -63,5 +68,18 @@ describe('encryption-key.service', () => {
 
     expect(encrypted.keyVersion).toBe(__testing.INITIAL_KEY_VERSION);
     await expect(decryptSecret(fastify, encrypted)).resolves.toBe('ghu_token');
+  });
+
+  it('restores the newest existing key when the active pointer is missing', async () => {
+    const scope = getAppSecretScope(fastify);
+    secretStore.set(`${scope}:encryption-key-v1`, '1'.repeat(64));
+    secretStore.set(`${scope}:encryption-key-v1700000000000`, '2'.repeat(64));
+
+    const key = await getActiveEncryptionKey(fastify);
+
+    expect(key.version).toBe('1700000000000');
+    expect(secretStore.get(`${scope}:${__testing.ACTIVE_KEY_VERSION_SECRET_KEY}`)).toBe(
+      '1700000000000'
+    );
   });
 });

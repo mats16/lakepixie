@@ -3,13 +3,32 @@ import type { ApiError, GitHubOAuthAuthorizationResponse } from '@repo/types';
 import {
   completeGitHubOAuthCallback,
   createGitHubOAuthAuthorizationUrl,
+  deleteGitHubOAuthStateByState,
   getGitHubOAuthAuthorizationStatus,
   GitHubOAuthError,
   GitHubOAuthNotConfiguredError,
   revokeGitHubOAuthAuthorization,
 } from '../services/github-oauth.service.js';
 
+function getConfiguredOrigin(request: FastifyRequest): string | null {
+  const configuredUrl = request.server.config.APP_EXTERNAL_URL.trim();
+  if (!configuredUrl) return null;
+  try {
+    return new URL(configuredUrl).origin;
+  } catch {
+    request.log.warn({ configuredUrl }, 'Ignoring invalid APP_EXTERNAL_URL');
+    return null;
+  }
+}
+
 function getExternalOrigin(request: FastifyRequest): string {
+  const configuredOrigin = getConfiguredOrigin(request);
+  if (configuredOrigin) return configuredOrigin;
+
+  if (request.server.config.NODE_ENV === 'production') {
+    return `https://${request.server.config.DATABRICKS_HOST}`;
+  }
+
   const forwardedHost = request.headers['x-forwarded-host'];
   const forwardedProto = request.headers['x-forwarded-proto'];
   const origin = request.headers.origin;
@@ -103,7 +122,14 @@ const githubOAuthRoute: FastifyPluginAsync = async fastify => {
   }>('/github/oauth/callback', async (request, reply) => {
     const userId = request.ctx?.user.id;
     const fallbackRedirect = appendGithubResult('/settings', 'error');
-    if (!userId) return reply.redirect(fallbackRedirect);
+    if (!userId) {
+      if (request.query.state) {
+        await deleteGitHubOAuthStateByState(fastify, request.query.state).catch(error => {
+          fastify.log.warn({ error }, 'Failed to delete orphan GitHub OAuth state');
+        });
+      }
+      return reply.redirect(fallbackRedirect);
+    }
 
     if (request.query.error || !request.query.code || !request.query.state) {
       return reply.redirect(fallbackRedirect);
@@ -133,8 +159,19 @@ const githubOAuthRoute: FastifyPluginAsync = async fastify => {
       const userId = request.ctx?.user.id;
       if (!userId) return reply.status(401).send(sendUnauthorized());
 
-      await revokeGitHubOAuthAuthorization(fastify, userId);
-      return reply.send({ success: true });
+      try {
+        await revokeGitHubOAuthAuthorization(fastify, userId);
+        return reply.send({ success: true });
+      } catch (error) {
+        if (error instanceof GitHubOAuthError || error instanceof GitHubOAuthNotConfiguredError) {
+          return reply.status(502).send({
+            error: 'GitHubOAuthRevokeFailed',
+            message: 'Failed to revoke GitHub OAuth authorization',
+            statusCode: 502,
+          });
+        }
+        throw error;
+      }
     }
   );
 };
