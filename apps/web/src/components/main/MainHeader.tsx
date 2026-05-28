@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
+import { SidebarTrigger } from '@/components/ui/sidebar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -141,11 +142,15 @@ export function MainHeader({
   return (
     <>
       <div className="flex items-center justify-between h-[50px] px-4 border-b border-border">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2">
+          <SidebarTrigger
+            aria-label={t('sidebar.openSidebar')}
+            className="h-8 w-8 shrink-0 md:hidden"
+          />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="gap-1 font-medium text-foreground">
-                <span className="truncate max-w-[300px]">{title}</span>
+              <Button variant="ghost" className="min-w-0 gap-1 px-2 font-medium text-foreground">
+                <span className="min-w-0 max-w-[300px] truncate">{title}</span>
                 <ChevronDown className="h-4 w-4 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
@@ -167,7 +172,7 @@ export function MainHeader({
           </DropdownMenu>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           {branchName && (
             <TooltipProvider>
               <Tooltip>

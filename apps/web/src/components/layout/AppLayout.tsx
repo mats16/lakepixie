@@ -109,8 +109,10 @@ export function AppLayout() {
     <AppSidebar {...sidebarProps} collapsible={isMobile ? 'offcanvas' : 'icon'} />
   );
 
+  const showStandaloneMobileSidebarTrigger = !sessionId;
+
   // Mobile: SidebarProvider manages open state internally via SidebarTrigger (offcanvas mode)
-  // Desktop: We manage open state manually with isSidebarOpen/toggleSidebar for smooth animation
+  // Desktop: SidebarProvider manages icon collapse state for the sidebar.
   if (isMobile) {
     return (
       <TooltipProvider>
@@ -118,9 +120,11 @@ export function AppLayout() {
           <div className="flex h-screen w-screen overflow-hidden bg-background">
             {sidebar}
             <div className="flex-1 h-full min-w-0 flex flex-col">
-              <div className="flex items-center gap-2 p-2 border-b border-border shrink-0">
-                <SidebarTrigger />
-              </div>
+              {showStandaloneMobileSidebarTrigger && (
+                <div className="flex items-center gap-2 p-2 border-b border-border shrink-0">
+                  <SidebarTrigger aria-label={t('sidebar.openSidebar')} />
+                </div>
+              )}
               <div className="flex-1 min-h-0">
                 {isAdminPage ? (
                   <AdminContent />
