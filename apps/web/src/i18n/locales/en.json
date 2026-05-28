@@ -103,7 +103,7 @@
     "updateError": "Failed to update settings",
     "githubAuthorization": "GitHub",
     "githubAuthorizationDescription": "GitHub credentials used for repository clone, push, and pull request operations.",
-    "githubAccount": "GitHub account",
+    "githubAccount": "GitHub",
     "githubNoAccount": "No account connected",
     "connectGitHub": "Connect",
     "reconnectGitHub": "Reconnect",
@@ -125,6 +125,7 @@
     "cancel": "Cancel",
     "save": "Save",
     "add": "Add",
+    "remove": "Remove",
     "clear": "Clear",
     "loadMore": "Load more"
   },
@@ -322,7 +323,7 @@
     "comingSoon": "This feature is coming soon",
     "databricksSqlWriteToggle": "Allow write operations (INSERT/UPDATE/DELETE) on Databricks SQL",
     "sourceType": {
-      "placeholder": "Select source type",
+      "placeholder": "Select source",
       "repositoryPlaceholder": "Select repository",
       "repositorySearchPlaceholder": "Search repositories...",
       "noRepositories": "No repositories found",
@@ -334,7 +335,7 @@
       "repositoryRequired": "Select a Git repository",
       "branchRequired": "Select a Git branch",
       "databricksWorkspace": "Databricks Workspace",
-      "gitRepository": "Git repository"
+      "gitRepository": "GitHub"
     },
     "quickstarts": {
       "lakeflow": {

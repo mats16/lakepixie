@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, Check, Plus, X } from 'lucide-react';
+import { ChevronDown, Check, Plus } from 'lucide-react';
 import type { WorkspaceSelection } from '@repo/types';
 import {
   DropdownMenu,
@@ -40,14 +40,6 @@ export function WorkspaceSelector({ value, onChange, disabled = false }: Workspa
     [onChange, addRecentWorkspace]
   );
 
-  const handleClear = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onChange(null);
-    },
-    [onChange]
-  );
-
   const displayName = value ? extractNameFromPath(value.path) : t('workspace.select');
   const Icon = getWorkspaceObjectIcon(value?.object_type);
 
@@ -58,34 +50,17 @@ export function WorkspaceSelector({ value, onChange, disabled = false }: Workspa
           <Button
             variant="outline"
             className={cn(
-              'w-full justify-between h-10 px-3 font-normal',
+              'h-8 min-w-0 w-fit max-w-full justify-between gap-3 px-2 text-sm font-normal',
               !value && 'text-muted-foreground'
             )}
             disabled={disabled}
           >
             <div className="flex items-center gap-2 min-w-0">
-              <Icon className="h-4 w-4 shrink-0" />
+              <Icon className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate">{displayName}</span>
             </div>
             <div className="flex items-center gap-1">
-              {value && (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="p-1 hover:bg-accent rounded"
-                  onClick={handleClear}
-                  onPointerDown={e => e.stopPropagation()}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      handleClear(e as unknown as React.MouseEvent);
-                    }
-                  }}
-                  aria-label={t('workspace.clear')}
-                >
-                  <X className="h-3 w-3" />
-                </span>
-              )}
-              <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
             </div>
           </Button>
         </DropdownMenuTrigger>

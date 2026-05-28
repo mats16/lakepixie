@@ -103,7 +103,7 @@
     "updateError": "設定の更新に失敗しました",
     "githubAuthorization": "GitHub",
     "githubAuthorizationDescription": "リポジトリの clone、push、PR 作成に使う GitHub 認証情報です。",
-    "githubAccount": "GitHub アカウント",
+    "githubAccount": "GitHub",
     "githubNoAccount": "未接続です",
     "connectGitHub": "接続",
     "reconnectGitHub": "再接続",
@@ -125,6 +125,7 @@
     "cancel": "キャンセル",
     "save": "保存",
     "add": "追加",
+    "remove": "削除",
     "clear": "クリア",
     "loadMore": "もっと読み込む"
   },
@@ -322,7 +323,7 @@
     "comingSoon": "この機能は近日公開予定です",
     "databricksSqlWriteToggle": "Databricks SQL の書き込み操作（INSERT/UPDATE/DELETE）を許可",
     "sourceType": {
-      "placeholder": "ソースタイプを選択",
+      "placeholder": "ソースを選択",
       "repositoryPlaceholder": "リポジトリを選択",
       "repositorySearchPlaceholder": "リポジトリを検索...",
       "noRepositories": "リポジトリが見つかりません",
@@ -334,7 +335,7 @@
       "repositoryRequired": "Git リポジトリを選択してください",
       "branchRequired": "Git ブランチを選択してください",
       "databricksWorkspace": "Databricks Workspace",
-      "gitRepository": "Git リポジトリ"
+      "gitRepository": "GitHub"
     },
     "quickstarts": {
       "lakeflow": {

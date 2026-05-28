@@ -527,27 +527,18 @@ export function MainArea({
     effortLevel,
     enableDatabricksSqlWrite,
     isPlanMode,
-    sourceType,
-    gitRepository,
-    gitRepositoryBranch,
-    workspaceSelection,
+    sourceSelections,
     mcpConfig,
     allowedTools,
     disallowedTools,
   }: NewSessionParams) => {
     try {
       setCreateSessionError(null);
-      const gitRepositoryForSession = sourceType === 'git_repository' ? gitRepository : null;
-      if (sourceType === 'git_repository' && githubOAuthAuthorization?.status !== 'connected') {
+      const hasGitRepositorySource = sourceSelections.some(
+        source => source.type === 'git_repository'
+      );
+      if (hasGitRepositorySource && githubOAuthAuthorization?.status !== 'connected') {
         setCreateSessionError(t('welcome.sourceType.githubAuthorizationRequired'));
-        return;
-      }
-      if (sourceType === 'git_repository' && !gitRepositoryForSession) {
-        setCreateSessionError(t('welcome.sourceType.repositoryRequired'));
-        return;
-      }
-      if (sourceType === 'git_repository' && !gitRepositoryBranch) {
-        setCreateSessionError(t('welcome.sourceType.branchRequired'));
         return;
       }
 
@@ -561,30 +552,37 @@ export function MainArea({
       const sources: SessionSource[] = [];
       const outcomes: SessionOutcome[] = [];
 
-      if (gitRepositoryForSession) {
-        sources.push({
-          allow_unrestricted_git_push: true,
-          revision: `refs/heads/${gitRepositoryBranch}`,
-          sparse_checkout_paths: [],
-          type: 'git_repository',
-          url: gitRepositoryForSession.url,
-        });
+      for (const sourceSelection of sourceSelections) {
+        if (sourceSelection.type === 'git_repository') {
+          sources.push({
+            allow_unrestricted_git_push: true,
+            revision: `refs/heads/${sourceSelection.gitRepositoryBranch}`,
+            sparse_checkout_paths: [],
+            type: 'git_repository',
+            url: sourceSelection.gitRepository.url,
+          });
+        } else {
+          sources.push({
+            type: 'databricks_workspace',
+            path: sourceSelection.workspaceSelection.path,
+          });
+        }
+      }
+
+      const primarySource = sourceSelections[0];
+      if (primarySource?.type === 'git_repository') {
         outcomes.push({
           git_info: {
             branches: [branchName],
-            repo: gitRepositoryForSession.full_name,
+            repo: primarySource.gitRepository.full_name,
             type: 'github',
           },
           type: 'git_repository',
         });
-      } else if (workspaceSelection) {
-        sources.push({
-          type: 'databricks_workspace',
-          path: workspaceSelection.path,
-        });
+      } else if (primarySource?.type === 'databricks_workspace') {
         outcomes.push({
           type: 'databricks_workspace',
-          path: workspaceSelection.path,
+          path: primarySource.workspaceSelection.path,
         });
       }
 

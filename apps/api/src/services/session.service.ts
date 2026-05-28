@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, and, inArray, lt, asc } from 'drizzle-orm';
 import { accessSync, constants as fsConstants } from 'node:fs';
-import { chmod, writeFile } from 'node:fs/promises';
+import { access as accessFile, chmod, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { spawnAsync } from '../utils/spawn.js';
 import {
@@ -265,6 +265,14 @@ function assertValidDatabricksWorkspacePath(workspacePath: string): void {
     hasControlCharacter(workspacePath)
   ) {
     throw new SessionAppCreateError(400, 'Databricks Workspace path is invalid');
+  }
+}
+
+async function assertDatabricksAppYamlExists(cwd: string): Promise<void> {
+  try {
+    await accessFile(path.join(cwd, 'app.yaml'), fsConstants.R_OK);
+  } catch {
+    throw new SessionAppCreateError(400, 'app.yaml is required to create a Databricks App');
   }
 }
 
@@ -2222,6 +2230,7 @@ async function createDatabricksAppForSessionUnlocked(
 
   const sessionsBaseDir = path.join(fastify.config.CCBRICKS_BASE_DIR, 'sessions');
   const cwd = await validatePathWithinBase(sessionContext.cwd, sessionsBaseDir);
+  await assertDatabricksAppYamlExists(cwd);
 
   let metadataAccessToken: string;
   try {
@@ -2541,6 +2550,7 @@ export const __testing = {
   buildSessionToolSettings,
   cloneGitRepositorySource,
   buildDefaultSessionWorkspacePath,
+  assertDatabricksAppYamlExists,
   buildSessionContextWithDatabricksAppOutcomes,
   extractEventUuid,
   getGitBranchFromRevision,
