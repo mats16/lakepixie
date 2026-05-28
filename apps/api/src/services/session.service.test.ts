@@ -279,6 +279,7 @@ describe('session.service', () => {
 
     it('should clone a git source and create the outcome branch', async () => {
       await __testing.cloneGitRepositorySource(
+        'test-user-id',
         {
           allow_unrestricted_git_push: true,
           revision: 'refs/heads/main',

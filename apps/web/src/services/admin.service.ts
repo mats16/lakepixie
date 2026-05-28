@@ -1,14 +1,15 @@
 import type {
   AdminUserListResponse,
   AppSettingsResponse,
-  GitHubAppAuthResponse,
+  GitHubOAuthAdminResponse,
+  GitHubOAuthEncryptionKeyRotateResponse,
   ServingEndpointsByTier,
   TelemetryCatalogListResponse,
   TelemetrySchemaListResponse,
   TelemetrySetupRequest,
   TelemetrySetupResponse,
   UpdateAppSettingsRequest,
-  UpdateGitHubAppAuthRequest,
+  UpdateGitHubOAuthAdminRequest,
 } from '@repo/types';
 import { apiClient } from './api-client';
 
@@ -43,13 +44,21 @@ export const adminService = {
       body: JSON.stringify(settings),
     }),
 
-  getGitHubAppAuth: () => apiClient<GitHubAppAuthResponse>('/api/admin/github-app-auth'),
+  getGitHubOAuth: () => apiClient<GitHubOAuthAdminResponse>('/api/admin/github/oauth'),
 
-  updateGitHubAppAuth: (settings: UpdateGitHubAppAuthRequest) =>
-    apiClient<GitHubAppAuthResponse>('/api/admin/github-app-auth', {
+  updateGitHubOAuth: (settings: UpdateGitHubOAuthAdminRequest) =>
+    apiClient<GitHubOAuthAdminResponse>('/api/admin/github/oauth', {
       method: 'PATCH',
       body: JSON.stringify(settings),
     }),
+
+  rotateGitHubOAuthEncryptionKey: () =>
+    apiClient<GitHubOAuthEncryptionKeyRotateResponse>(
+      '/api/admin/github/oauth/encryption-key/rotate',
+      {
+        method: 'POST',
+      }
+    ),
 
   getServingEndpoints: () => apiClient<ServingEndpointsByTier>('/api/models'),
 };

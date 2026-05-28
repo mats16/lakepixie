@@ -11,16 +11,18 @@ import type {
   GitRepositoryPullRequestStateFilter,
 } from '@repo/types';
 import {
-  createGitHubAppPullRequest,
-  getGitHubAppPullRequest,
-  getGitHubAppRepositoryBranch,
-  GitHubAppAuthError,
-  GitHubAppAuthNotConfiguredError,
-  listGitHubAppPullRequests,
-  listGitHubAppRepositoryBranches,
-  listGitHubAppRepositories,
+  createGitHubUserPullRequest,
+  getGitHubUserPullRequest,
+  getGitHubUserRepositoryBranch,
+  GitHubOAuthAuthorizationRequiredError,
+  GitHubOAuthError,
+  GitHubOAuthExpiredError,
+  GitHubOAuthNotConfiguredError,
+  listGitHubUserPullRequests,
+  listGitHubUserRepositories,
+  listGitHubUserRepositoryBranches,
   normalizePullRequestCreateHead,
-} from '../services/github-app-auth.service.js';
+} from '../services/github-oauth.service.js';
 import { getLocalGitPullRequestContext } from '../services/local-git.service.js';
 import {
   PullRequestMetadataService,
@@ -31,13 +33,6 @@ import { getSession } from '../services/session.service.js';
 import { createUserContext } from '../lib/user-context.js';
 import { SessionId } from '../models/session.model.js';
 import { validatePathWithinBase } from '../utils/path-validation.js';
-
-function canUseEmptyRepositoryList(error: unknown): boolean {
-  return (
-    error instanceof GitHubAppAuthNotConfiguredError ||
-    (error instanceof Error && error.message.includes('Service Principal token is not available'))
-  );
-}
 
 function decodePathParam(value: string): string {
   try {
@@ -56,11 +51,36 @@ function setRepositoryCacheHeaders(reply: FastifyReply, maxAgeSeconds: number): 
 }
 
 function getErrorDetails(error: unknown): unknown {
-  if (error instanceof GitHubAppAuthError) {
+  if (error instanceof GitHubOAuthError) {
     return error.details ?? error.message;
   }
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function sendGitHubOAuthError(error: unknown, reply: FastifyReply): boolean {
+  if (error instanceof GitHubOAuthNotConfiguredError) {
+    reply.status(503).send({
+      error: 'GitHubOAuthNotConfigured',
+      message: 'GitHub OAuth is not configured',
+      statusCode: 503,
+    });
+    return true;
+  }
+
+  if (
+    error instanceof GitHubOAuthAuthorizationRequiredError ||
+    error instanceof GitHubOAuthExpiredError
+  ) {
+    reply.status(401).send({
+      error: 'GitHubAuthorizationRequired',
+      message: error.message,
+      statusCode: 401,
+    });
+    return true;
+  }
+
+  return false;
 }
 
 function parseSessionId(value: string): SessionId | null {
@@ -91,19 +111,16 @@ const gitRepositoriesRoute: FastifyPluginAsync = async fastify => {
       const searchQuery = request.query.q?.trim() ?? '';
 
       try {
-        const repositories = await listGitHubAppRepositories(fastify, searchQuery);
+        const repositories = await listGitHubUserRepositories(fastify, user.id, searchQuery);
         setRepositoryCacheHeaders(reply, REPOSITORIES_BROWSER_CACHE_SECONDS);
         return reply.send({ repositories });
       } catch (error) {
-        if (canUseEmptyRepositoryList(error)) {
-          fastify.log.debug({ error }, 'GitHub App auth is not configured for repository listing');
-          return reply.send({ repositories: [] });
-        }
+        if (sendGitHubOAuthError(error, reply)) return reply;
 
-        fastify.log.warn({ error }, 'Failed to list repositories from GitHub App installation');
+        fastify.log.warn({ error, userId: user.id }, 'Failed to list GitHub repositories');
         return reply.status(502).send({
           error: 'GitHub repository list unavailable',
-          message: 'Failed to list repositories from GitHub App installation',
+          message: 'Failed to list GitHub repositories',
           statusCode: 502,
         });
       }
@@ -126,25 +143,16 @@ const gitRepositoriesRoute: FastifyPluginAsync = async fastify => {
     const repository = getRepositoryFullName(request.params);
 
     try {
-      const branches = await listGitHubAppRepositoryBranches(fastify, repository);
+      const branches = await listGitHubUserRepositoryBranches(fastify, user.id, repository);
       setRepositoryCacheHeaders(reply, BRANCHES_BROWSER_CACHE_SECONDS);
       return reply.send({ branches });
     } catch (error) {
-      if (canUseEmptyRepositoryList(error)) {
-        fastify.log.debug(
-          { error, repository },
-          'GitHub App auth is not configured for branch listing'
-        );
-        return reply.send({ branches: [] });
-      }
+      if (sendGitHubOAuthError(error, reply)) return reply;
 
-      fastify.log.warn(
-        { error, repository },
-        'Failed to list branches from GitHub App installation'
-      );
+      fastify.log.warn({ error, userId: user.id, repository }, 'Failed to list GitHub branches');
       return reply.status(502).send({
         error: 'GitHub repository branch list unavailable',
-        message: 'Failed to list branches from GitHub App installation',
+        message: 'Failed to list GitHub branches',
         statusCode: 502,
       });
     }
@@ -168,10 +176,17 @@ const gitRepositoriesRoute: FastifyPluginAsync = async fastify => {
     const branch = decodePathParam(request.params.branch_name);
 
     try {
-      const branchDetail = await getGitHubAppRepositoryBranch(fastify, repository, branch);
+      const branchDetail = await getGitHubUserRepositoryBranch(
+        fastify,
+        user.id,
+        repository,
+        branch
+      );
       setRepositoryCacheHeaders(reply, BRANCH_DETAIL_BROWSER_CACHE_SECONDS);
       return reply.send(branchDetail);
     } catch (error) {
+      if (sendGitHubOAuthError(error, reply)) return reply;
+
       fastify.log.warn({ error, repository, branch }, 'Failed to get GitHub branch details');
       return reply.status(502).send({
         error: 'GitHub repository branch unavailable',
@@ -199,13 +214,15 @@ const gitRepositoriesRoute: FastifyPluginAsync = async fastify => {
     const repository = getRepositoryFullName(request.params);
 
     try {
-      const pulls = await listGitHubAppPullRequests(fastify, repository, {
+      const pulls = await listGitHubUserPullRequests(fastify, user.id, repository, {
         head: request.query.head,
         base: request.query.base,
         state: request.query.state,
       });
       return reply.send({ pulls });
     } catch (error) {
+      if (sendGitHubOAuthError(error, reply)) return reply;
+
       fastify.log.warn({ error, repository }, 'Failed to list GitHub pull requests');
       return reply.status(502).send({
         error: 'GitHub pull request list unavailable',
@@ -240,9 +257,11 @@ const gitRepositoriesRoute: FastifyPluginAsync = async fastify => {
     }
 
     try {
-      const pull = await getGitHubAppPullRequest(fastify, repository, pullNumber);
+      const pull = await getGitHubUserPullRequest(fastify, user.id, repository, pullNumber);
       return reply.send(pull);
     } catch (error) {
+      if (sendGitHubOAuthError(error, reply)) return reply;
+
       fastify.log.warn({ error, repository, pullNumber }, 'Failed to get GitHub pull request');
       return reply.status(502).send({
         error: 'GitHub pull request unavailable',
@@ -350,7 +369,7 @@ const gitRepositoriesRoute: FastifyPluginAsync = async fastify => {
         }
       }
 
-      const pull = await createGitHubAppPullRequest(fastify, repository, {
+      const pull = await createGitHubUserPullRequest(fastify, user.id, repository, {
         title: pullTitle,
         ...(pullBody ? { body: pullBody } : {}),
         head: trimmedHead,
@@ -359,6 +378,8 @@ const gitRepositoriesRoute: FastifyPluginAsync = async fastify => {
       });
       return reply.status(201).send(pull);
     } catch (error) {
+      if (sendGitHubOAuthError(error, reply)) return reply;
+
       fastify.log.warn({ error, repository }, 'Failed to create GitHub pull request');
       return reply.status(502).send({
         error: 'GitHub pull request create unavailable',

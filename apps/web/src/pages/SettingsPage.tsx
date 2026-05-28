@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { Loader2, X } from 'lucide-react';
+import { GitPullRequest, Loader2, LogOut, X } from 'lucide-react';
 import { CLAUDE_CODE_PRESET_TOOLS, type UpdateUserSettingsRequest } from '@repo/types';
 import { useUser } from '@/hooks/useUser';
-import { userSettingsService } from '@/services';
+import { githubOAuthService, userSettingsService } from '@/services';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 type ToolListSettingKey = 'allowed_tools' | 'disallowed_tools';
 type ToolInputKind = 'allowed' | 'disallowed';
@@ -152,14 +153,25 @@ function ToolTagInput({
   );
 }
 
+function getGitHubAuthorizationBadgeVariant(status: string | undefined) {
+  return status === 'connected' ? 'default' : 'secondary';
+}
+
 export function SettingsContent() {
   const { t } = useTranslation();
-  const { modelSettings, refetchModelSettings } = useUser();
+  const {
+    githubOAuthAuthorization,
+    modelSettings,
+    refetchGitHubAuthorization,
+    refetchModelSettings,
+  } = useUser();
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [isDisconnectingGitHub, setIsDisconnectingGitHub] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(true);
   const [allowedToolQuery, setAllowedToolQuery] = useState('');
   const [disallowedToolQuery, setDisallowedToolQuery] = useState('');
   const [focusedToolInput, setFocusedToolInput] = useState<'allowed' | 'disallowed' | null>(null);
+  const [activeSettingsTab, setActiveSettingsTab] = useState('claude-code');
 
   useEffect(() => {
     let isMounted = true;
@@ -207,6 +219,24 @@ export function SettingsContent() {
     }
   };
 
+  const connectGitHub = () => {
+    const query = new URLSearchParams({ redirect_after: '/settings' });
+    window.location.assign(`/api/github/oauth/authorize?${query}`);
+  };
+
+  const disconnectGitHub = async () => {
+    setIsDisconnectingGitHub(true);
+    try {
+      await githubOAuthService.revoke();
+      await refetchGitHubAuthorization();
+      toast.success(t('settings.githubDisconnectSuccess'));
+    } catch {
+      toast.error(t('settings.githubDisconnectError'));
+    } finally {
+      setIsDisconnectingGitHub(false);
+    }
+  };
+
   if (isRefreshing || !modelSettings) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -244,144 +274,225 @@ export function SettingsContent() {
       </div>
 
       <div className="flex-1 overflow-auto p-4">
-        <div className="max-w-3xl space-y-6">
-          <section>
-            <div className="mb-4 flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-semibold">{t('settings.toolConfiguration')}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t('settings.toolConfigurationDescription')}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={savingKey !== null || areAllPresetToolsAllowed}
-                onClick={enableAllPresetTools}
-              >
-                {t('settings.enableAllTools')}
-              </Button>
-            </div>
-            <div className="rounded-lg border border-border p-4 space-y-5">
-              <div>
-                <div className="mb-3 flex items-center justify-between gap-4">
+        <div className="max-w-3xl">
+          <Tabs
+            value={activeSettingsTab}
+            onValueChange={setActiveSettingsTab}
+            className="space-y-6"
+          >
+            <TabsList>
+              <TabsTrigger value="claude-code">{t('settings.claudeCodeTab')}</TabsTrigger>
+              <TabsTrigger value="integration">{t('settings.integrationTab')}</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="integration" className="mt-0 space-y-6">
+              <section>
+                <div className="mb-4">
                   <div>
-                    <h3 className="text-sm font-medium">{t('settings.allowedTools')}</h3>
+                    <h2 className="text-lg font-semibold">{t('settings.githubAuthorization')}</h2>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      {t('settings.allowedToolCount', {
-                        count: selectedAllowedTools.length,
-                        standardCount: allowedToolCount,
-                        total: CLAUDE_CODE_PRESET_TOOLS.length,
-                      })}
+                      {t('settings.githubAuthorizationDescription')}
                     </p>
                   </div>
                 </div>
-                <ToolTagInput
-                  kind="allowed"
-                  settingKey="allowed_tools"
-                  selectedTools={selectedAllowedTools}
-                  query={allowedToolQuery}
-                  savingKey={savingKey}
-                  focusedInput={focusedToolInput}
-                  placeholder={t('settings.toolInputPlaceholder')}
-                  addPlaceholder={t('settings.toolInputAddPlaceholder')}
-                  customHint={tool => t('settings.addCustomToolHint', { tool })}
-                  removeLabel={tool => t('settings.removeToolLabel', { tool })}
-                  onQueryChange={setAllowedToolQuery}
-                  onFocusChange={setFocusedToolInput}
-                  onToolsChange={handleToolsChange}
-                />
-              </div>
+                <div className="rounded-lg border border-border p-4">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <GitPullRequest className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-sm font-medium">{t('settings.githubAccount')}</h3>
+                          <Badge
+                            variant={getGitHubAuthorizationBadgeVariant(
+                              githubOAuthAuthorization?.status
+                            )}
+                            className="rounded-md"
+                          >
+                            {t(
+                              `settings.githubStatus.${githubOAuthAuthorization?.status ?? 'unknown'}`
+                            )}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {githubOAuthAuthorization?.login
+                            ? githubOAuthAuthorization.login
+                            : t('settings.githubNoAccount')}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      {githubOAuthAuthorization?.status === 'connected' ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={isDisconnectingGitHub}
+                          onClick={() => void disconnectGitHub()}
+                        >
+                          {isDisconnectingGitHub ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <LogOut className="h-4 w-4" />
+                          )}
+                          {t('settings.disconnectGitHub')}
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          disabled={githubOAuthAuthorization?.status === 'not_configured'}
+                          onClick={connectGitHub}
+                        >
+                          <GitPullRequest className="h-4 w-4" />
+                          {githubOAuthAuthorization?.status === 'expired'
+                            ? t('settings.reconnectGitHub')
+                            : t('settings.connectGitHub')}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </TabsContent>
 
-              <div>
-                <div className="mb-3 flex items-center justify-between gap-4">
+            <TabsContent value="claude-code" className="mt-0 space-y-6">
+              <section>
+                <div className="mb-4 flex items-start justify-between gap-4">
                   <div>
-                    <h3 className="text-sm font-medium">{t('settings.disallowedTools')}</h3>
+                    <h2 className="text-lg font-semibold">{t('settings.toolConfiguration')}</h2>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      {t('settings.disallowedToolCount', {
-                        count: selectedDisallowedTools.length,
-                      })}
+                      {t('settings.toolConfigurationDescription')}
                     </p>
                   </div>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={savingKey !== null || selectedDisallowedTools.length === 0}
-                    onClick={() => handleToolListChange('disallowed_tools', null)}
+                    disabled={savingKey !== null || areAllPresetToolsAllowed}
+                    onClick={enableAllPresetTools}
                   >
-                    {t('settings.clearDisallowedTools')}
+                    {t('settings.enableAllTools')}
                   </Button>
                 </div>
-                <ToolTagInput
-                  kind="disallowed"
-                  settingKey="disallowed_tools"
-                  selectedTools={selectedDisallowedTools}
-                  query={disallowedToolQuery}
-                  savingKey={savingKey}
-                  focusedInput={focusedToolInput}
-                  placeholder={t('settings.toolInputPlaceholder')}
-                  addPlaceholder={t('settings.toolInputAddPlaceholder')}
-                  customHint={tool => t('settings.addCustomToolHint', { tool })}
-                  removeLabel={tool => t('settings.removeToolLabel', { tool })}
-                  onQueryChange={setDisallowedToolQuery}
-                  onFocusChange={setFocusedToolInput}
-                  onToolsChange={handleToolsChange}
-                />
-              </div>
-            </div>
-          </section>
-
-          <section>
-            <h2 className="mb-4 text-lg font-semibold">{t('settings.modelConfiguration')}</h2>
-            <div className="rounded-lg border border-border p-4 space-y-4">
-              {(
-                [
-                  {
-                    key: 'opus_model_id',
-                    label: t('admin.opusModel'),
-                    value: modelSettings.opus_model_id,
-                    options: modelSettings.allowed_model_ids.opus,
-                  },
-                  {
-                    key: 'sonnet_model_id',
-                    label: t('admin.sonnetModel'),
-                    value: modelSettings.sonnet_model_id,
-                    options: modelSettings.allowed_model_ids.sonnet,
-                  },
-                  {
-                    key: 'haiku_model_id',
-                    label: t('admin.haikuModel'),
-                    value: modelSettings.haiku_model_id,
-                    options: modelSettings.allowed_model_ids.haiku,
-                  },
-                ] as const
-              ).map(({ key, label, value, options }) => {
-                return (
-                  <div key={key} className="flex items-center justify-between gap-4">
-                    <p className="shrink-0 text-sm font-medium">{label}</p>
-                    <Select
-                      value={value}
-                      onValueChange={nextValue => handleModelChange(key, nextValue)}
-                      disabled={savingKey !== null || options.length === 0}
-                    >
-                      <SelectTrigger className="w-[360px] max-w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {options.map(modelId => (
-                          <SelectItem key={modelId} value={modelId}>
-                            {modelId}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                <div className="rounded-lg border border-border p-4 space-y-5">
+                  <div>
+                    <div className="mb-3 flex items-center justify-between gap-4">
+                      <div>
+                        <h3 className="text-sm font-medium">{t('settings.allowedTools')}</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {t('settings.allowedToolCount', {
+                            count: selectedAllowedTools.length,
+                            standardCount: allowedToolCount,
+                            total: CLAUDE_CODE_PRESET_TOOLS.length,
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                    <ToolTagInput
+                      kind="allowed"
+                      settingKey="allowed_tools"
+                      selectedTools={selectedAllowedTools}
+                      query={allowedToolQuery}
+                      savingKey={savingKey}
+                      focusedInput={focusedToolInput}
+                      placeholder={t('settings.toolInputPlaceholder')}
+                      addPlaceholder={t('settings.toolInputAddPlaceholder')}
+                      customHint={tool => t('settings.addCustomToolHint', { tool })}
+                      removeLabel={tool => t('settings.removeToolLabel', { tool })}
+                      onQueryChange={setAllowedToolQuery}
+                      onFocusChange={setFocusedToolInput}
+                      onToolsChange={handleToolsChange}
+                    />
                   </div>
-                );
-              })}
-            </div>
-          </section>
+
+                  <div>
+                    <div className="mb-3 flex items-center justify-between gap-4">
+                      <div>
+                        <h3 className="text-sm font-medium">{t('settings.disallowedTools')}</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {t('settings.disallowedToolCount', {
+                            count: selectedDisallowedTools.length,
+                          })}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={savingKey !== null || selectedDisallowedTools.length === 0}
+                        onClick={() => handleToolListChange('disallowed_tools', null)}
+                      >
+                        {t('settings.clearDisallowedTools')}
+                      </Button>
+                    </div>
+                    <ToolTagInput
+                      kind="disallowed"
+                      settingKey="disallowed_tools"
+                      selectedTools={selectedDisallowedTools}
+                      query={disallowedToolQuery}
+                      savingKey={savingKey}
+                      focusedInput={focusedToolInput}
+                      placeholder={t('settings.toolInputPlaceholder')}
+                      addPlaceholder={t('settings.toolInputAddPlaceholder')}
+                      customHint={tool => t('settings.addCustomToolHint', { tool })}
+                      removeLabel={tool => t('settings.removeToolLabel', { tool })}
+                      onQueryChange={setDisallowedToolQuery}
+                      onFocusChange={setFocusedToolInput}
+                      onToolsChange={handleToolsChange}
+                    />
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <h2 className="mb-4 text-lg font-semibold">{t('settings.modelConfiguration')}</h2>
+                <div className="rounded-lg border border-border p-4 space-y-4">
+                  {(
+                    [
+                      {
+                        key: 'opus_model_id',
+                        label: t('admin.opusModel'),
+                        value: modelSettings.opus_model_id,
+                        options: modelSettings.allowed_model_ids.opus,
+                      },
+                      {
+                        key: 'sonnet_model_id',
+                        label: t('admin.sonnetModel'),
+                        value: modelSettings.sonnet_model_id,
+                        options: modelSettings.allowed_model_ids.sonnet,
+                      },
+                      {
+                        key: 'haiku_model_id',
+                        label: t('admin.haikuModel'),
+                        value: modelSettings.haiku_model_id,
+                        options: modelSettings.allowed_model_ids.haiku,
+                      },
+                    ] as const
+                  ).map(({ key, label, value, options }) => {
+                    return (
+                      <div key={key} className="flex items-center justify-between gap-4">
+                        <p className="shrink-0 text-sm font-medium">{label}</p>
+                        <Select
+                          value={value}
+                          onValueChange={nextValue => handleModelChange(key, nextValue)}
+                          disabled={savingKey !== null || options.length === 0}
+                        >
+                          <SelectTrigger className="w-[360px] max-w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {options.map(modelId => (
+                              <SelectItem key={modelId} value={modelId}>
+                                {modelId}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
     </div>

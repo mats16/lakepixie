@@ -1,24 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Check,
   ChevronsUpDown,
+  Copy,
   Database,
   ExternalLink,
   HelpCircle,
   Info,
   Loader2,
+  RefreshCw,
   Save,
   ShieldCheck,
-  Trash2,
-  Upload,
   User as UserIcon,
 } from 'lucide-react';
 import type {
   AdminUserInfo,
   AppSettingsResponse,
-  GitHubAppAuthResponse,
+  GitHubOAuthAdminResponse,
   ServingEndpointsByTier,
   UpdateAppSettingsRequest,
 } from '@repo/types';
@@ -125,88 +125,109 @@ function useAdminSettings() {
 
 type AdminSettingsState = ReturnType<typeof useAdminSettings>;
 
-function useGitHubAppAuth() {
+function useGitHubOAuth() {
   const { t } = useTranslation();
-  const [githubAppAuth, setGitHubAppAuth] = useState<GitHubAppAuthResponse | null>(null);
-  const [isLoadingGitHubAppAuth, setIsLoadingGitHubAppAuth] = useState(true);
-  const [isSavingGitHubAppAuth, setIsSavingGitHubAppAuth] = useState(false);
+  const [githubOAuth, setGitHubOAuth] = useState<GitHubOAuthAdminResponse | null>(null);
+  const [isLoadingGitHubOAuth, setIsLoadingGitHubOAuth] = useState(true);
+  const [isSavingGitHubOAuth, setIsSavingGitHubOAuth] = useState(false);
+  const [isRotatingEncryptionKey, setIsRotatingEncryptionKey] = useState(false);
 
-  const fetchGitHubAppAuth = useCallback(async () => {
+  const fetchGitHubOAuth = useCallback(async () => {
     try {
-      setIsLoadingGitHubAppAuth(true);
-      const data = await adminService.getGitHubAppAuth();
-      setGitHubAppAuth(data);
+      setIsLoadingGitHubOAuth(true);
+      const data = await adminService.getGitHubOAuth();
+      setGitHubOAuth(data);
     } catch {
-      toast.error(t('admin.fetchGitHubAppAuthError'));
+      toast.error(t('admin.fetchGitHubOAuthError'));
     } finally {
-      setIsLoadingGitHubAppAuth(false);
+      setIsLoadingGitHubOAuth(false);
     }
   }, [t]);
 
   useEffect(() => {
-    fetchGitHubAppAuth();
-  }, [fetchGitHubAppAuth]);
+    fetchGitHubOAuth();
+  }, [fetchGitHubOAuth]);
 
-  const saveGitHubAppAuth = useCallback(
-    async (patch: Parameters<typeof adminService.updateGitHubAppAuth>[0]) => {
-      setIsSavingGitHubAppAuth(true);
+  const saveGitHubOAuth = useCallback(
+    async (patch: Parameters<typeof adminService.updateGitHubOAuth>[0]) => {
+      setIsSavingGitHubOAuth(true);
       try {
-        const updated = await adminService.updateGitHubAppAuth(patch);
-        setGitHubAppAuth(updated);
+        const updated = await adminService.updateGitHubOAuth(patch);
+        setGitHubOAuth(updated);
         toast.success(t('admin.updateSettingsSuccess'));
         return true;
       } catch {
-        toast.error(t('admin.updateGitHubAppAuthError'));
+        toast.error(t('admin.updateGitHubOAuthError'));
         return false;
       } finally {
-        setIsSavingGitHubAppAuth(false);
+        setIsSavingGitHubOAuth(false);
       }
     },
     [t]
   );
 
+  const rotateEncryptionKey = useCallback(async () => {
+    setIsRotatingEncryptionKey(true);
+    try {
+      const result = await adminService.rotateGitHubOAuthEncryptionKey();
+      await fetchGitHubOAuth();
+      toast.success(
+        t('admin.rotateEncryptionKeySuccess', {
+          count: result.reencrypted_authorizations,
+        })
+      );
+      return true;
+    } catch {
+      toast.error(t('admin.rotateEncryptionKeyError'));
+      return false;
+    } finally {
+      setIsRotatingEncryptionKey(false);
+    }
+  }, [fetchGitHubOAuth, t]);
+
   return {
-    githubAppAuth,
-    isLoadingGitHubAppAuth,
-    isSavingGitHubAppAuth,
-    saveGitHubAppAuth,
+    githubOAuth,
+    isLoadingGitHubOAuth,
+    isSavingGitHubOAuth,
+    isRotatingEncryptionKey,
+    rotateEncryptionKey,
+    saveGitHubOAuth,
   };
 }
 
-interface GitHubAppGuideDialogProps {
+interface GitHubOAuthGuideDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-function GitHubAppGuideDialog({ open, onOpenChange }: GitHubAppGuideDialogProps) {
+function GitHubOAuthGuideDialog({ open, onOpenChange }: GitHubOAuthGuideDialogProps) {
   const { t } = useTranslation();
   const steps = [
-    t('admin.githubAppGuideStepCreate'),
-    t('admin.githubAppGuideStepUrls'),
-    t('admin.githubAppGuideStepPermissions'),
-    t('admin.githubAppGuideStepInstall'),
-    t('admin.githubAppGuideStepPrivateKey'),
-    t('admin.githubAppGuideStepSave'),
+    t('admin.githubOAuthGuideStepCreate'),
+    t('admin.githubOAuthGuideStepCallback'),
+    t('admin.githubOAuthGuideStepPermissions'),
+    t('admin.githubOAuthGuideStepInstall'),
+    t('admin.githubOAuthGuideStepSave'),
   ];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{t('admin.githubAppGuideTitle')}</DialogTitle>
-          <DialogDescription>{t('admin.githubAppGuideDescription')}</DialogDescription>
+          <DialogTitle>{t('admin.githubOAuthGuideTitle')}</DialogTitle>
+          <DialogDescription>{t('admin.githubOAuthGuideDescription')}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5">
           <Button variant="outline" asChild>
             <a href={GITHUB_APPS_SETTINGS_URL} target="_blank" rel="noreferrer">
               <ExternalLink className="h-4 w-4" />
-              {t('admin.githubAppGuideOpenSettings')}
+              {t('admin.githubOAuthGuideOpenSettings')}
             </a>
           </Button>
 
           <div className="rounded-md border border-border p-4">
-            <h3 className="text-sm font-medium">{t('admin.githubAppGuideStepsTitle')}</h3>
+            <h3 className="text-sm font-medium">{t('admin.githubOAuthGuideStepsTitle')}</h3>
             <ol className="mt-3 space-y-3 text-sm text-muted-foreground">
               {steps.map((step, index) => (
                 <li key={step} className="flex gap-3">
@@ -220,20 +241,14 @@ function GitHubAppGuideDialog({ open, onOpenChange }: GitHubAppGuideDialogProps)
           </div>
 
           <div className="rounded-md border border-border p-4">
-            <h3 className="text-sm font-medium">{t('admin.githubAppGuideValuesTitle')}</h3>
+            <h3 className="text-sm font-medium">{t('admin.githubOAuthGuideValuesTitle')}</h3>
             <dl className="mt-3 grid grid-cols-[160px_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
-              <dt className="text-muted-foreground">{t('admin.githubAppGuideCallbackUrl')}</dt>
-              <dd>{t('admin.githubAppGuideCallbackUrlValue')}</dd>
-              <dt className="text-muted-foreground">{t('admin.githubAppGuideWebhook')}</dt>
-              <dd>{t('admin.githubAppGuideWebhookValue')}</dd>
-              <dt className="text-muted-foreground">
-                {t('admin.githubAppGuideContentsPermission')}
-              </dt>
-              <dd>{t('admin.githubAppGuideContentsPermissionValue')}</dd>
-              <dt className="text-muted-foreground">
-                {t('admin.githubAppGuidePullRequestsPermission')}
-              </dt>
-              <dd>{t('admin.githubAppGuidePullRequestsPermissionValue')}</dd>
+              <dt className="text-muted-foreground">{t('admin.githubOAuthGuideCallbackUrl')}</dt>
+              <dd className="break-all font-mono text-xs">
+                {`${window.location.origin}/api/github/oauth/callback`}
+              </dd>
+              <dt className="text-muted-foreground">{t('admin.githubOAuthGuidePermissions')}</dt>
+              <dd>{t('admin.githubOAuthGuidePermissionsValue')}</dd>
             </dl>
           </div>
         </div>
@@ -580,17 +595,11 @@ function AdminGeneralContent({
   isLoadingSettings,
   savingKey,
   saveSetting,
-  refreshSettings,
 }: AdminSettingsState) {
   const { t } = useTranslation();
 
   const [servingEndpoints, setServingEndpoints] = useState<ServingEndpointsByTier | null>(null);
   const [isLoadingEndpoints, setIsLoadingEndpoints] = useState(true);
-  const [mlflowExperimentIdInput, setMlflowExperimentIdInput] = useState('');
-  const [otelMetricsTableInput, setOtelMetricsTableInput] = useState('');
-  const [otelLogsTableInput, setOtelLogsTableInput] = useState('');
-  const [otelTracesTableInput, setOtelTracesTableInput] = useState('');
-  const [isTelemetrySetupOpen, setIsTelemetrySetupOpen] = useState(false);
 
   const fetchServingEndpoints = useCallback(async () => {
     try {
@@ -607,15 +616,6 @@ function AdminGeneralContent({
   useEffect(() => {
     fetchServingEndpoints();
   }, [fetchServingEndpoints]);
-
-  useEffect(() => {
-    if (settings) {
-      setMlflowExperimentIdInput(settings.mlflow_experiment_id ?? '');
-      setOtelMetricsTableInput(settings.otel_metrics_table_name ?? '');
-      setOtelLogsTableInput(settings.otel_logs_table_name ?? '');
-      setOtelTracesTableInput(settings.otel_traces_table_name ?? '');
-    }
-  }, [settings]);
 
   const handleAllowedModelChange = (modelId: string, checked: boolean) => {
     const current = settings?.allowed_model_ids ?? [];
@@ -635,53 +635,8 @@ function AdminGeneralContent({
     [servingEndpoints]
   );
 
-  const handleMlflowSettingSave = (key: MlflowSettingKey, value: string) => {
-    const settingValue = value.trim() || null;
-    const patch: UpdateAppSettingsRequest = { [key]: settingValue };
-    return saveSetting(key, patch);
-  };
-
-  const mlflowSettings = [
-    {
-      key: 'mlflow_experiment_id',
-      settingKey: 'mlflow_experiment_id',
-      label: t('admin.mlflowExperimentId'),
-      description: t('admin.mlflowExperimentIdDescription'),
-      placeholder: t('admin.mlflowExperimentIdPlaceholder'),
-      value: mlflowExperimentIdInput,
-      onChange: setMlflowExperimentIdInput,
-    },
-    {
-      key: 'otel_metrics',
-      settingKey: 'otel_metrics_table_name',
-      label: t('admin.otelMetricsTableName'),
-      description: t('admin.otelMetricsTableNameDescription'),
-      placeholder: t('admin.otelTableNamePlaceholder'),
-      value: otelMetricsTableInput,
-      onChange: setOtelMetricsTableInput,
-    },
-    {
-      key: 'otel_logs',
-      settingKey: 'otel_logs_table_name',
-      label: t('admin.otelLogsTableName'),
-      description: t('admin.otelLogsTableNameDescription'),
-      placeholder: t('admin.otelTableNamePlaceholder'),
-      value: otelLogsTableInput,
-      onChange: setOtelLogsTableInput,
-    },
-    {
-      key: 'otel_traces',
-      settingKey: 'otel_traces_table_name',
-      label: t('admin.otelTracesTableName'),
-      description: t('admin.otelTracesTableNameDescription'),
-      placeholder: t('admin.otelTableNamePlaceholder'),
-      value: otelTracesTableInput,
-      onChange: setOtelTracesTableInput,
-    },
-  ] as const;
-
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-8">
+    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6">
       <section>
         <h2 className="text-lg font-semibold mb-4">{t('admin.allowedModelIds')}</h2>
         {isLoadingEndpoints || isLoadingSettings ? (
@@ -732,259 +687,407 @@ function AdminGeneralContent({
           </div>
         )}
       </section>
+    </div>
+  );
+}
 
-      <section>
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">{t('admin.telemetryConfiguration')}</h2>
-          {!isLoadingSettings && (
-            <Button variant="outline" size="sm" onClick={() => setIsTelemetrySetupOpen(true)}>
-              <Database className="h-4 w-4" />
-              {t('admin.telemetrySetupButton')}
-            </Button>
+function AdminMonitoringContent({
+  settings,
+  isLoadingSettings,
+  savingKey,
+  saveSetting,
+  refreshSettings,
+}: AdminSettingsState) {
+  const { t } = useTranslation();
+
+  const [mlflowExperimentIdInput, setMlflowExperimentIdInput] = useState('');
+  const [otelMetricsTableInput, setOtelMetricsTableInput] = useState('');
+  const [otelLogsTableInput, setOtelLogsTableInput] = useState('');
+  const [otelTracesTableInput, setOtelTracesTableInput] = useState('');
+  const [isTelemetrySetupOpen, setIsTelemetrySetupOpen] = useState(false);
+
+  useEffect(() => {
+    if (settings) {
+      setMlflowExperimentIdInput(settings.mlflow_experiment_id ?? '');
+      setOtelMetricsTableInput(settings.otel_metrics_table_name ?? '');
+      setOtelLogsTableInput(settings.otel_logs_table_name ?? '');
+      setOtelTracesTableInput(settings.otel_traces_table_name ?? '');
+    }
+  }, [settings]);
+
+  const handleMlflowSettingSave = (key: MlflowSettingKey, value: string) => {
+    const settingValue = value.trim() || null;
+    const patch: UpdateAppSettingsRequest = { [key]: settingValue };
+    return saveSetting(key, patch);
+  };
+
+  const mlflowSettings = [
+    {
+      key: 'mlflow_experiment_id',
+      settingKey: 'mlflow_experiment_id',
+      label: t('admin.mlflowExperimentId'),
+      description: t('admin.mlflowExperimentIdDescription'),
+      placeholder: t('admin.mlflowExperimentIdPlaceholder'),
+      value: mlflowExperimentIdInput,
+      onChange: setMlflowExperimentIdInput,
+    },
+    {
+      key: 'otel_metrics',
+      settingKey: 'otel_metrics_table_name',
+      label: t('admin.otelMetricsTableName'),
+      description: t('admin.otelMetricsTableNameDescription'),
+      placeholder: t('admin.otelTableNamePlaceholder'),
+      value: otelMetricsTableInput,
+      onChange: setOtelMetricsTableInput,
+    },
+    {
+      key: 'otel_logs',
+      settingKey: 'otel_logs_table_name',
+      label: t('admin.otelLogsTableName'),
+      description: t('admin.otelLogsTableNameDescription'),
+      placeholder: t('admin.otelTableNamePlaceholder'),
+      value: otelLogsTableInput,
+      onChange: setOtelLogsTableInput,
+    },
+    {
+      key: 'otel_traces',
+      settingKey: 'otel_traces_table_name',
+      label: t('admin.otelTracesTableName'),
+      description: t('admin.otelTracesTableNameDescription'),
+      placeholder: t('admin.otelTableNamePlaceholder'),
+      value: otelTracesTableInput,
+      onChange: setOtelTracesTableInput,
+    },
+  ] as const;
+
+  return (
+    <section className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold">{t('admin.telemetryConfiguration')}</h2>
+        {!isLoadingSettings && (
+          <Button variant="outline" size="sm" onClick={() => setIsTelemetrySetupOpen(true)}>
+            <Database className="h-4 w-4" />
+            {t('admin.telemetrySetupButton')}
+          </Button>
+        )}
+      </div>
+      {isLoadingSettings ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border p-4 space-y-4">
+          <p className="text-xs text-muted-foreground">{t('admin.telemetryDescription')}</p>
+          {mlflowSettings.map(
+            ({ key, settingKey, label, description, placeholder, value, onChange }) => {
+              const dirty = value.trim() !== (settings?.[settingKey] ?? '');
+              const isSaving = savingKey === settingKey;
+              return (
+                <div
+                  key={key}
+                  className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between"
+                >
+                  <div className="min-w-0 xl:w-64">
+                    <p className="text-sm font-medium">{label}</p>
+                    <p className="text-xs text-muted-foreground">{description}</p>
+                  </div>
+                  <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center xl:max-w-md">
+                    <Input
+                      className="min-w-0 flex-1"
+                      placeholder={placeholder}
+                      value={value}
+                      onChange={e => onChange(e.target.value)}
+                      disabled={savingKey !== null}
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      onClick={() => handleMlflowSettingSave(settingKey, value)}
+                      disabled={savingKey !== null || !dirty}
+                    >
+                      {isSaving ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <Save className="h-4 w-4 mr-2" />
+                      )}
+                      {t('common.save')}
+                    </Button>
+                  </div>
+                </div>
+              );
+            }
           )}
         </div>
-        {isLoadingSettings ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <div className="rounded-lg border border-border p-4 space-y-4">
-            <p className="text-xs text-muted-foreground">{t('admin.telemetryDescription')}</p>
-            {mlflowSettings.map(
-              ({ key, settingKey, label, description, placeholder, value, onChange }) => {
-                const dirty = value.trim() !== (settings?.[settingKey] ?? '');
-                const isSaving = savingKey === settingKey;
-                return (
-                  <div
-                    key={key}
-                    className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between"
-                  >
-                    <div className="min-w-0 xl:w-64">
-                      <p className="text-sm font-medium">{label}</p>
-                      <p className="text-xs text-muted-foreground">{description}</p>
-                    </div>
-                    <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center xl:max-w-md">
-                      <Input
-                        className="min-w-0 flex-1"
-                        placeholder={placeholder}
-                        value={value}
-                        onChange={e => onChange(e.target.value)}
-                        disabled={savingKey !== null}
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full sm:w-auto"
-                        onClick={() => handleMlflowSettingSave(settingKey, value)}
-                        disabled={savingKey !== null || !dirty}
-                      >
-                        {isSaving ? (
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        ) : (
-                          <Save className="h-4 w-4 mr-2" />
-                        )}
-                        {t('common.save')}
-                      </Button>
-                    </div>
-                  </div>
-                );
-              }
-            )}
-          </div>
-        )}
-        <TelemetrySetupDialog
-          open={isTelemetrySetupOpen}
-          onOpenChange={setIsTelemetrySetupOpen}
-          appName={settings?.databricks_app_name ?? ''}
-          onSetupComplete={refreshSettings}
-        />
-      </section>
-    </div>
+      )}
+      <TelemetrySetupDialog
+        open={isTelemetrySetupOpen}
+        onOpenChange={setIsTelemetrySetupOpen}
+        appName={settings?.databricks_app_name ?? ''}
+        onSetupComplete={refreshSettings}
+      />
+    </section>
   );
 }
 
 function AdminRepositoryContent() {
   const { t } = useTranslation();
-  const { githubAppAuth, isLoadingGitHubAppAuth, isSavingGitHubAppAuth, saveGitHubAppAuth } =
-    useGitHubAppAuth();
+  const {
+    githubOAuth,
+    isLoadingGitHubOAuth,
+    isSavingGitHubOAuth,
+    isRotatingEncryptionKey,
+    rotateEncryptionKey,
+    saveGitHubOAuth,
+  } = useGitHubOAuth();
 
-  const [githubAppIdInput, setGitHubAppIdInput] = useState('');
-  const [isGitHubAppGuideOpen, setIsGitHubAppGuideOpen] = useState(false);
-  const githubAppPrivateKeyFileInputRef = useRef<HTMLInputElement>(null);
-  const lastSyncedGitHubAppIdRef = useRef('');
+  const [clientIdInput, setClientIdInput] = useState('');
+  const [clientSecretInput, setClientSecretInput] = useState('');
+  const [isGitHubOAuthGuideOpen, setIsGitHubOAuthGuideOpen] = useState(false);
+  const [isRotateEncryptionKeyDialogOpen, setIsRotateEncryptionKeyDialogOpen] = useState(false);
+  const lastSyncedClientIdRef = useRef('');
 
   useEffect(() => {
-    if (githubAppAuth) {
-      const persistedAppId = githubAppAuth.github_app_id ?? '';
-      const previousPersistedAppId = lastSyncedGitHubAppIdRef.current;
-      setGitHubAppIdInput(current =>
-        current === previousPersistedAppId ? persistedAppId : current
+    if (githubOAuth) {
+      const persistedClientId = githubOAuth.client_id ?? '';
+      const previousPersistedClientId = lastSyncedClientIdRef.current;
+      setClientIdInput(current =>
+        current === previousPersistedClientId ? persistedClientId : current
       );
-      lastSyncedGitHubAppIdRef.current = persistedAppId;
+      lastSyncedClientIdRef.current = persistedClientId;
     }
-  }, [githubAppAuth]);
+  }, [githubOAuth]);
 
-  const trimmedGitHubAppId = githubAppIdInput.trim();
-  const githubAppIdDirty = trimmedGitHubAppId !== (githubAppAuth?.github_app_id ?? '');
-  const isGitHubAppPrivateKeyConfigured = githubAppAuth?.private_key_configured ?? false;
-  const githubAppPrivateKeyHelpText = isGitHubAppPrivateKeyConfigured
-    ? t('admin.githubAppPrivateKeyConfiguredDescription')
-    : t('admin.githubAppPrivateKeyNotConfigured');
+  const trimmedClientId = clientIdInput.trim();
+  const trimmedClientSecret = clientSecretInput.trim();
+  const clientIdDirty = trimmedClientId !== (githubOAuth?.client_id ?? '');
+  const isClientSecretConfigured = githubOAuth?.client_secret_configured ?? false;
+  const isEncryptionKeyConfigured = githubOAuth?.encryption_key_configured ?? false;
+  const clientSecretPlaceholder =
+    isClientSecretConfigured && githubOAuth?.client_secret_last8
+      ? `*****${githubOAuth.client_secret_last8}`
+      : t('admin.githubOAuthClientSecretPlaceholder');
 
-  const openGitHubAppPrivateKeyFilePicker = () => {
-    githubAppPrivateKeyFileInputRef.current?.click();
+  const handleClientIdSave = async () => {
+    if (!clientIdDirty) return;
+    await saveGitHubOAuth({ client_id: trimmedClientId || null });
   };
 
-  const handleGitHubAppIdSave = async () => {
-    if (!githubAppIdDirty) return;
-    await saveGitHubAppAuth({ github_app_id: trimmedGitHubAppId || null });
+  const handleClientSecretSave = async () => {
+    if (!trimmedClientSecret) return;
+    const saved = await saveGitHubOAuth({ client_secret: trimmedClientSecret });
+    if (saved) setClientSecretInput('');
   };
 
-  const handleGitHubAppPrivateKeyFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const input = event.currentTarget;
-    const file = input.files?.[0];
-    if (!file) return;
+  const handleEncryptionKeyRotateConfirm = async () => {
+    const rotated = await rotateEncryptionKey();
+    if (rotated) setIsRotateEncryptionKeyDialogOpen(false);
+  };
+
+  const handleRedirectUriCopy = async () => {
+    const redirectUri = githubOAuth?.redirect_uri;
+    if (!redirectUri) return;
 
     try {
-      const text = await file.text();
-      if (!text.includes('PRIVATE KEY')) {
-        toast.error(t('admin.githubAppPrivateKeyFileInvalid'));
-        return;
-      }
-
-      await saveGitHubAppAuth({ github_app_private_key: text });
+      await navigator.clipboard.writeText(redirectUri);
+      toast.success(t('admin.githubOAuthRedirectUriCopied'));
     } catch {
-      toast.error(t('admin.githubAppPrivateKeyFileError'));
-    } finally {
-      input.value = '';
+      toast.error(t('admin.githubOAuthRedirectUriCopyError'));
     }
-  };
-
-  const handleGitHubAppPrivateKeyDelete = async () => {
-    if (!window.confirm(t('admin.githubAppPrivateKeyDeleteConfirm'))) return;
-
-    await saveGitHubAppAuth({ github_app_private_key: null });
   };
 
   return (
     <section className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">{t('admin.githubAppAuthConfiguration')}</h2>
-        <Button variant="outline" size="sm" onClick={() => setIsGitHubAppGuideOpen(true)}>
+        <h2 className="text-lg font-semibold">{t('admin.githubOAuthConfiguration')}</h2>
+        <Button variant="outline" size="sm" onClick={() => setIsGitHubOAuthGuideOpen(true)}>
           <HelpCircle className="h-4 w-4" />
-          {t('admin.githubAppGuideButton')}
+          {t('admin.githubOAuthGuideButton')}
         </Button>
       </div>
-      {isLoadingGitHubAppAuth ? (
+      {isLoadingGitHubOAuth ? (
         <div className="flex items-center justify-center py-8">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <div className="border border-border rounded-lg p-4 space-y-4">
-          <p className="text-xs text-muted-foreground">{t('admin.githubAppAuthDescription')}</p>
-          <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-            {t('admin.githubAppAccessModel')}
-          </p>
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="min-w-0">
-              <p className="text-sm font-medium">{t('admin.githubAppId')}</p>
-              <p className="text-xs text-muted-foreground">{t('admin.githubAppIdDescription')}</p>
-            </div>
-            <div className="flex w-full max-w-md flex-col gap-2 sm:flex-row sm:items-center xl:w-[380px]">
-              <Input
-                className="min-w-0 flex-1"
-                placeholder={t('admin.githubAppIdPlaceholder')}
-                value={githubAppIdInput}
-                onChange={e => setGitHubAppIdInput(e.target.value)}
-                disabled={isSavingGitHubAppAuth}
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleGitHubAppIdSave}
-                disabled={isSavingGitHubAppAuth || !githubAppIdDirty}
-              >
-                {isSavingGitHubAppAuth ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : (
-                  <Save className="h-4 w-4 mr-2" />
-                )}
-                {t('common.save')}
-              </Button>
-            </div>
-          </div>
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-medium">{t('admin.githubAppPrivateKey')}</p>
-                {isGitHubAppPrivateKeyConfigured && (
-                  <Badge
-                    variant="secondary"
-                    className="gap-1 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
-                  >
-                    <ShieldCheck className="h-3 w-3" />
-                    {t('admin.githubAppPrivateKeyConfigured')}
-                  </Badge>
-                )}
+        <>
+          <div className="border border-border rounded-lg p-4 space-y-4">
+            <p className="text-xs text-muted-foreground">{t('admin.githubOAuthDescription')}</p>
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('admin.githubOAuthClientId')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t('admin.githubOAuthClientIdDescription')}
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground">
-                {t('admin.githubAppPrivateKeyDescription')}
-              </p>
+              <div className="flex w-full max-w-md flex-col gap-2 sm:flex-row sm:items-center xl:w-[380px]">
+                <Input
+                  className="min-w-0 flex-1"
+                  placeholder={t('admin.githubOAuthClientIdPlaceholder')}
+                  value={clientIdInput}
+                  onChange={e => setClientIdInput(e.target.value)}
+                  disabled={isSavingGitHubOAuth}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClientIdSave}
+                  disabled={isSavingGitHubOAuth || !clientIdDirty}
+                >
+                  {isSavingGitHubOAuth ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-2" />
+                  )}
+                  {t('common.save')}
+                </Button>
+              </div>
             </div>
-            <div className="w-full max-w-md space-y-2 xl:w-[380px]">
-              <input
-                ref={githubAppPrivateKeyFileInputRef}
-                type="file"
-                accept=".pem,.key,.txt,text/plain"
-                className="hidden"
-                onChange={handleGitHubAppPrivateKeyFileChange}
-                disabled={isSavingGitHubAppAuth}
-              />
-              {isGitHubAppPrivateKeyConfigured ? (
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="flex-1 justify-center"
-                    onClick={openGitHubAppPrivateKeyFilePicker}
-                    disabled={isSavingGitHubAppAuth}
-                  >
-                    <Upload className="h-4 w-4" />
-                    {t('admin.githubAppPrivateKeyChangeFile')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="flex-1 justify-center text-destructive hover:text-destructive"
-                    onClick={handleGitHubAppPrivateKeyDelete}
-                    disabled={isSavingGitHubAppAuth}
-                  >
-                    {isSavingGitHubAppAuth ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-4 w-4" />
-                    )}
-                    {t('admin.githubAppPrivateKeyDelete')}
-                  </Button>
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">{t('admin.githubOAuthClientSecret')}</p>
+                  {isClientSecretConfigured && (
+                    <Badge
+                      variant="secondary"
+                      className="gap-1 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+                    >
+                      <ShieldCheck className="h-3 w-3" />
+                      {t('admin.githubOAuthClientSecretConfigured')}
+                    </Badge>
+                  )}
                 </div>
-              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {t('admin.githubOAuthClientSecretDescription')}
+                </p>
+              </div>
+              <div className="flex w-full max-w-md flex-col gap-2 sm:flex-row sm:items-center xl:w-[380px]">
+                <Input
+                  className="min-w-0 flex-1"
+                  type="password"
+                  placeholder={clientSecretPlaceholder}
+                  value={clientSecretInput}
+                  onChange={e => setClientSecretInput(e.target.value)}
+                  disabled={isSavingGitHubOAuth}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClientSecretSave}
+                  disabled={isSavingGitHubOAuth || !trimmedClientSecret}
+                >
+                  {isSavingGitHubOAuth ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-2" />
+                  )}
+                  {t('common.save')}
+                </Button>
+              </div>
+            </div>
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('admin.githubOAuthRedirectUri')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t('admin.githubOAuthRedirectUriDescription')}
+                </p>
+              </div>
+              <div className="flex w-full max-w-md gap-2 xl:w-[380px]">
+                <Input
+                  className="min-w-0 flex-1 font-mono text-xs"
+                  value={githubOAuth?.redirect_uri ?? ''}
+                  readOnly
+                />
                 <Button
                   type="button"
                   variant="outline"
-                  className="w-full justify-start"
-                  onClick={openGitHubAppPrivateKeyFilePicker}
-                  disabled={isSavingGitHubAppAuth}
+                  size="icon"
+                  className="shrink-0"
+                  disabled={!githubOAuth?.redirect_uri}
+                  aria-label={t('admin.githubOAuthRedirectUriCopy')}
+                  title={t('admin.githubOAuthRedirectUriCopy')}
+                  onClick={() => void handleRedirectUriCopy()}
                 >
-                  <Upload className="h-4 w-4" />
-                  {t('admin.githubAppPrivateKeySelectFile')}
+                  <Copy className="h-4 w-4" />
                 </Button>
-              )}
-              <p className="text-xs text-muted-foreground">{githubAppPrivateKeyHelpText}</p>
+              </div>
             </div>
           </div>
-        </div>
+          <div className="mt-6 mb-4">
+            <h2 className="text-lg font-semibold">{t('admin.encryptionConfiguration')}</h2>
+          </div>
+          <div className="border border-border rounded-lg p-4">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">{t('admin.encryptionKey')}</p>
+                  {isEncryptionKeyConfigured && (
+                    <Badge variant="secondary" className="rounded-md">
+                      v{githubOAuth?.encryption_key_version}
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t('admin.encryptionKeyDescription')}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-center sm:w-auto"
+                disabled={isRotatingEncryptionKey}
+                onClick={() => setIsRotateEncryptionKeyDialogOpen(true)}
+              >
+                {isRotatingEncryptionKey ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                {t('admin.rotateEncryptionKey')}
+              </Button>
+            </div>
+          </div>
+        </>
       )}
-      <GitHubAppGuideDialog open={isGitHubAppGuideOpen} onOpenChange={setIsGitHubAppGuideOpen} />
+      <Dialog
+        open={isRotateEncryptionKeyDialogOpen}
+        onOpenChange={setIsRotateEncryptionKeyDialogOpen}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('admin.rotateEncryptionKeyConfirmTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('admin.rotateEncryptionKeyConfirmDescription')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsRotateEncryptionKeyDialogOpen(false)}
+              disabled={isRotatingEncryptionKey}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleEncryptionKeyRotateConfirm()}
+              disabled={isRotatingEncryptionKey}
+            >
+              {isRotatingEncryptionKey ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {t('admin.rotateEncryptionKeyConfirmAction')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <GitHubOAuthGuideDialog
+        open={isGitHubOAuthGuideOpen}
+        onOpenChange={setIsGitHubOAuthGuideOpen}
+      />
     </section>
   );
 }
@@ -1251,20 +1354,30 @@ function AdminUsersContent({
   );
 }
 
+type AdminTab = 'general' | 'repo' | 'monitoring' | 'branding' | 'users';
+
+function getAdminTab(pathname: string): AdminTab {
+  switch (pathname) {
+    case '/admin/users':
+      return 'users';
+    case '/admin/branding':
+      return 'branding';
+    case '/admin/monitoring':
+      return 'monitoring';
+    case '/admin/repo':
+      return 'repo';
+    default:
+      return 'general';
+  }
+}
+
 function AdminContentPanels() {
   const location = useLocation();
   const adminSettings = useAdminSettings();
 
-  const activeTab =
-    location.pathname === '/admin/users'
-      ? 'users'
-      : location.pathname === '/admin/branding'
-        ? 'branding'
-        : location.pathname === '/admin/repo'
-          ? 'repo'
-          : 'general';
+  const activeTab = getAdminTab(location.pathname);
 
-  const [mounted, setMounted] = useState<Set<string>>(() => new Set([activeTab]));
+  const [mounted, setMounted] = useState<Set<AdminTab>>(() => new Set([activeTab]));
   useEffect(() => {
     setMounted(prev => (prev.has(activeTab) ? prev : new Set(prev).add(activeTab)));
   }, [activeTab]);
@@ -1276,6 +1389,9 @@ function AdminContentPanels() {
       </div>
       <div className={activeTab === 'repo' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
         {mounted.has('repo') && <AdminRepositoryContent />}
+      </div>
+      <div className={activeTab === 'monitoring' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
+        {mounted.has('monitoring') && <AdminMonitoringContent {...adminSettings} />}
       </div>
       <div className={activeTab === 'branding' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
         {mounted.has('branding') && <AdminBrandingContent {...adminSettings} />}

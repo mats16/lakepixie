@@ -106,9 +106,6 @@ NODE_ENV=development
 # Lakebase を使用する場合は LAKEBASE_ENDPOINT を設定（デプロイ時の PG* は自動注入）
 LAKEBASE_ENDPOINT=
 
-# 暗号化（必須 - 生成コマンド: openssl rand -hex 32）
-ENCRYPTION_KEY=your-64-character-hex-key
-
 # Databricks（必須）
 DATABRICKS_HOST=your-workspace.cloud.databricks.com
 
@@ -133,13 +130,11 @@ ANTHROPIC_BASE_URL=https://your-workspace.cloud.databricks.com/ai-gateway/anthro
 CCBRICKS_BASE_DIR=/path/to/base/directory
 ```
 
-### 3.4 暗号化キーの生成
+### 3.4 アプリケーション暗号鍵
 
-```bash
-openssl rand -hex 32
-```
-
-出力を `.env` ファイルの `ENCRYPTION_KEY` にコピーしてください。
+アプリケーションの暗号鍵は `.env` ではなく Databricks Secrets に保存します。
+未設定の場合、ccbricks がアプリ用 secret scope に `encryption-key-v1` と
+`encryption-active-key-version` を自動生成します。
 
 ## 4. 開発サーバーの起動
 
@@ -150,6 +145,7 @@ npm run dev
 ```
 
 これにより、フロントエンドとバックエンドの両方が開発モードで起動します:
+
 - フロントエンド: http://localhost:3003
 - バックエンド: http://localhost:8003
 
@@ -169,15 +165,15 @@ npm run dev --filter=@repo/api
 
 ## 5. 開発コマンド
 
-| コマンド | 説明 |
-|---------|------|
-| `npm run dev` | すべてのアプリを開発モードで起動 |
-| `npm run build` | すべてのパッケージをビルド |
-| `npm run lint` | ESLint を実行 |
-| `npm run format` | Prettier でコードをフォーマット |
-| `npm run type-check` | TypeScript の型チェックを実行 |
-| `npm run test` | テストを実行 |
-| `npm run clean` | ビルド成果物と node_modules を削除 |
+| コマンド             | 説明                               |
+| -------------------- | ---------------------------------- |
+| `npm run dev`        | すべてのアプリを開発モードで起動   |
+| `npm run build`      | すべてのパッケージをビルド         |
+| `npm run lint`       | ESLint を実行                      |
+| `npm run format`     | Prettier でコードをフォーマット    |
+| `npm run type-check` | TypeScript の型チェックを実行      |
+| `npm run test`       | テストを実行                       |
+| `npm run clean`      | ビルド成果物と node_modules を削除 |
 
 ### Turborepo の操作
 
@@ -216,12 +212,12 @@ npm run db:studio     # Drizzle Studio を開く（データベース GUI）
 
 ### エミュレートされるヘッダー
 
-| ヘッダー | 環境変数 |
-|--------|----------|
-| `x-forwarded-user` | `DATABRICKS_USER_ID` |
-| `x-forwarded-preferred-username` | `DATABRICKS_USER_NAME` |
-| `x-forwarded-email` | `DATABRICKS_USER_EMAIL` |
-| `x-forwarded-access-token` | `DATABRICKS_TOKEN` |
+| ヘッダー                         | 環境変数                |
+| -------------------------------- | ----------------------- |
+| `x-forwarded-user`               | `DATABRICKS_USER_ID`    |
+| `x-forwarded-preferred-username` | `DATABRICKS_USER_NAME`  |
+| `x-forwarded-email`              | `DATABRICKS_USER_EMAIL` |
+| `x-forwarded-access-token`       | `DATABRICKS_TOKEN`      |
 
 ## 7. プロジェクト構成
 
@@ -265,6 +261,7 @@ kill -9 <PID>
 ### スキーマ変更後の型エラー
 
 1. まず types パッケージをビルド:
+
    ```bash
    npm run build --filter=@repo/types
    ```

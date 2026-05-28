@@ -62,6 +62,11 @@ import {
 } from '../services/session.service.js';
 import { UserSettingsValidationError } from '../services/user-settings.service.js';
 import { TelemetryConfigurationError } from '../services/claude-telemetry-env.service.js';
+import {
+  GitHubOAuthAuthorizationRequiredError,
+  GitHubOAuthExpiredError,
+  GitHubOAuthNotConfiguredError,
+} from '../services/github-oauth.service.js';
 import { listSessionEvents, getSessionLastEventId } from '../services/session-events.service.js';
 import { wsManager } from '../services/websocket-manager.service.js';
 import { encodeSseEvent, sessionStreamHub } from '../services/session-stream-hub.service.js';
@@ -77,14 +82,14 @@ const SSE_HEARTBEAT_INTERVAL_MS = 30_000;
  */
 function sendError(
   reply: FastifyReply,
-  statusCode: 400 | 401 | 404 | 500,
+  statusCode: 400 | 401 | 404 | 500 | 503,
   error: string,
   message: string
 ): ReturnType<FastifyReply['send']> {
   return reply.status(statusCode).send({ error, message, statusCode });
 }
 
-function getApiErrorName(statusCode: 400 | 401 | 404 | 500): string {
+function getApiErrorName(statusCode: 400 | 401 | 404 | 500 | 503): string {
   switch (statusCode) {
     case 400:
       return 'BadRequest';
@@ -94,6 +99,8 @@ function getApiErrorName(statusCode: 400 | 401 | 404 | 500): string {
       return 'NotFound';
     case 500:
       return 'InternalServerError';
+    case 503:
+      return 'ServiceUnavailable';
   }
 }
 
@@ -541,6 +548,15 @@ const sessionRoute: FastifyPluginAsync = async fastify => {
       }
       if (error instanceof TelemetryConfigurationError) {
         return sendError(reply, 500, 'InternalServerError', error.message);
+      }
+      if (error instanceof GitHubOAuthNotConfiguredError) {
+        return sendError(reply, 503, 'GitHubOAuthNotConfigured', error.message);
+      }
+      if (
+        error instanceof GitHubOAuthAuthorizationRequiredError ||
+        error instanceof GitHubOAuthExpiredError
+      ) {
+        return sendError(reply, 401, 'GitHubAuthorizationRequired', error.message);
       }
       return sendError(reply, 500, 'InternalServerError', 'Failed to create session');
     }

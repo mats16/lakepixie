@@ -9,6 +9,7 @@ export { skillService } from './skill.service';
 export { agentService } from './agent.service';
 export { jobsService } from './jobs.service';
 export { reposService } from './repos.service';
+export { githubOAuthService } from './github-oauth.service';
 export { genieService } from './genie.service';
 export { mcpServerService } from './mcp-server.service';
 export { externalMcpServerService } from './external-mcp-server.service';

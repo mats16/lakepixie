@@ -102,6 +102,11 @@ const schema = {
       default: '',
       description: 'The OAuth secret for the Databricks service principal assigned to the app.',
     },
+    APP_EXTERNAL_URL: {
+      type: 'string',
+      default: '',
+      description: 'Canonical external URL for this app. Used for OAuth redirect URI construction.',
+    },
     // Anthropic
     ANTHROPIC_BASE_URL: {
       type: 'string',
@@ -169,6 +174,8 @@ declare module 'fastify' {
       DATABRICKS_CLIENT_ID: string;
       /** The OAuth secret for the Databricks service principal assigned to the app. */
       DATABRICKS_CLIENT_SECRET: string;
+      /** Canonical external URL for this app. */
+      APP_EXTERNAL_URL: string;
       // Anthropic
       ANTHROPIC_BASE_URL: string;
       // System

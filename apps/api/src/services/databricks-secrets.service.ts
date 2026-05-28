@@ -10,6 +10,14 @@ interface SecretResponse {
   value?: string;
 }
 
+interface SecretMetadata {
+  key?: string;
+}
+
+interface ListSecretsResponse {
+  secrets?: SecretMetadata[];
+}
+
 export class DatabricksSecretNotFoundError extends Error {
   constructor(scope: string, key: string) {
     super(`Secret '${key}' was not found in scope '${scope}'`);
@@ -203,6 +211,22 @@ export async function getSecret(
   }
 
   return Buffer.from(data.value, 'base64').toString('utf-8');
+}
+
+export async function listSecretKeys(fastify: FastifyInstance, scope: string): Promise<string[]> {
+  try {
+    const data = await secretsRequest<ListSecretsResponse>(
+      fastify,
+      'GET',
+      `/api/2.0/secrets/list?scope=${encodeURIComponent(scope)}`
+    );
+    return (data.secrets ?? [])
+      .map(secret => secret.key)
+      .filter((key): key is string => typeof key === 'string');
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('does not exist')) return [];
+    throw error;
+  }
 }
 
 export const __testing = {

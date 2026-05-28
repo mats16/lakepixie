@@ -201,6 +201,111 @@ export const mcpServersPolicy = pgPolicy('mcp_servers_user_isolation_policy', {
   withCheck: sql`user_id = current_setting('app.user_id', true)`,
 }).link(mcpServers);
 
+/**
+ * github_user_authorizations テーブル
+ * ユーザーごとの GitHub OAuth user-to-server token を暗号化して保持
+ */
+export const githubUserAuthorizations = pgTable(
+  'github_user_authorizations',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    githubUserId: text('github_user_id').notNull(),
+    githubLogin: text('github_login').notNull(),
+    accessTokenCiphertext: text('access_token_ciphertext').notNull(),
+    accessTokenIv: text('access_token_iv').notNull(),
+    accessTokenAuthTag: text('access_token_auth_tag').notNull(),
+    accessTokenKeyVersion: text('access_token_key_version').notNull(),
+    refreshTokenCiphertext: text('refresh_token_ciphertext'),
+    refreshTokenIv: text('refresh_token_iv'),
+    refreshTokenAuthTag: text('refresh_token_auth_tag'),
+    refreshTokenKeyVersion: text('refresh_token_key_version'),
+    tokenExpiresAt: timestamp('token_expires_at', { mode: 'date' }),
+    refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { mode: 'date' }),
+    createdAt: timestamp('created_at', { mode: 'date' })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp('updated_at', { mode: 'date' })
+      .notNull()
+      .default(sql`now()`),
+  },
+  table => ({
+    githubLoginIdx: index('github_user_authorizations_login_idx').on(table.githubLogin),
+  })
+).enableRLS();
+
+export const githubUserAuthorizationsPolicy = pgPolicy(
+  'github_user_authorizations_user_isolation_policy',
+  {
+    for: 'all',
+    to: 'public',
+    using: sql`user_id = current_setting('app.user_id', true)`,
+    withCheck: sql`user_id = current_setting('app.user_id', true)`,
+  }
+).link(githubUserAuthorizations);
+
+/**
+ * github_oauth_states テーブル
+ * GitHub OAuth authorization code flow の state/PKCE 検証用
+ */
+export const githubOAuthStates = pgTable(
+  'github_oauth_states',
+  {
+    state: text('state').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    codeVerifierCiphertext: text('code_verifier_ciphertext').notNull(),
+    codeVerifierIv: text('code_verifier_iv').notNull(),
+    codeVerifierAuthTag: text('code_verifier_auth_tag').notNull(),
+    codeVerifierKeyVersion: text('code_verifier_key_version').notNull(),
+    redirectAfter: text('redirect_after'),
+    expiresAt: timestamp('expires_at', { mode: 'date' }).notNull(),
+    createdAt: timestamp('created_at', { mode: 'date' })
+      .notNull()
+      .default(sql`now()`),
+  },
+  table => ({
+    userIdIdx: index('github_oauth_states_user_id_idx').on(table.userId),
+    expiresAtIdx: index('github_oauth_states_expires_at_idx').on(table.expiresAt),
+  })
+).enableRLS();
+
+export const githubOAuthStatesPolicy = pgPolicy('github_oauth_states_user_isolation_policy', {
+  for: 'all',
+  to: 'public',
+  using: sql`user_id = current_setting('app.user_id', true)`,
+  withCheck: sql`user_id = current_setting('app.user_id', true)`,
+}).link(githubOAuthStates);
+
+/**
+ * git_credential_registrations テーブル
+ * Git credential helper の bearer token をレプリカ間で共有する
+ */
+export const gitCredentialRegistrations = pgTable(
+  'git_credential_registrations',
+  {
+    bearerToken: text('bearer_token').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    repoFullName: text('repo_full_name').notNull(),
+    expiresAt: timestamp('expires_at', { mode: 'date' }).notNull(),
+    createdAt: timestamp('created_at', { mode: 'date' })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp('updated_at', { mode: 'date' })
+      .notNull()
+      .default(sql`now()`),
+  },
+  table => ({
+    expiresAtIdx: index('git_credential_registrations_expires_at_idx').on(table.expiresAt),
+    userIdIdx: index('git_credential_registrations_user_id_idx').on(table.userId),
+  })
+);
+
 // =====================================================
 // Type Exports
 // =====================================================
@@ -212,6 +317,9 @@ export type InsertSession = typeof sessions.$inferInsert;
 export type InsertSessionEvent = typeof sessionEvents.$inferInsert;
 export type InsertAppSettings = typeof appSettings.$inferInsert;
 export type InsertMcpServer = typeof mcpServers.$inferInsert;
+export type InsertGithubUserAuthorization = typeof githubUserAuthorizations.$inferInsert;
+export type InsertGithubOAuthState = typeof githubOAuthStates.$inferInsert;
+export type InsertGitCredentialRegistration = typeof gitCredentialRegistrations.$inferInsert;
 
 // Select types (for querying records)
 export type User = typeof users.$inferSelect;
@@ -220,3 +328,6 @@ export type Session = typeof sessions.$inferSelect;
 export type SessionEvent = typeof sessionEvents.$inferSelect;
 export type AppSettings = typeof appSettings.$inferSelect;
 export type McpServer = typeof mcpServers.$inferSelect;
+export type GithubUserAuthorization = typeof githubUserAuthorizations.$inferSelect;
+export type GithubOAuthState = typeof githubOAuthStates.$inferSelect;
+export type GitCredentialRegistrationRow = typeof gitCredentialRegistrations.$inferSelect;

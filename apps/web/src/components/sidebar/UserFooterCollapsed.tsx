@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
-import { Globe, Check, ExternalLink, Puzzle, Bot, Cable } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { Globe, Check, ExternalLink, Puzzle, Bot, Cable, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
@@ -33,46 +34,31 @@ export function UserFooterCollapsed({
     i18n.changeLanguage(lang);
   };
 
+  const collapsedNavItems: Array<{ path: string; label: string; icon: LucideIcon }> = [
+    { path: '/settings', label: t('user.settings'), icon: Settings },
+    { path: '/skills', label: t('user.skills'), icon: Puzzle },
+    { path: '/agents', label: t('user.agents'), icon: Bot },
+    { path: '/mcp', label: t('user.mcp'), icon: Cable },
+  ];
+
   return (
     <>
       {/* Icon buttons for collapsed state */}
       <div className="flex flex-col items-center gap-1 py-2 mt-auto">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => navigate('/skills')}
-              aria-label={t('user.skills')}
-              className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-colors"
-            >
-              <Puzzle className="h-4 w-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="right">{t('user.skills')}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => navigate('/agents')}
-              aria-label={t('user.agents')}
-              className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-colors"
-            >
-              <Bot className="h-4 w-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="right">{t('user.agents')}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={() => navigate('/mcp')}
-              aria-label={t('user.mcp')}
-              className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-colors"
-            >
-              <Cable className="h-4 w-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="right">{t('user.mcp')}</TooltipContent>
-        </Tooltip>
+        {collapsedNavItems.map(({ path, label, icon: Icon }) => (
+          <Tooltip key={path}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => navigate(path)}
+                aria-label={label}
+                className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-colors"
+              >
+                <Icon className="h-4 w-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">{label}</TooltipContent>
+          </Tooltip>
+        ))}
       </div>
 
       {/* User avatar */}

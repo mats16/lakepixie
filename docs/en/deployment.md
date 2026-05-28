@@ -32,6 +32,7 @@ role for the app service principal and grants it connect/create privileges.
 Database migrations are automatically applied when the server starts. No manual migration steps are required for deployment.
 
 Automatic migrations are disabled in the following cases:
+
 - When environment variable `DISABLE_AUTO_MIGRATION=true` is set
 - When environment variable `NODE_ENV=test` is set
 
@@ -73,14 +74,14 @@ databricks secrets create-scope ccbricks-prod
 
 ### 2.2 Add Required Secrets
 
-**Encryption Key:**
+GitHub OAuth client secrets and application encryption keys are stored in Databricks Secrets.
+The app writes the following keys to the app secret scope:
 
-Generate a secure encryption key for encrypting sensitive data (OAuth tokens, etc.). A 32-byte key (64 hexadecimal characters) is required.
+- `github-oauth-client-secret` from the Admin UI
+- `encryption-active-key-version` automatically when missing
+- `encryption-key-v<version>` automatically when missing or when rotated
 
-```bash
-ENCRYPTION_KEY=$(openssl rand -hex 32)
-databricks secrets put-secret ccbricks-[dev|prod] encryption-key --string-value "$ENCRYPTION_KEY"
-```
+Grant the app service principal permission to create/read/write secrets for the app scope.
 
 ## 3. Deploy with Asset Bundles
 
@@ -138,11 +139,11 @@ databricks apps get ccbricks-dev-<user-id>
 
 ## Environment-Specific Configuration
 
-| Setting | Development | Production |
-|---------|-------------|------------|
-| Bundle Target | `dev` | `prod` |
-| Secret Scope | `ccbricks-dev` | `ccbricks-prod` |
-| App Name | `ccbricks-dev-<user-id>` | `ccbricks-prod` |
+| Setting        | Development                           | Production                      |
+| -------------- | ------------------------------------- | ------------------------------- |
+| Bundle Target  | `dev`                                 | `prod`                          |
+| Secret Scope   | `ccbricks-dev`                        | `ccbricks-prod`                 |
+| App Name       | `ccbricks-dev-<user-id>`              | `ccbricks-prod`                 |
 | Workspace Path | `/Workspace/Users/<user>/.bundle/...` | `/Workspace/Shared/.bundle/...` |
 
 ## Security Considerations

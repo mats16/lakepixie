@@ -25,6 +25,7 @@ import mcpServersRoute from './routes/mcp-servers.js';
 import externalMcpServersRoute from './routes/external-mcp-servers.js';
 import gitRepositoriesRoute from './routes/git-repositories.js';
 import gitCredentialRoute from './routes/git-credential.js';
+import githubOAuthRoute from './routes/github-oauth.js';
 import { startEventBatcher } from './services/event-queue.service.js';
 
 export async function build() {
@@ -69,6 +70,7 @@ export async function build() {
   await app.register(genieRoute, { prefix: '/api/databricks' });
   await app.register(adminRoute, { prefix: '/api' });
   await app.register(modelsRoute, { prefix: '/api' });
+  await app.register(githubOAuthRoute, { prefix: '/api' });
   await app.register(gitRepositoriesRoute, { prefix: '/api' });
   await app.register(gitCredentialRoute, { prefix: '/api' });
   await app.register(externalMcpServersRoute, { prefix: '/api' });

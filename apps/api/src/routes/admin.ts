@@ -4,8 +4,9 @@ import type {
   UpdateUserRoleRequest,
   AppSettingsResponse,
   UpdateAppSettingsRequest,
-  GitHubAppAuthResponse,
-  UpdateGitHubAppAuthRequest,
+  GitHubOAuthAdminResponse,
+  GitHubOAuthEncryptionKeyRotateResponse,
+  UpdateGitHubOAuthAdminRequest,
   TelemetryCatalogListResponse,
   TelemetrySchemaListResponse,
   TelemetrySetupRequest,
@@ -21,10 +22,12 @@ import {
   LastAdminError,
 } from '../services/admin.service.js';
 import {
-  getGitHubAppAuthStatus,
-  updateGitHubAppAuth,
-} from '../services/github-app-auth.service.js';
+  getGitHubOAuthAdminStatus,
+  rotateGitHubOAuthEncryptionKey,
+  updateGitHubOAuthAdminSettings,
+} from '../services/github-oauth.service.js';
 import { DatabricksSecretsPermissionError } from '../services/databricks-secrets.service.js';
+import { getGitHubOAuthRedirectUri } from './github-oauth.js';
 import {
   listTelemetryCatalogs,
   listTelemetrySchemas,
@@ -33,6 +36,17 @@ import {
   TelemetrySetupDatabricksError,
   TelemetrySetupValidationError,
 } from '../services/telemetry-setup.service.js';
+
+const GITHUB_OAUTH_CLIENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const GITHUB_OAUTH_CLIENT_SECRET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._=-]{0,511}$/;
+
+function isGitHubOAuthClientId(value: string): boolean {
+  return GITHUB_OAUTH_CLIENT_ID_PATTERN.test(value);
+}
+
+function isGitHubOAuthClientSecret(value: string): boolean {
+  return GITHUB_OAUTH_CLIENT_SECRET_PATTERN.test(value);
+}
 
 function toTelemetryApiError(error: unknown): ApiError {
   if (error instanceof TelemetrySetupValidationError) {
@@ -303,13 +317,13 @@ const adminRoute: FastifyPluginAsync = async fastify => {
     }
   });
 
-  // GitHub App 認証設定取得（private key は返さない）
-  fastify.get<{ Reply: GitHubAppAuthResponse | ApiError }>(
-    '/admin/github-app-auth',
+  // GitHub OAuth 設定取得（client secret は返さない）
+  fastify.get<{ Reply: GitHubOAuthAdminResponse | ApiError }>(
+    '/admin/github/oauth',
     { preHandler: guard },
-    async (_request, reply) => {
+    async (request, reply) => {
       try {
-        const status = await getGitHubAppAuthStatus(fastify);
+        const status = await getGitHubOAuthAdminStatus(fastify, getGitHubOAuthRedirectUri(request));
         return reply.send(status);
       } catch (error) {
         if (error instanceof DatabricksSecretsPermissionError) {
@@ -324,56 +338,60 @@ const adminRoute: FastifyPluginAsync = async fastify => {
     }
   );
 
-  // GitHub App 認証設定更新（App ID は app_settings、private key は Databricks Secrets に保存）
+  // GitHub OAuth 設定更新（client ID は app_settings、client secret は Databricks Secrets に保存）
   fastify.patch<{
-    Body: UpdateGitHubAppAuthRequest;
-    Reply: GitHubAppAuthResponse | ApiError;
-  }>('/admin/github-app-auth', { preHandler: guard }, async (request, reply) => {
+    Body: UpdateGitHubOAuthAdminRequest;
+    Reply: GitHubOAuthAdminResponse | ApiError;
+  }>('/admin/github/oauth', { preHandler: guard }, async (request, reply) => {
     const body = request.body;
-    const settings: UpdateGitHubAppAuthRequest = {};
+    const settings: UpdateGitHubOAuthAdminRequest = {};
 
-    if (body.github_app_id !== undefined) {
-      if (body.github_app_id !== null && typeof body.github_app_id !== 'string') {
+    if (body.client_id !== undefined) {
+      if (body.client_id !== null && typeof body.client_id !== 'string') {
         return reply.status(400).send({
           error: 'BadRequest',
-          message: 'github_app_id must be a string or null',
+          message: 'client_id must be a string or null',
           statusCode: 400,
         });
       }
 
-      const value = body.github_app_id?.trim() ?? null;
-      if (value !== null && value !== '' && !/^\d{1,20}$/.test(value)) {
+      const value = body.client_id?.trim() ?? null;
+      if (value !== null && value !== '' && !isGitHubOAuthClientId(value)) {
         return reply.status(400).send({
           error: 'BadRequest',
-          message: 'github_app_id must be a numeric GitHub App ID or null',
+          message: 'client_id must be a GitHub OAuth client ID',
           statusCode: 400,
         });
       }
-      settings.github_app_id = value || null;
+      settings.client_id = value || null;
     }
 
-    if (body.github_app_private_key !== undefined) {
-      if (body.github_app_private_key !== null && typeof body.github_app_private_key !== 'string') {
+    if (body.client_secret !== undefined) {
+      if (body.client_secret !== null && typeof body.client_secret !== 'string') {
         return reply.status(400).send({
           error: 'BadRequest',
-          message: 'github_app_private_key must be a string or null',
+          message: 'client_secret must be a string or null',
           statusCode: 400,
         });
       }
 
-      const value = body.github_app_private_key?.trim() ?? null;
-      if (value !== null && value !== '' && !value.includes('BEGIN')) {
+      const value = body.client_secret?.trim() ?? null;
+      if (value !== null && value !== '' && !isGitHubOAuthClientSecret(value)) {
         return reply.status(400).send({
           error: 'BadRequest',
-          message: 'github_app_private_key must be a PEM private key or null',
+          message: 'client_secret must be a GitHub OAuth client secret',
           statusCode: 400,
         });
       }
-      settings.github_app_private_key = value || null;
+      settings.client_secret = value || null;
     }
 
     try {
-      const updated = await updateGitHubAppAuth(fastify, settings);
+      const updated = await updateGitHubOAuthAdminSettings(
+        fastify,
+        settings,
+        getGitHubOAuthRedirectUri(request)
+      );
       return reply.send(updated);
     } catch (error) {
       if (error instanceof DatabricksSecretsPermissionError) {
@@ -386,6 +404,26 @@ const adminRoute: FastifyPluginAsync = async fastify => {
       throw error;
     }
   });
+
+  fastify.post<{ Reply: GitHubOAuthEncryptionKeyRotateResponse | ApiError }>(
+    '/admin/github/oauth/encryption-key/rotate',
+    { preHandler: guard },
+    async (_request, reply) => {
+      try {
+        const result = await rotateGitHubOAuthEncryptionKey(fastify);
+        return reply.send(result);
+      } catch (error) {
+        if (error instanceof DatabricksSecretsPermissionError) {
+          return reply.status(400).send({
+            error: 'BadRequest',
+            message: error.message,
+            statusCode: 400,
+          });
+        }
+        throw error;
+      }
+    }
+  );
 };
 
 export default adminRoute;

@@ -18,7 +18,6 @@ const APP_TITLE_DEFAULT = 'ccbricks';
 const WELCOME_HEADING_DEFAULT = 'Claude Code on Databricks';
 const APP_SETTINGS_CACHE_KEY = 'app-settings';
 const APP_SETTINGS_CACHE_TTL_MS = 60 * 1000;
-const GITHUB_APP_ID_SETTING_KEY = 'github_app_id';
 const appSettingsCache = new TtlCache<AppSettingsResponse>(APP_SETTINGS_CACHE_TTL_MS);
 
 const MODEL_SETTINGS_KEYS = [
@@ -186,11 +185,9 @@ export async function getPublicAppSettings(
   fastify: FastifyInstance
 ): Promise<AppPublicSettingsResponse> {
   const settings = await getAppSettings(fastify);
-  const githubAppId = await getGitHubAppIdSetting(fastify);
   return {
     app_title: settings.app_title,
     welcome_heading: settings.welcome_heading,
-    github_app_id: githubAppId,
   };
 }
 
@@ -232,37 +229,6 @@ export async function updateAppSettings(
     }
   }
 
-  appSettingsCache.delete(APP_SETTINGS_CACHE_KEY);
-}
-
-export async function getGitHubAppIdSetting(fastify: FastifyInstance): Promise<string | null> {
-  const rows = await fastify.db
-    .select({ value: appSettings.value })
-    .from(appSettings)
-    .where(eq(appSettings.key, GITHUB_APP_ID_SETTING_KEY))
-    .limit(1);
-
-  return rows[0]?.value.trim() || null;
-}
-
-export async function updateGitHubAppIdSetting(
-  fastify: FastifyInstance,
-  githubAppId: string | null
-): Promise<void> {
-  const value = githubAppId?.trim() ?? '';
-  if (!value) {
-    await fastify.db.delete(appSettings).where(eq(appSettings.key, GITHUB_APP_ID_SETTING_KEY));
-    appSettingsCache.delete(APP_SETTINGS_CACHE_KEY);
-    return;
-  }
-
-  await fastify.db
-    .insert(appSettings)
-    .values({ key: GITHUB_APP_ID_SETTING_KEY, value })
-    .onConflictDoUpdate({
-      target: appSettings.key,
-      set: { value },
-    });
   appSettingsCache.delete(APP_SETTINGS_CACHE_KEY);
 }
 

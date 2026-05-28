@@ -114,8 +114,8 @@ function McpItemIcon({ item }: { item: McpSelectionItem }) {
 
 export function WelcomeScreen({ onNewSession, sessionError }: WelcomeScreenProps) {
   const { t } = useTranslation();
-  const { welcomeHeading, githubAppId, modelSettings } = useUser();
-  const canUseGitRepositorySource = Boolean(githubAppId);
+  const { welcomeHeading, githubOAuthAuthorization, modelSettings } = useUser();
+  const canUseGitRepositorySource = githubOAuthAuthorization?.status === 'connected';
   const [selectedQuickstart, setSelectedQuickstart] = useState<QuickstartType | null>(null);
   const [content, setContent] = useLocalStorageState('chat-draft-new-session', {
     defaultValue: '',
