@@ -327,6 +327,84 @@ describe('DatabricksWorkspaceClient', () => {
       const [url] = fetchSpy.mock.calls[0] as [string];
       expect(url).toContain('/workspace/mkdirs');
     });
+
+    it('.gitignore で無視されたファイルとディレクトリをアップロードしないこと', async () => {
+      await writeFile(
+        join(tempDir, '.gitignore'),
+        ['*.log', 'node_modules/', 'subdir/*.tmp'].join('\n')
+      );
+      await writeFile(join(tempDir, 'included.ts'), 'included');
+      await writeFile(join(tempDir, 'ignored.log'), 'ignored');
+      await mkdir(join(tempDir, 'node_modules'), { recursive: true });
+      await writeFile(join(tempDir, 'node_modules', 'package.js'), 'ignored package');
+      await mkdir(join(tempDir, 'subdir'), { recursive: true });
+      await writeFile(join(tempDir, 'subdir', 'included.ts'), 'included subdir');
+      await writeFile(join(tempDir, 'subdir', 'ignored.tmp'), 'ignored tmp');
+
+      fetchSpy.mockResolvedValue(createMockResponse(200, {}));
+
+      await client.importDir(tempDir, '/workspace/target');
+
+      const calls = fetchSpy.mock.calls as [string, RequestInit][];
+      const mkdirsPaths = calls
+        .filter(call => call[0].includes('/workspace/mkdirs'))
+        .map(call => JSON.parse(call[1].body as string).path as string);
+      expect(mkdirsPaths).toEqual(
+        expect.arrayContaining(['/workspace/target', '/workspace/target/subdir'])
+      );
+      expect(mkdirsPaths).not.toContain('/workspace/target/node_modules');
+
+      const importPaths = calls
+        .filter(call => call[0].includes('/workspace/import'))
+        .map(call => JSON.parse(call[1].body as string).path as string);
+      expect(importPaths).toEqual(
+        expect.arrayContaining([
+          '/workspace/target/.gitignore',
+          '/workspace/target/included.ts',
+          '/workspace/target/subdir/included.ts',
+        ])
+      );
+      expect(importPaths).not.toEqual(
+        expect.arrayContaining([
+          '/workspace/target/ignored.log',
+          '/workspace/target/node_modules/package.js',
+          '/workspace/target/subdir/ignored.tmp',
+        ])
+      );
+    });
+
+    it('下位ディレクトリの .gitignore による再許可を反映すること', async () => {
+      await writeFile(join(tempDir, '.gitignore'), '*.log');
+      await mkdir(join(tempDir, 'subdir'), { recursive: true });
+      await writeFile(join(tempDir, 'subdir', '.gitignore'), '!keep.log');
+      await writeFile(join(tempDir, 'subdir', 'keep.log'), 'keep');
+      await writeFile(join(tempDir, 'subdir', 'skip.log'), 'skip');
+
+      fetchSpy.mockResolvedValue(createMockResponse(200, {}));
+
+      await client.importDir(tempDir, '/workspace/target');
+
+      const importPaths = (fetchSpy.mock.calls as [string, RequestInit][])
+        .filter(call => call[0].includes('/workspace/import'))
+        .map(call => JSON.parse(call[1].body as string).path as string);
+
+      expect(importPaths).toContain('/workspace/target/subdir/keep.log');
+      expect(importPaths).not.toContain('/workspace/target/subdir/skip.log');
+    });
+
+    it('.gitignore がディレクトリでもアップロードを継続すること', async () => {
+      await mkdir(join(tempDir, '.gitignore'), { recursive: true });
+      await writeFile(join(tempDir, 'included.ts'), 'included');
+
+      fetchSpy.mockResolvedValue(createMockResponse(200, {}));
+
+      await expect(client.importDir(tempDir, '/workspace/target')).resolves.toBeUndefined();
+
+      const importPaths = (fetchSpy.mock.calls as [string, RequestInit][])
+        .filter(call => call[0].includes('/workspace/import'))
+        .map(call => JSON.parse(call[1].body as string).path as string);
+      expect(importPaths).toContain('/workspace/target/included.ts');
+    });
   });
 
   describe('exportDir', () => {
