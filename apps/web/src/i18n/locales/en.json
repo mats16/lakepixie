@@ -383,7 +383,6 @@
     "deploying": "Deploying to Databricks Apps",
     "deploySuccess": "Databricks Apps deployment started",
     "deployError": "Failed to deploy to Databricks Apps",
-    "missingAppYamlWarning": "Add app.yaml before creating a Databricks App.",
     "workspaceOpenError": "Failed to open workspace"
   },
   "gitStatus": {
