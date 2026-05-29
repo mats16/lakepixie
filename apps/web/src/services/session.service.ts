@@ -14,6 +14,7 @@ import type {
   GitRepositoryDiffResponse,
   SessionAppCreateRequest,
   SessionAppCreateResponse,
+  SessionAppDeleteResponse,
   SDKUserMessage,
   WsControlRequest,
 } from '@repo/types';
@@ -118,6 +119,12 @@ export const sessionService = {
     return apiClient<SessionAppCreateResponse>(`/api/sessions/${sessionId}/app/create`, {
       method: 'POST',
       body: JSON.stringify(request),
+    });
+  },
+
+  async deleteSessionApp(sessionId: string): Promise<SessionAppDeleteResponse> {
+    return apiClient<SessionAppDeleteResponse>(`/api/sessions/${sessionId}/app`, {
+      method: 'DELETE',
     });
   },
 };

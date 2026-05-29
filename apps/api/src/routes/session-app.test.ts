@@ -7,7 +7,10 @@ import configPlugin from '../plugins/config.js';
 import requestDecoratorPlugin from '../plugins/request-decorator.js';
 import sessionAppRoute from './session-app.js';
 import { SessionId } from '../models/session.model.js';
-import { createDatabricksAppForSession } from '../services/session.service.js';
+import {
+  createDatabricksAppForSession,
+  deleteDatabricksAppForSession,
+} from '../services/session.service.js';
 
 vi.mock('../services/session.service.js', () => {
   class SessionAppCreateError extends Error {
@@ -20,9 +23,21 @@ vi.mock('../services/session.service.js', () => {
     }
   }
 
+  class SessionAppDeleteError extends Error {
+    constructor(
+      public readonly statusCode: 400 | 401 | 404 | 409 | 500,
+      message: string
+    ) {
+      super(message);
+      this.name = 'SessionAppDeleteError';
+    }
+  }
+
   return {
     createDatabricksAppForSession: vi.fn(),
+    deleteDatabricksAppForSession: vi.fn(),
     SessionAppCreateError,
+    SessionAppDeleteError,
   };
 });
 
@@ -102,5 +117,71 @@ describe('session app route', () => {
         context: 'Session title: Shiny Hello World',
       })
     );
+  });
+
+  it('deletes the session Databricks App', async () => {
+    const sessionId = new SessionId();
+    vi.mocked(deleteDatabricksAppForSession).mockResolvedValue({
+      session: {
+        id: sessionId.toString(),
+        title: 'Test',
+        session_status: 'idle',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        session_context: {
+          cwd: '/home/app/sessions/session-test',
+          model: 'databricks-claude-haiku-4-5',
+          sources: [],
+          outcomes: [],
+        },
+      },
+      name: 'shiny-hello-world-1234abcd',
+    });
+    await registerPlugins();
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/sessions/${sessionId.toString()}/app`,
+      headers: TEST_USER_HEADERS,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      name: 'shiny-hello-world-1234abcd',
+      session: {
+        id: sessionId.toString(),
+        session_context: {
+          outcomes: [],
+        },
+      },
+    });
+    expect(deleteDatabricksAppForSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'test-user-id',
+        sessionId: expect.any(SessionId),
+      })
+    );
+  });
+
+  it('returns conflict when session app deletion is blocked', async () => {
+    const sessionId = new SessionId();
+    const errorModule = await import('../services/session.service.js');
+    vi.mocked(deleteDatabricksAppForSession).mockRejectedValue(
+      new errorModule.SessionAppDeleteError(409, 'Session is busy')
+    );
+    await registerPlugins();
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/sessions/${sessionId.toString()}/app`,
+      headers: TEST_USER_HEADERS,
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      error: 'Conflict',
+      message: 'Session is busy',
+      statusCode: 409,
+    });
   });
 });

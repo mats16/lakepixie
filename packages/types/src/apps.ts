@@ -107,3 +107,11 @@ export interface SessionAppCreateResponse {
   sp_permission_status: SessionAppPermissionStatus;
   notification_status: SessionAppNotificationStatus;
 }
+
+/**
+ * DELETE /api/sessions/:session_id/app のレスポンス型
+ */
+export interface SessionAppDeleteResponse {
+  session: import('./session.js').SessionResponse;
+  name: string;
+}
