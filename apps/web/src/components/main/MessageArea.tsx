@@ -16,8 +16,7 @@ interface MessageAreaProps {
   error?: Error | null;
   isAgentThinking?: boolean;
   syncingKind?: SyncingIndicatorKind | null;
-  hasFloatingButton?: boolean;
-  bottomPaddingClassName?: string;
+  bottomPaddingClassName: string;
   optimisticExitPlanResults?: Map<string, ExitPlanModeOptimisticResult>;
 }
 
@@ -30,12 +29,10 @@ export function MessageArea({
   error,
   isAgentThinking,
   syncingKind,
-  hasFloatingButton,
   bottomPaddingClassName,
   optimisticExitPlanResults,
 }: MessageAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
   // ユーザーが最下部付近にいるかどうか
   const isNearBottomRef = useRef(true);
 
@@ -109,12 +106,7 @@ export function MessageArea({
 
   return (
     <div ref={containerRef} className="flex-1 overflow-y-auto px-4">
-      <div
-        className={cn(
-          'w-full max-w-[735px] mx-auto',
-          bottomPaddingClassName ?? (hasFloatingButton ? 'pb-36' : 'pb-24')
-        )}
-      >
+      <div className={cn('w-full max-w-[735px] mx-auto', bottomPaddingClassName)}>
         {topLevelEvents.map((event, index) => (
           <EventItem
             key={'uuid' in event ? (event.uuid as string) : `event-${index}`}
@@ -126,7 +118,6 @@ export function MessageArea({
         ))}
         {syncingKind && <SyncingIndicator kind={syncingKind} />}
         {isAgentThinking && !syncingKind && <ThinkingIndicator />}
-        <div ref={bottomRef} />
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -14,7 +14,7 @@ interface ExitPlanModeInputAreaProps {
   toolUseId: string;
   onDecision: (toolUseId: string, decision: ExitPlanModeInputDecision) => Promise<void> | void;
   isSuggestOpen: boolean;
-  onSuggestOpenChange: (open: boolean) => void;
+  onSuggestOpenChange: Dispatch<SetStateAction<boolean>>;
 }
 
 export function ExitPlanModeInputArea({
@@ -59,8 +59,8 @@ export function ExitPlanModeInputArea({
   }, [revisionMessage, submitDecision]);
 
   const toggleSuggestOpen = useCallback(() => {
-    onSuggestOpenChange(!isSuggestOpen);
-  }, [isSuggestOpen, onSuggestOpenChange]);
+    onSuggestOpenChange(open => !open);
+  }, [onSuggestOpenChange]);
 
   return (
     <div className="absolute bottom-0 left-0 right-0 p-4 pointer-events-none">

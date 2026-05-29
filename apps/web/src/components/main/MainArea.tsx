@@ -89,6 +89,7 @@ interface MainAreaProps {
 const GIT_DIFF_REFRESH_DEBOUNCE_MS = 750;
 const MESSAGE_PADDING_BASE = 'pb-24';
 const MESSAGE_PADDING_FLOATING = 'pb-36';
+const MESSAGE_PADDING_EXIT_PLAN_WITH_GIT = 'pb-[13rem]';
 const MESSAGE_PADDING_EXIT_PLAN_SUGGEST = 'pb-[20rem]';
 const GIT_STATUS_BOTTOM_WITH_EXIT_PLAN = 'pb-32';
 const GIT_STATUS_BOTTOM_WITH_EXIT_PLAN_SUGGEST = 'pb-[13.5rem]';
@@ -412,11 +413,12 @@ export function MainArea({
     };
   }, [gitRepositoryOutcome, activeSession?.session_context?.sources]);
 
-  const hasFloatingControls = !!gitRepositoryStatus;
   const messageBottomPaddingClassName = activeExitPlan
     ? isExitPlanSuggestOpen
       ? MESSAGE_PADDING_EXIT_PLAN_SUGGEST
-      : MESSAGE_PADDING_FLOATING
+      : gitRepositoryStatus
+        ? MESSAGE_PADDING_EXIT_PLAN_WITH_GIT
+        : MESSAGE_PADDING_FLOATING
     : gitRepositoryStatus
       ? MESSAGE_PADDING_FLOATING
       : MESSAGE_PADDING_BASE;
@@ -754,7 +756,6 @@ export function MainArea({
           error={error}
           isAgentThinking={isAgentThinking}
           syncingKind={syncingKind}
-          hasFloatingButton={hasFloatingControls || !!activeExitPlan}
           bottomPaddingClassName={messageBottomPaddingClassName}
           optimisticExitPlanResults={optimisticExitPlanResults}
         />
