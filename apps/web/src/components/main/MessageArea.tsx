@@ -78,12 +78,18 @@ export function MessageArea({
     return () => container.removeEventListener('scroll', throttledHandleScroll);
   }, [throttledHandleScroll]);
 
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior });
+  }, []);
+
   // 最下部付近にいる場合のみ自動スクロール
   useEffect(() => {
     if (isNearBottomRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      scrollToBottom();
     }
-  }, [events]);
+  }, [bottomPaddingClassName, events, scrollToBottom]);
 
   if (error) {
     return (
