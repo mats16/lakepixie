@@ -5,8 +5,10 @@
  * CLI の export-dir / import-dir 相当の機能を提供する。
  */
 
+import { createRequire } from 'node:module';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { join, basename, relative, sep } from 'node:path';
+import type { Ignore } from 'ignore';
 import { DatabricksApiError } from './databricks-apps-client.js';
 import { ensureDirectory } from '../utils/directory.js';
 
@@ -26,9 +28,16 @@ interface WorkspacePermissionAssignment {
 
 const MAX_RETRIES = 3;
 const INITIAL_BACKOFF_MS = 1000;
-const MAX_CONCURRENCY = 10;
+const MAX_CONCURRENCY = 5;
 /** Workspace import API の payload 上限 (~10MB) を考慮した raw ファイルサイズ上限。base64 で ~33% 膨張するため ~7.5MB */
 const MAX_IMPORT_FILE_SIZE = 7_500_000;
+const require = createRequire(import.meta.url);
+const createIgnore = require('ignore') as typeof import('ignore').default;
+
+interface GitIgnoreMatcher {
+  basePath: string;
+  ignore: Ignore;
+}
 
 /**
  * インスタンス横断でリクエスト同時実行数を制限するセマフォ。
@@ -64,6 +73,48 @@ class Semaphore {
       this.release();
     }
   }
+}
+
+function toPosixPath(path: string): string {
+  return path.split(sep).join('/');
+}
+
+async function loadGitIgnoreMatcher(localPath: string): Promise<GitIgnoreMatcher | null> {
+  try {
+    const content = await readFile(join(localPath, '.gitignore'), 'utf-8');
+    if (!content.trim()) return null;
+    return { basePath: localPath, ignore: createIgnore().add(content) };
+  } catch (error) {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error.code === 'ENOENT' || error.code === 'ENOTDIR' || error.code === 'EISDIR')
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function isGitIgnored(
+  localPath: string,
+  isDirectory: boolean,
+  matchers: GitIgnoreMatcher[]
+): boolean {
+  let ignored = false;
+
+  for (const matcher of matchers) {
+    const relativePath = toPosixPath(relative(matcher.basePath, localPath));
+    if (!relativePath || relativePath.startsWith('../')) continue;
+
+    const candidate = isDirectory ? `${relativePath}/` : relativePath;
+    const result = matcher.ignore.test(candidate);
+    if (result.ignored) ignored = true;
+    if (result.unignored) ignored = false;
+  }
+
+  return ignored;
 }
 
 export class DatabricksWorkspaceClient {
@@ -259,8 +310,22 @@ export class DatabricksWorkspaceClient {
   /**
    * ローカルディレクトリを Workspace に再帰的にアップロード
    * セマフォで全再帰レベルの合計同時実行数を制限する
+   * .gitignore で管理対象外のファイルとディレクトリはアップロード対象から除外する
    */
   async importDir(localPath: string, workspacePath: string): Promise<void> {
+    await this.importDirWithGitIgnore(localPath, workspacePath, []);
+  }
+
+  private async importDirWithGitIgnore(
+    localPath: string,
+    workspacePath: string,
+    parentIgnoreMatchers: GitIgnoreMatcher[]
+  ): Promise<void> {
+    const localGitIgnoreMatcher = await loadGitIgnoreMatcher(localPath);
+    const ignoreMatchers = localGitIgnoreMatcher
+      ? [...parentIgnoreMatchers, localGitIgnoreMatcher]
+      : parentIgnoreMatchers;
+
     await this.semaphore.run(() => this.mkdirs(workspacePath));
 
     const entries = await readdir(localPath, { withFileTypes: true });
@@ -270,8 +335,12 @@ export class DatabricksWorkspaceClient {
         const localEntryPath = join(localPath, entry.name);
         const workspaceEntryPath = `${workspacePath}/${entry.name}`;
 
+        if (isGitIgnored(localEntryPath, entry.isDirectory(), ignoreMatchers)) {
+          return;
+        }
+
         if (entry.isDirectory()) {
-          await this.importDir(localEntryPath, workspaceEntryPath);
+          await this.importDirWithGitIgnore(localEntryPath, workspaceEntryPath, ignoreMatchers);
         } else if (entry.isFile()) {
           await this.semaphore.run(async () => {
             const content = await readFile(localEntryPath);
