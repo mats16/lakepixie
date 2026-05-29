@@ -44,6 +44,8 @@ interface MainHeaderProps {
   showAppButton?: boolean;
   showCreateAppButton?: boolean;
   onCreateApp?: () => void;
+  appName?: string;
+  onAppDeleted?: () => void | Promise<void>;
   isCreatingApp?: boolean;
   createAppDisabled?: boolean;
 }
@@ -60,6 +62,8 @@ export function MainHeader({
   showAppButton = false,
   showCreateAppButton = false,
   onCreateApp,
+  appName,
+  onAppDeleted,
   isCreatingApp = false,
   createAppDisabled = false,
 }: MainHeaderProps) {
@@ -198,7 +202,11 @@ export function MainHeader({
               </Tooltip>
             </TooltipProvider>
           ) : null}
-          {showAppButton ? <SessionAppButton sessionId={sessionId} /> : createAppButton}
+          {showAppButton ? (
+            <SessionAppButton sessionId={sessionId} appName={appName} onAppDeleted={onAppDeleted} />
+          ) : (
+            createAppButton
+          )}
         </div>
       </div>
 

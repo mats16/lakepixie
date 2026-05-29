@@ -4,12 +4,15 @@ import type {
   ResolvedDatabricksAppsOutcome,
   SessionAppCreateRequest,
   SessionAppCreateResponse,
+  SessionAppDeleteResponse,
 } from '@repo/types';
 import { SessionId } from '../models/session.model.js';
 import {
   createDatabricksAppForSession,
+  deleteDatabricksAppForSession,
   getSession,
   SessionAppCreateError,
+  SessionAppDeleteError,
 } from '../services/session.service.js';
 import { DatabricksAppsClient, DatabricksApiError } from '../lib/databricks-apps-client.js';
 import { getAuthProvider } from '../lib/databricks-auth.js';
@@ -17,19 +20,21 @@ import { createUserContext } from '../lib/user-context.js';
 
 function sendError(
   reply: FastifyReply,
-  statusCode: 400 | 401 | 404 | 409 | 500,
+  statusCode: 400 | 401 | 403 | 404 | 409 | 500,
   error: string,
   message: string
 ): ReturnType<FastifyReply['send']> {
   return reply.status(statusCode).send({ error, message, statusCode });
 }
 
-function getErrorName(statusCode: 400 | 401 | 404 | 409 | 500): string {
+function getErrorName(statusCode: 400 | 401 | 403 | 404 | 409 | 500): string {
   switch (statusCode) {
     case 400:
       return 'BadRequest';
     case 401:
       return 'Unauthorized';
+    case 403:
+      return 'Forbidden';
     case 404:
       return 'NotFound';
     case 409:
@@ -146,6 +151,47 @@ const sessionAppRoute: FastifyPluginAsync = async fastify => {
           error.message
         );
       }
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return sendError(reply, 500, 'InternalServerError', message);
+    }
+  });
+
+  /**
+   * DELETE /sessions/:session_id/app
+   * セッションに関連付けられた Databricks App を削除し、outcome も解除する
+   */
+  fastify.delete<{
+    Params: { session_id: string };
+    Reply: SessionAppDeleteResponse | ApiError;
+  }>('/sessions/:session_id/app', async (request, reply) => {
+    const { user } = request.ctx!;
+
+    if (!user.id) {
+      return sendError(reply, 401, 'Unauthorized', 'User ID not found in request context');
+    }
+
+    const sessionId = parseSessionId(request.params.session_id);
+    if (!sessionId) {
+      return sendError(reply, 404, 'NotFound', 'Session not found');
+    }
+
+    try {
+      const result = await deleteDatabricksAppForSession({
+        fastify,
+        userId: user.id,
+        sessionId,
+      });
+      return reply.send(result);
+    } catch (error) {
+      if (error instanceof SessionAppDeleteError) {
+        return sendError(reply, error.statusCode, getErrorName(error.statusCode), error.message);
+      }
+      if (error instanceof DatabricksApiError) {
+        const code = error.statusCode === 403 ? 403 : error.statusCode === 404 ? 404 : 500;
+        request.log.error(error, 'Failed to delete Databricks App');
+        return sendError(reply, code, getErrorName(code), error.message);
+      }
+      request.log.error(error, 'Failed to delete Databricks App');
       const message = error instanceof Error ? error.message : 'Unknown error';
       return sendError(reply, 500, 'InternalServerError', message);
     }

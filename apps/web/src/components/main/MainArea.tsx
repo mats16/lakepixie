@@ -722,6 +722,8 @@ export function MainArea({
           showAppButton={!!databricksAppsOutcome}
           showCreateAppButton={showCreateAppButton}
           onCreateApp={handleCreateApp}
+          appName={databricksAppsOutcome?.name}
+          onAppDeleted={refetchSession}
           isCreatingApp={isCreatingApp}
           createAppDisabled={createAppDisabled}
         />

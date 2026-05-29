@@ -29,6 +29,7 @@ import {
   type SessionCreateResponse,
   type SessionCreateEventData,
   type SessionAppCreateResponse,
+  type SessionAppDeleteResponse,
   type SessionAppNotificationStatus,
   type SessionListQuery,
   type SessionListResponse,
@@ -147,6 +148,16 @@ export class SessionAppCreateError extends Error {
   }
 }
 
+export class SessionAppDeleteError extends Error {
+  constructor(
+    public readonly statusCode: 400 | 401 | 404 | 409 | 500,
+    message: string
+  ) {
+    super(message);
+    this.name = 'SessionAppDeleteError';
+  }
+}
+
 interface QueuedUserMessageResume {
   userMessage: SDKUserMessage;
   sessionContext: SessionContextResponse;
@@ -164,7 +175,7 @@ interface CreateDatabricksAppForSessionParams {
   ctx: UserContext;
 }
 
-const databricksAppCreateLocks = new Set<string>();
+const databricksAppOperationLocks = new Set<string>();
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -280,15 +291,29 @@ function canNotifyAgentAfterAppCreation(status: string): boolean {
   return status === 'idle' || status === 'error';
 }
 
-function acquireDatabricksAppCreateLock(sessionId: SessionId): () => void {
+function acquireDatabricksAppOperationLock(sessionId: SessionId, error: Error): () => void {
   const key = sessionId.toString();
-  if (databricksAppCreateLocks.has(key)) {
-    throw new SessionAppCreateError(409, 'Databricks App creation is already in progress');
+  if (databricksAppOperationLocks.has(key)) {
+    throw error;
   }
-  databricksAppCreateLocks.add(key);
+  databricksAppOperationLocks.add(key);
   return () => {
-    databricksAppCreateLocks.delete(key);
+    databricksAppOperationLocks.delete(key);
   };
+}
+
+function acquireDatabricksAppCreateLock(sessionId: SessionId): () => void {
+  return acquireDatabricksAppOperationLock(
+    sessionId,
+    new SessionAppCreateError(409, 'Databricks App creation is already in progress')
+  );
+}
+
+function acquireDatabricksAppDeleteLock(sessionId: SessionId): () => void {
+  return acquireDatabricksAppOperationLock(
+    sessionId,
+    new SessionAppDeleteError(409, 'Databricks App operation is already in progress')
+  );
 }
 
 function getSupportedClaudeArch(): SupportedClaudeArch {
@@ -2444,6 +2469,91 @@ async function createDatabricksAppForSessionUnlocked(
   };
 }
 
+export async function deleteDatabricksAppForSession(params: {
+  fastify: FastifyInstance;
+  userId: string;
+  sessionId: SessionId;
+}): Promise<SessionAppDeleteResponse> {
+  const releaseLock = acquireDatabricksAppDeleteLock(params.sessionId);
+  try {
+    const { fastify, userId, sessionId } = params;
+
+    const [sessionRow] = await fastify.withUserContext(userId, async tx =>
+      tx
+        .select({
+          context: sessions.context,
+          status: sessions.status,
+        })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId.toUUID()))
+        .limit(1)
+    );
+
+    if (!sessionRow) {
+      throw new SessionAppDeleteError(404, 'Session not found');
+    }
+    if (sessionRow.status === 'archived') {
+      throw new SessionAppDeleteError(400, 'Session is archived');
+    }
+    if (sessionRow.status === 'init' || sessionRow.status === 'running') {
+      throw new SessionAppDeleteError(409, 'Session is busy');
+    }
+    if (!sessionRow.context) {
+      throw new SessionAppDeleteError(400, 'Session context not found');
+    }
+
+    const context = sessionRow.context as SessionContextResponse;
+    const appsOutcome = findDatabricksAppsOutcome(context);
+    if (!appsOutcome?.name) {
+      throw new SessionAppDeleteError(
+        404,
+        'This session does not have Databricks Apps outcome configured'
+      );
+    }
+
+    const authProvider = getAuthProvider(fastify);
+    const appsClient = new DatabricksAppsClient(authProvider);
+    await appsClient.delete(appsOutcome.name);
+
+    const updatedSession = await fastify.withUserContext(userId, async tx => {
+      const [currentRow] = await tx
+        .select({
+          context: sessions.context,
+        })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId.toUUID()))
+        .limit(1);
+
+      if (!currentRow?.context) return null;
+
+      const currentContext = currentRow.context as SessionContextResponse;
+      const nextContext: SessionContextResponse = {
+        ...currentContext,
+        outcomes: currentContext.outcomes.filter(outcome => outcome.type !== 'databricks_apps'),
+      };
+
+      const rows = await tx
+        .update(sessions)
+        .set({ context: nextContext, updatedAt: new Date() })
+        .where(eq(sessions.id, sessionId.toUUID()))
+        .returning(SESSION_SELECT_COLUMNS);
+
+      return rows[0] ? toSessionResponse(rows[0]) : null;
+    });
+
+    if (!updatedSession) {
+      throw new SessionAppDeleteError(404, 'Session not found');
+    }
+
+    return {
+      session: updatedSession,
+      name: appsOutcome.name,
+    };
+  } finally {
+    releaseLock();
+  }
+}
+
 /**
  * セッションをアーカイブする
  * ステータスを 'archived' に変更し、Working Directory を削除する
@@ -2667,7 +2777,7 @@ export const __testing = {
   validateSparseCheckoutPath,
   handleCanUseTool,
   clearActiveSessionQueries: () => activeSessionQueries.clear(),
-  clearDatabricksAppCreateLocks: () => databricksAppCreateLocks.clear(),
+  clearDatabricksAppCreateLocks: () => databricksAppOperationLocks.clear(),
   acquireDatabricksAppCreateLock,
   registerActiveSessionQuery: (
     sessionId: SessionId,
