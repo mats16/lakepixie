@@ -13,12 +13,18 @@ export type ExitPlanModeInputDecision =
 interface ExitPlanModeInputAreaProps {
   toolUseId: string;
   onDecision: (toolUseId: string, decision: ExitPlanModeInputDecision) => Promise<void> | void;
+  isSuggestOpen: boolean;
+  onSuggestOpenChange: (open: boolean) => void;
 }
 
-export function ExitPlanModeInputArea({ toolUseId, onDecision }: ExitPlanModeInputAreaProps) {
+export function ExitPlanModeInputArea({
+  toolUseId,
+  onDecision,
+  isSuggestOpen,
+  onSuggestOpenChange,
+}: ExitPlanModeInputAreaProps) {
   const { t } = useTranslation();
   const [revisionMessage, setRevisionMessage] = useState('');
-  const [isSuggestOpen, setIsSuggestOpen] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
   const submitDecision = useCallback(
@@ -52,6 +58,10 @@ export function ExitPlanModeInputArea({ toolUseId, onDecision }: ExitPlanModeInp
     void submitDecision({ kind: 'suggest', approved: false, message });
   }, [revisionMessage, submitDecision]);
 
+  const toggleSuggestOpen = useCallback(() => {
+    onSuggestOpenChange(!isSuggestOpen);
+  }, [isSuggestOpen, onSuggestOpenChange]);
+
   return (
     <div className="absolute bottom-0 left-0 right-0 p-4 pointer-events-none">
       <div className="relative w-full max-w-[735px] mx-auto pointer-events-auto">
@@ -72,7 +82,7 @@ export function ExitPlanModeInputArea({ toolUseId, onDecision }: ExitPlanModeInp
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => setIsSuggestOpen(open => !open)}
+                onClick={toggleSuggestOpen}
                 disabled={isSending}
                 className={cn(isSuggestOpen && 'bg-accent text-accent-foreground')}
               >

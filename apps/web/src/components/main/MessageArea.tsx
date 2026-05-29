@@ -17,6 +17,7 @@ interface MessageAreaProps {
   isAgentThinking?: boolean;
   syncingKind?: SyncingIndicatorKind | null;
   hasFloatingButton?: boolean;
+  bottomPaddingClassName?: string;
   optimisticExitPlanResults?: Map<string, ExitPlanModeOptimisticResult>;
 }
 
@@ -30,6 +31,7 @@ export function MessageArea({
   isAgentThinking,
   syncingKind,
   hasFloatingButton,
+  bottomPaddingClassName,
   optimisticExitPlanResults,
 }: MessageAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -101,7 +103,12 @@ export function MessageArea({
 
   return (
     <div ref={containerRef} className="flex-1 overflow-y-auto px-4">
-      <div className={cn('w-full max-w-[735px] mx-auto', hasFloatingButton ? 'pb-36' : 'pb-24')}>
+      <div
+        className={cn(
+          'w-full max-w-[735px] mx-auto',
+          bottomPaddingClassName ?? (hasFloatingButton ? 'pb-36' : 'pb-24')
+        )}
+      >
         {topLevelEvents.map((event, index) => (
           <EventItem
             key={'uuid' in event ? (event.uuid as string) : `event-${index}`}

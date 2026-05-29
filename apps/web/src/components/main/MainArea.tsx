@@ -87,6 +87,11 @@ interface MainAreaProps {
 }
 
 const GIT_DIFF_REFRESH_DEBOUNCE_MS = 750;
+const MESSAGE_PADDING_BASE = 'pb-24';
+const MESSAGE_PADDING_FLOATING = 'pb-36';
+const MESSAGE_PADDING_EXIT_PLAN_SUGGEST = 'pb-[20rem]';
+const GIT_STATUS_BOTTOM_WITH_EXIT_PLAN = 'pb-32';
+const GIT_STATUS_BOTTOM_WITH_EXIT_PLAN_SUGGEST = 'pb-[13.5rem]';
 
 type GitNewSessionSourceSelection = Extract<NewSessionSourceSelection, { type: 'git_repository' }>;
 
@@ -153,6 +158,7 @@ export function MainArea({
   const [optimisticPlanMode, setOptimisticPlanMode] = useState<boolean | null>(null);
   const [optimisticEffortLevel, setOptimisticEffortLevel] = useState<WsEffortLevel | null>(null);
   const [isCreatingApp, setIsCreatingApp] = useState(false);
+  const [isExitPlanSuggestOpen, setIsExitPlanSuggestOpen] = useState(false);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gitRepositoryStatusRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -348,6 +354,10 @@ export function MainArea({
     return { toolUseId };
   }, [pendingExitPlans]);
 
+  useEffect(() => {
+    setIsExitPlanSuggestOpen(false);
+  }, [sessionId, activeExitPlan?.toolUseId]);
+
   // init 中の準備処理表示。Git repository は clone、Workspace は sync として見せる。
   const syncingKind = useMemo((): 'workspace' | 'git' | null => {
     if (sessionStatus !== 'init') return null;
@@ -403,7 +413,18 @@ export function MainArea({
   }, [gitRepositoryOutcome, activeSession?.session_context?.sources]);
 
   const hasFloatingControls = !!gitRepositoryStatus;
-  const gitStatusBottomClassName = activeExitPlan ? 'pb-[12.5rem]' : undefined;
+  const messageBottomPaddingClassName = activeExitPlan
+    ? isExitPlanSuggestOpen
+      ? MESSAGE_PADDING_EXIT_PLAN_SUGGEST
+      : MESSAGE_PADDING_FLOATING
+    : gitRepositoryStatus
+      ? MESSAGE_PADDING_FLOATING
+      : MESSAGE_PADDING_BASE;
+  const gitStatusBottomClassName = activeExitPlan
+    ? isExitPlanSuggestOpen
+      ? GIT_STATUS_BOTTOM_WITH_EXIT_PLAN_SUGGEST
+      : GIT_STATUS_BOTTOM_WITH_EXIT_PLAN
+    : undefined;
   const { openWorkspace, isOpeningWorkspace } = useOpenWorkspace(databricksWorkspaceOutcome?.path);
 
   const handleSend = (content: UserMessageContentBlock[]) => {
@@ -734,12 +755,15 @@ export function MainArea({
           isAgentThinking={isAgentThinking}
           syncingKind={syncingKind}
           hasFloatingButton={hasFloatingControls || !!activeExitPlan}
+          bottomPaddingClassName={messageBottomPaddingClassName}
           optimisticExitPlanResults={optimisticExitPlanResults}
         />
         {activeExitPlan ? (
           <ExitPlanModeInputArea
             toolUseId={activeExitPlan.toolUseId}
             onDecision={submitExitPlanDecision}
+            isSuggestOpen={isExitPlanSuggestOpen}
+            onSuggestOpenChange={setIsExitPlanSuggestOpen}
           />
         ) : (
           <InputArea
