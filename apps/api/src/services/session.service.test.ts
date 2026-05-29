@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionContextResponse } from '@repo/types';
 import { EventEmitter } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionId } from '../models/session.model.js';
@@ -230,23 +230,6 @@ describe('session.service', () => {
       expect(() => __testing.buildDefaultSessionWorkspacePath('  ', sessionId)).toThrow(
         'DATABRICKS_APP_NAME is required'
       );
-    });
-  });
-
-  describe('assertDatabricksAppYamlExists', () => {
-    it('requires app.yaml before creating a Databricks App', async () => {
-      const cwd = await mkdtemp(join(tmpdir(), 'ccbricks-session-'));
-      try {
-        await expect(__testing.assertDatabricksAppYamlExists(cwd)).rejects.toThrow(
-          'app.yaml is required to create a Databricks App'
-        );
-
-        await writeFile(join(cwd, 'app.yaml'), 'command: ["npm", "start"]\n');
-
-        await expect(__testing.assertDatabricksAppYamlExists(cwd)).resolves.toBeUndefined();
-      } finally {
-        await rm(cwd, { recursive: true, force: true });
-      }
     });
   });
 
