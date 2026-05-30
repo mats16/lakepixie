@@ -93,8 +93,7 @@ const userSettingsRoute: FastifyPluginAsync = async fastify => {
           `${USER_CLAUDE_LANGUAGE_SETTING_KEY} must be a non-empty string or null`
         );
       }
-      settings[USER_CLAUDE_LANGUAGE_SETTING_KEY] =
-        claudeLanguage?.trim() ?? null;
+      settings[USER_CLAUDE_LANGUAGE_SETTING_KEY] = claudeLanguage?.trim() ?? null;
     }
     for (const key of [
       USER_ALLOWED_TOOLS_SETTING_KEY,
