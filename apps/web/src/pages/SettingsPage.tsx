@@ -20,6 +20,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 type ToolListSettingKey = 'allowed_tools' | 'disallowed_tools';
 type ToolInputKind = 'allowed' | 'disallowed';
 
+const CLAUDE_LANGUAGE_DEFAULT_VALUE = '__default__';
+const CLAUDE_LANGUAGE_OPTIONS = ['english', 'japanese'] as const;
+
 function GitHubIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -233,6 +236,20 @@ export function SettingsContent() {
     }
   };
 
+  const handleClaudeLanguageChange = async (value: string) => {
+    setSavingKey('claude_language');
+    const claudeLanguage = value === CLAUDE_LANGUAGE_DEFAULT_VALUE ? null : value;
+    try {
+      await userSettingsService.updateSettings({ claude_language: claudeLanguage });
+      await refetchModelSettings();
+      toast.success(t('settings.updateSuccess'));
+    } catch {
+      toast.error(t('settings.updateError'));
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
   const connectGitHub = () => {
     window.location.assign(githubOAuthService.getAuthorizeUrl('/settings'));
   };
@@ -359,6 +376,39 @@ export function SettingsContent() {
             </TabsContent>
 
             <TabsContent value="claude-code" className="mt-0 space-y-6">
+              <section>
+                <h2 className="mb-4 text-lg font-semibold">{t('settings.responseLanguage')}</h2>
+                <div className="rounded-lg border border-border p-4">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="text-sm font-medium">{t('settings.claudeLanguage')}</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {t('settings.claudeLanguageDescription')}
+                      </p>
+                    </div>
+                    <Select
+                      value={modelSettings.claude_language ?? CLAUDE_LANGUAGE_DEFAULT_VALUE}
+                      onValueChange={nextValue => void handleClaudeLanguageChange(nextValue)}
+                      disabled={savingKey !== null}
+                    >
+                      <SelectTrigger className="w-[220px] max-w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={CLAUDE_LANGUAGE_DEFAULT_VALUE}>
+                          {t('settings.claudeLanguageDefault')}
+                        </SelectItem>
+                        {CLAUDE_LANGUAGE_OPTIONS.map(language => (
+                          <SelectItem key={language} value={language}>
+                            {t(`settings.claudeLanguages.${language}`)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </section>
+
               <section>
                 <div className="mb-4 flex items-start justify-between gap-4">
                   <div>

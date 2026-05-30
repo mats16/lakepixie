@@ -49,6 +49,7 @@ export const userSettings = pgTable('user_settings', {
   opusModelId: text('opus_model_id'),
   sonnetModelId: text('sonnet_model_id'),
   haikuModelId: text('haiku_model_id'),
+  claudeLanguage: text('claude_language'),
   allowedTools: jsonb('allowed_tools').$type<string[] | null>(),
   disallowedTools: jsonb('disallowed_tools').$type<string[] | null>(),
   createdAt: timestamp('created_at', { mode: 'date' })

@@ -33,6 +33,7 @@ export const userSettings = sqliteTable('user_settings', {
   opusModelId: text('opus_model_id'),
   sonnetModelId: text('sonnet_model_id'),
   haikuModelId: text('haiku_model_id'),
+  claudeLanguage: text('claude_language'),
   allowedTools: text('allowed_tools', { mode: 'json' }).$type<string[] | null>(),
   disallowedTools: text('disallowed_tools', { mode: 'json' }).$type<string[] | null>(),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })

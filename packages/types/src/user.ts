@@ -23,6 +23,7 @@ export interface UserModelSettings {
 }
 
 export interface UserSettingsResponse extends UserModelSettings {
+  claude_language: string | null;
   allowed_tools: string[];
   disallowed_tools: string[];
   allowed_model_ids: {
@@ -36,6 +37,7 @@ export interface UpdateUserSettingsRequest {
   opus_model_id?: string | null;
   sonnet_model_id?: string | null;
   haiku_model_id?: string | null;
+  claude_language?: string | null;
   allowed_tools?: string[] | null;
   disallowed_tools?: string[] | null;
 }
