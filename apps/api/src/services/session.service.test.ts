@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionContextResponse } from '@repo/types';
 import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -59,6 +59,7 @@ import { wsManager } from './websocket-manager.service.js';
 import { enqueueSessionEvent } from './event-queue.service.js';
 import {
   __testing,
+  abortActiveSessionsForShutdown,
   applySessionFlagSettings,
   canAbortSession,
   executeAbort,
@@ -1128,6 +1129,54 @@ describe('session.service', () => {
       fastify = createMockFastify();
     });
 
+    function registerAbortableSession(sessionId: SessionId): AbortController {
+      const abortController = new AbortController();
+      __testing.registerActiveSessionQuery(sessionId, {
+        userId,
+        abortController,
+        query: {} as Query,
+      });
+      return abortController;
+    }
+
+    function expectAbortEvents(sessionId: SessionId, text: string): void {
+      expect(enqueueSessionEvent).toHaveBeenCalledTimes(2);
+      expect(enqueueSessionEvent).toHaveBeenNthCalledWith(
+        1,
+        fastify,
+        expect.objectContaining({
+          userId,
+          sessionId: sessionId.toUUID(),
+          type: 'user',
+          subtype: null,
+          message: expect.objectContaining({
+            type: 'user',
+            session_id: sessionId.toString(),
+            message: expect.objectContaining({
+              role: 'user',
+              content: [{ type: 'text', text }],
+            }),
+          }),
+        })
+      );
+      expect(enqueueSessionEvent).toHaveBeenNthCalledWith(
+        2,
+        fastify,
+        expect.objectContaining({
+          userId,
+          sessionId: sessionId.toUUID(),
+          type: 'result',
+          subtype: 'error_during_execution',
+          message: expect.objectContaining({
+            type: 'result',
+            subtype: 'error_during_execution',
+            is_error: false,
+          }),
+        })
+      );
+      expect(wsManager.broadcast).toHaveBeenCalledTimes(2);
+    }
+
     it('should do nothing when no abort controller exists', async () => {
       const sessionId = new SessionId();
 
@@ -1138,16 +1187,141 @@ describe('session.service', () => {
     });
 
     it('should broadcast user abort message and result event when abort controller exists', async () => {
-      // Register the session for abort by simulating a query in progress
-      // We need to import and mock internal state here
       const sessionId = new SessionId();
+      const abortController = registerAbortableSession(sessionId);
 
-      // To test this properly, we'd need to expose the sessionAbortControllers map
-      // or use integration tests. For now, we test that it does nothing without a registered controller.
       await executeAbort(fastify, userId, sessionId);
 
-      // Without a registered controller, no broadcasts should occur
+      expect(abortController.signal.aborted).toBe(true);
+      expectAbortEvents(sessionId, __testing.USER_ABORT_MESSAGE_TEXT);
+    });
+
+    it('should abort active sessions for shutdown with a system shutdown user message', async () => {
+      const sessionId = new SessionId();
+      const abortController = registerAbortableSession(sessionId);
+
+      await abortActiveSessionsForShutdown(fastify);
+
+      expect(abortController.signal.aborted).toBe(true);
+      expectAbortEvents(sessionId, __testing.SYSTEM_SHUTDOWN_ABORT_MESSAGE_TEXT);
+      expect(fastify.withUserContext).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not write duplicate events when shutdown abort follows user abort', async () => {
+      const sessionId = new SessionId();
+      const abortController = registerAbortableSession(sessionId);
+
+      await executeAbort(fastify, userId, sessionId);
+      await abortActiveSessionsForShutdown(fastify);
+
+      expect(abortController.signal.aborted).toBe(true);
+      expectAbortEvents(sessionId, __testing.USER_ABORT_MESSAGE_TEXT);
+    });
+
+    it('should do nothing when shutdown abort has no active sessions', async () => {
+      await abortActiveSessionsForShutdown(fastify);
+
       expect(wsManager.broadcast).not.toHaveBeenCalled();
+      expect(enqueueSessionEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('completeRunAndClaimQueuedMessage', () => {
+    const userId = 'user-123';
+
+    function createQueuedResumeFastify() {
+      const sessionContext = {} as SessionContextResponse;
+      const userMessage = {
+        type: 'user',
+        uuid: '019bdf24-b923-7aaa-918c-8ce71422def1',
+        session_id: 'session-id',
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'queued prompt' }],
+        },
+      } as SDKUserMessage;
+      const sessionRow = {
+        sdkSessionId: 'sdk-session-id',
+        status: 'running',
+        context: sessionContext,
+      };
+      const queuedEvent = {
+        uuid: 'queued-event-uuid',
+        message: userMessage,
+      };
+      const sessionSelectLimit = vi.fn().mockResolvedValue([sessionRow]);
+      const queuedSelectLimit = vi.fn().mockResolvedValue([queuedEvent]);
+      const select = vi
+        .fn()
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: sessionSelectLimit,
+            }),
+          }),
+        })
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              orderBy: vi.fn().mockReturnValue({
+                limit: queuedSelectLimit,
+              }),
+            }),
+          }),
+        });
+      const update = vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(undefined),
+        }),
+      });
+      const tx = { select, update };
+      const withUserContext = vi.fn(
+        async (_userId: string, callback: (transaction: typeof tx) => Promise<unknown>) =>
+          callback(tx)
+      );
+      const fastify = {
+        withUserContext,
+      } as unknown as FastifyInstance;
+
+      return { fastify, select, update, sessionContext, userMessage };
+    }
+
+    it('should claim queued message when queued resume is enabled', async () => {
+      const sessionId = new SessionId();
+      const { fastify, select, update, sessionContext, userMessage } = createQueuedResumeFastify();
+
+      const result = await __testing.completeRunAndClaimQueuedMessage(
+        fastify,
+        userId,
+        sessionId,
+        null
+      );
+
+      expect(result).toEqual({
+        userMessage,
+        sessionContext,
+        sdkSessionId: 'sdk-session-id',
+      });
+      expect(select).toHaveBeenCalledTimes(2);
+      expect(update).toHaveBeenCalledTimes(2);
+    });
+
+    it('should not claim queued message when queued resume is disabled', async () => {
+      const sessionId = new SessionId();
+      const { fastify, select, update } = createQueuedResumeFastify();
+
+      const result = await __testing.completeRunAndClaimQueuedMessage(
+        fastify,
+        userId,
+        sessionId,
+        null,
+        { claimQueuedMessage: false }
+      );
+
+      expect(result).toBeNull();
+      expect(select).toHaveBeenCalledTimes(1);
+      expect(update).toHaveBeenCalledTimes(1);
     });
   });
 

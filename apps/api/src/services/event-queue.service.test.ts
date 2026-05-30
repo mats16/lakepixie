@@ -419,6 +419,36 @@ describe('EventBatcher', () => {
     expect(fastify.log.info).toHaveBeenCalledWith('EventBatcher shut down');
   });
 
+  it('should fall back to individual writes when shutdown final flush fails', async () => {
+    (insertSessionEventInTx as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('shutdown flush failed')
+    );
+
+    const batcher = new EventBatcher(fastify, 10, 5000);
+    batcher.add(createPayload({ eventUuid: 'event-a' }));
+    batcher.add(createPayload({ eventUuid: 'event-b' }));
+
+    await batcher.shutdown();
+
+    expect(fastify.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-123', eventCount: 2 }),
+      'Event flush failed during shutdown, falling back to individual writes'
+    );
+    expect(insertSessionEventInTx).toHaveBeenCalledTimes(3);
+    expect(insertSessionEventInTx).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({ uuid: 'event-a' }),
+      { idempotent: true }
+    );
+    expect(insertSessionEventInTx).toHaveBeenNthCalledWith(
+      3,
+      expect.anything(),
+      expect.objectContaining({ uuid: 'event-b' }),
+      { idempotent: true }
+    );
+  });
+
   it('should wait for in-flight flush to complete before shutdown finishes', async () => {
     // writeUserEvents がハングする（per-user write タイムアウトで解決される）
     (fastify.withUserContext as ReturnType<typeof vi.fn>).mockImplementation(

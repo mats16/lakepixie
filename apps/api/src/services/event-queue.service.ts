@@ -17,6 +17,7 @@ const RETRY_MAX_ATTEMPTS = 5;
 /** タイムアウト定数 */
 const WRITE_TIMEOUT_MS = 15_000;
 const FLUSH_TIMEOUT_MS = 30_000;
+const SHUTDOWN_FINAL_FLUSH_TIMEOUT_MS = 60_000;
 
 /**
  * Promise をタイムアウト付きで実行する
@@ -144,7 +145,11 @@ export class EventBatcher {
       const batch = this.buffer;
       this.buffer = [];
       try {
-        await withTimeout(this.doFlush(batch), FLUSH_TIMEOUT_MS, 'shutdown final flush');
+        await withTimeout(
+          this.doFlush(batch),
+          SHUTDOWN_FINAL_FLUSH_TIMEOUT_MS,
+          'shutdown final flush'
+        );
       } catch (err) {
         this.fastify.log.error(
           { err, eventCount: batch.length },
@@ -171,20 +176,28 @@ export class EventBatcher {
       })
     );
 
+    const shutdownFallbacks: Promise<void>[] = [];
+
     for (let i = 0; i < results.length; i++) {
       const userId = userIds[i];
       const events = eventsByUser.get(userId)!;
       if (results[i].status === 'rejected') {
         const error = (results[i] as PromiseRejectedResult).reason;
-        this.fastify.log.warn(
-          {
-            err: error,
-            userId,
-            ...this.summarizeEvents(events),
-          },
-          'Event flush failed for user, scheduling retry'
-        );
-        this.scheduleRetry(userId, events, 1);
+        const logContext = {
+          err: error,
+          userId,
+          ...this.summarizeEvents(events),
+        };
+        if (this.shuttingDown) {
+          this.fastify.log.warn(
+            logContext,
+            'Event flush failed during shutdown, falling back to individual writes'
+          );
+          shutdownFallbacks.push(this.writeEventsIndividually(userId, events));
+        } else {
+          this.fastify.log.warn(logContext, 'Event flush failed for user, scheduling retry');
+          this.scheduleRetry(userId, events, 1);
+        }
       } else {
         this.fastify.log.info(
           {
@@ -194,6 +207,10 @@ export class EventBatcher {
           'Event flush succeeded for user'
         );
       }
+    }
+
+    if (shutdownFallbacks.length > 0) {
+      await Promise.all(shutdownFallbacks);
     }
   }
 

@@ -1,7 +1,41 @@
+import type { FastifyInstance } from 'fastify';
 import { build } from './app.js';
+
+const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 120_000;
+
+function setupGracefulShutdown(app: FastifyInstance): void {
+  let isShuttingDown = false;
+
+  const shutdown = (signal: NodeJS.Signals) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    app.log.info({ signal }, 'Received shutdown signal');
+    const timeout = setTimeout(() => {
+      app.log.error({ signal }, 'Graceful shutdown timed out');
+      process.exit(1);
+    }, GRACEFUL_SHUTDOWN_TIMEOUT_MS);
+
+    app
+      .close()
+      .then(() => {
+        clearTimeout(timeout);
+        process.exit(0);
+      })
+      .catch(err => {
+        clearTimeout(timeout);
+        app.log.error({ err, signal }, 'Graceful shutdown failed');
+        process.exit(1);
+      });
+  };
+
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
+}
 
 const start = async () => {
   const app = await build();
+  setupGracefulShutdown(app);
 
   try {
     const isDevelopment = app.config.NODE_ENV === 'development';
