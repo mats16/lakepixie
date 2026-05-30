@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { build } from './app.js';
 
-const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 30_000;
+const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 120_000;
 
 function setupGracefulShutdown(app: FastifyInstance): void {
   let isShuttingDown = false;
@@ -15,7 +15,6 @@ function setupGracefulShutdown(app: FastifyInstance): void {
       app.log.error({ signal }, 'Graceful shutdown timed out');
       process.exit(1);
     }, GRACEFUL_SHUTDOWN_TIMEOUT_MS);
-    timeout.unref();
 
     app
       .close()

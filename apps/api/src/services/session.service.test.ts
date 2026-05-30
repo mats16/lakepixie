@@ -1204,6 +1204,7 @@ describe('session.service', () => {
 
       expect(abortController.signal.aborted).toBe(true);
       expectAbortEvents(sessionId, __testing.SYSTEM_SHUTDOWN_ABORT_MESSAGE_TEXT);
+      expect(fastify.withUserContext).toHaveBeenCalledTimes(1);
     });
 
     it('should not write duplicate events when shutdown abort follows user abort', async () => {

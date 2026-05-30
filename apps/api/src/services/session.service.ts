@@ -90,7 +90,7 @@ interface ActiveSessionQuery {
 
 /** セッションID → 実行中 SDK query のマッピング（abort / control request 用） */
 const activeSessionQueries = new Map<string, ActiveSessionQuery>();
-let isServerShuttingDown = false;
+const shuttingDownApps = new WeakSet<FastifyInstance>();
 const QUEUED_USER_EVENT_SUBTYPE = 'queued';
 const USER_ABORT_MESSAGE_TEXT = '[Request aborted by user]';
 const SYSTEM_SHUTDOWN_ABORT_MESSAGE_TEXT = '[Agent execution interrupted: server is shutting down]';
@@ -1042,7 +1042,7 @@ async function processAllEvents(
           userId,
           sessionId,
           pendingSdkSessionId,
-          { claimQueuedMessage: !isServerShuttingDown }
+          { claimQueuedMessage: !isServerShuttingDown(fastify) }
         );
         if (queuedResume) {
           await startQueryPipeline({
@@ -1305,6 +1305,11 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
   let cleanupGitCredential: (() => void) | undefined;
 
   try {
+    if (isServerShuttingDown(fastify)) {
+      await setSessionIdleForShutdown(fastify, userId, sessionId, sdkSessionId);
+      return;
+    }
+
     const { sessionContext } = params;
     const prompt = singleMessageIterable(
       buildPromptMessage(sessionId, rawPrompt, initialUserEvent)
@@ -2726,6 +2731,30 @@ function getAbortMessageText(reason: SessionAbortReason): string {
     : USER_ABORT_MESSAGE_TEXT;
 }
 
+function isServerShuttingDown(fastify: FastifyInstance): boolean {
+  return shuttingDownApps.has(fastify);
+}
+
+async function setSessionIdleForShutdown(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId,
+  sdkSessionId?: string | null
+): Promise<void> {
+  await fastify.withUserContext(userId, async tx => {
+    await tx
+      .update(sessions)
+      .set({
+        status: 'idle',
+        ...(sdkSessionId != null && { sdkSessionId }),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(eq(sessions.id, sessionId.toUUID()), inArray(sessions.status, ['init', 'running']))
+      );
+  });
+}
+
 /**
  * Abort を実行し、画面表示用の user メッセージと result イベントを保存・配信する。
  */
@@ -2739,7 +2768,12 @@ async function abortActiveSession(
   const activeQuery = activeSessionQueries.get(sessionIdStr);
 
   if (!activeQuery) return;
-  if (activeQuery.abortController.signal.aborted) return;
+  if (activeQuery.abortController.signal.aborted) {
+    if (reason === 'system_shutdown') {
+      await setSessionIdleForShutdown(fastify, userId, sessionId);
+    }
+    return;
+  }
 
   // 1. abort を呼び出し（ハンドルの削除は processAllEvents の finally で行う）
   activeQuery.abortController.abort();
@@ -2767,7 +2801,11 @@ async function abortActiveSession(
   } as SDKResultMessage;
   saveAndBroadcastEvent(fastify, userId, sessionId, resultMessage);
 
-  // status は processAllEvents の finally で idle に戻す。
+  if (reason === 'system_shutdown') {
+    await setSessionIdleForShutdown(fastify, userId, sessionId);
+  }
+
+  // user abort の status は processAllEvents の finally で idle に戻す。
 }
 
 /**
@@ -2791,7 +2829,7 @@ export async function executeAbort(
  * EventBatcher の onClose より先に呼び出される前提で、保存は既存のイベントバッファに任せる。
  */
 export async function abortActiveSessionsForShutdown(fastify: FastifyInstance): Promise<void> {
-  isServerShuttingDown = true;
+  shuttingDownApps.add(fastify);
   const activeQueries = [...activeSessionQueries.entries()];
   if (activeQueries.length === 0) return;
 
@@ -2842,7 +2880,6 @@ export const __testing = {
   SYSTEM_SHUTDOWN_ABORT_MESSAGE_TEXT,
   clearActiveSessionQueries: () => {
     activeSessionQueries.clear();
-    isServerShuttingDown = false;
   },
   clearDatabricksAppCreateLocks: () => databricksAppOperationLocks.clear(),
   acquireDatabricksAppCreateLock,
