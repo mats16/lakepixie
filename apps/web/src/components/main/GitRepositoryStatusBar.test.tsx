@@ -411,6 +411,42 @@ describe('GitRepositoryStatusBar', () => {
     });
   });
 
+  it('keeps the pull request confirmation dialog mounted while the status bar is hidden', async () => {
+    mockGitRepositoryService.getBranch.mockResolvedValue({
+      name: 'ccbricks/test',
+      html_url: 'https://github.com/acme/widgets/tree/ccbricks%2Ftest',
+      compare: null,
+    });
+    mockGitRepositoryService.listPullRequests.mockResolvedValue({ pulls: [] });
+    mockSessionService.getGitDiff.mockResolvedValue(gitDiff());
+
+    const { rerender } = renderStatusBar({ isHidden: false });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create PR' }));
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <TooltipProvider delayDuration={0}>
+          <GitRepositoryStatusBar
+            sessionId="019729a8-0000-7000-8000-000000000000"
+            owner="acme"
+            repo="widgets"
+            headBranch="ccbricks/test"
+            baseBranch="main"
+            sessionTitle="Update widgets"
+            isHidden
+          />
+        </TooltipProvider>
+      </I18nextProvider>
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Generate PR metadata')).toBeTruthy();
+    expect(mockGitRepositoryService.getBranch).toHaveBeenCalledTimes(1);
+    expect(mockSessionService.getGitDiff).toHaveBeenCalledTimes(1);
+  });
+
   it('creates a draft pull request from the split button menu', async () => {
     mockGitRepositoryService.getBranch.mockResolvedValue({
       name: 'ccbricks/test',

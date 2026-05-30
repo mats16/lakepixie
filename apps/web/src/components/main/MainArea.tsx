@@ -89,12 +89,29 @@ interface MainAreaProps {
 const GIT_DIFF_REFRESH_DEBOUNCE_MS = 750;
 const MESSAGE_PADDING_BASE = 'pb-24';
 const MESSAGE_PADDING_FLOATING = 'pb-36';
-const MESSAGE_PADDING_EXIT_PLAN_WITH_GIT = 'pb-[13rem]';
 const MESSAGE_PADDING_EXIT_PLAN_SUGGEST = 'pb-[20rem]';
-const GIT_STATUS_BOTTOM_WITH_EXIT_PLAN = 'pb-32';
-const GIT_STATUS_BOTTOM_WITH_EXIT_PLAN_SUGGEST = 'pb-[13.5rem]';
 
 type GitNewSessionSourceSelection = Extract<NewSessionSourceSelection, { type: 'git_repository' }>;
+
+function getMessageBottomPaddingClassName({
+  hasActiveExitPlan,
+  isExitPlanSuggestOpen,
+  hasGitRepositoryStatus,
+}: {
+  hasActiveExitPlan: boolean;
+  isExitPlanSuggestOpen: boolean;
+  hasGitRepositoryStatus: boolean;
+}): string {
+  if (hasActiveExitPlan && isExitPlanSuggestOpen) {
+    return MESSAGE_PADDING_EXIT_PLAN_SUGGEST;
+  }
+
+  if (hasActiveExitPlan || hasGitRepositoryStatus) {
+    return MESSAGE_PADDING_FLOATING;
+  }
+
+  return MESSAGE_PADDING_BASE;
+}
 
 function getResolvedSessionModelId(
   modelId: string,
@@ -413,20 +430,11 @@ export function MainArea({
     };
   }, [gitRepositoryOutcome, activeSession?.session_context?.sources]);
 
-  const messageBottomPaddingClassName = activeExitPlan
-    ? isExitPlanSuggestOpen
-      ? MESSAGE_PADDING_EXIT_PLAN_SUGGEST
-      : gitRepositoryStatus
-        ? MESSAGE_PADDING_EXIT_PLAN_WITH_GIT
-        : MESSAGE_PADDING_FLOATING
-    : gitRepositoryStatus
-      ? MESSAGE_PADDING_FLOATING
-      : MESSAGE_PADDING_BASE;
-  const gitStatusBottomClassName = activeExitPlan
-    ? isExitPlanSuggestOpen
-      ? GIT_STATUS_BOTTOM_WITH_EXIT_PLAN_SUGGEST
-      : GIT_STATUS_BOTTOM_WITH_EXIT_PLAN
-    : undefined;
+  const messageBottomPaddingClassName = getMessageBottomPaddingClassName({
+    hasActiveExitPlan: activeExitPlan !== null,
+    isExitPlanSuggestOpen,
+    hasGitRepositoryStatus: gitRepositoryStatus !== null,
+  });
   const { openWorkspace, isOpeningWorkspace } = useOpenWorkspace(databricksWorkspaceOutcome?.path);
 
   const handleSend = (content: UserMessageContentBlock[]) => {
@@ -800,7 +808,7 @@ export function MainArea({
             sessionTitle={activeSession?.title ?? undefined}
             diffRefreshKey={gitDiffRefreshKey}
             remoteRefreshKey={gitRepositoryStatusRefreshKey}
-            bottomClassName={gitStatusBottomClassName}
+            isHidden={activeExitPlan !== null}
           />
         )}
       </div>
