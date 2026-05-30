@@ -27,6 +27,7 @@ import gitRepositoriesRoute from './routes/git-repositories.js';
 import gitCredentialRoute from './routes/git-credential.js';
 import githubOAuthRoute from './routes/github-oauth.js';
 import { startEventBatcher } from './services/event-queue.service.js';
+import { abortActiveSessionsForShutdown } from './services/session.service.js';
 
 export async function build() {
   const app = Fastify({
@@ -85,6 +86,12 @@ export async function build() {
 
   // 静的ファイル配信（最後に登録）
   await app.register(staticPlugin);
+
+  // onClose hooks は登録と逆順で実行される。
+  // EventBatcher より後に登録し、shutdown abort イベントを final flush 前に enqueue する。
+  app.addHook('onClose', async () => {
+    await abortActiveSessionsForShutdown(app);
+  });
 
   return app;
 }

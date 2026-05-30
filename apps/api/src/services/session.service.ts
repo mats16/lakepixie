@@ -82,6 +82,7 @@ import {
 import { createStopHookGitCheck } from './stop-hook-git-check.service.js';
 
 interface ActiveSessionQuery {
+  userId: string;
   abortController: AbortController;
   query: Query;
   permissionModeBeforePlan?: Exclude<WsPermissionMode, 'plan'>;
@@ -90,6 +91,8 @@ interface ActiveSessionQuery {
 /** セッションID → 実行中 SDK query のマッピング（abort / control request 用） */
 const activeSessionQueries = new Map<string, ActiveSessionQuery>();
 const QUEUED_USER_EVENT_SUBTYPE = 'queued';
+const USER_ABORT_MESSAGE_TEXT = '[Request aborted by user]';
+const SYSTEM_SHUTDOWN_ABORT_MESSAGE_TEXT = '[Agent execution interrupted: server is shutting down]';
 const GIT_COMMAND_TIMEOUT_MS = 60000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const moduleRequire = createRequire(import.meta.url);
@@ -1480,6 +1483,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
     );
 
     activeSessionQueries.set(sessionId.toString(), {
+      userId,
       abortController,
       query: response,
       permissionModeBeforePlan:
@@ -2709,23 +2713,28 @@ export function canAbortSession(sessionId: SessionId): boolean {
   return activeSessionQueries.has(sessionId.toString());
 }
 
+type SessionAbortReason = 'user' | 'system_shutdown';
+
+function getAbortMessageText(reason: SessionAbortReason): string {
+  return reason === 'system_shutdown'
+    ? SYSTEM_SHUTDOWN_ABORT_MESSAGE_TEXT
+    : USER_ABORT_MESSAGE_TEXT;
+}
+
 /**
- * Abort を実行（非同期）
- * user メッセージと result イベントを送信し、セッション状態を idle に更新する
- *
- * @param fastify - Fastify インスタンス
- * @param userId - ユーザーID
- * @param sessionId - SessionId オブジェクト
+ * Abort を実行し、画面表示用の user メッセージと result イベントを保存・配信する。
  */
-export async function executeAbort(
+async function abortActiveSession(
   fastify: FastifyInstance,
   userId: string,
-  sessionId: SessionId
+  sessionId: SessionId,
+  reason: SessionAbortReason
 ): Promise<void> {
   const sessionIdStr = sessionId.toString();
   const activeQuery = activeSessionQueries.get(sessionIdStr);
 
   if (!activeQuery) return;
+  if (activeQuery.abortController.signal.aborted) return;
 
   // 1. abort を呼び出し（ハンドルの削除は processAllEvents の finally で行う）
   activeQuery.abortController.abort();
@@ -2738,7 +2747,7 @@ export async function executeAbort(
     parent_tool_use_id: null,
     message: {
       role: 'user',
-      content: [{ type: 'text', text: '[Request aborted by user]' }],
+      content: [{ type: 'text', text: getAbortMessageText(reason) }],
     },
   } as SDKUserMessage;
   saveAndBroadcastEvent(fastify, userId, sessionId, userMessage);
@@ -2754,6 +2763,54 @@ export async function executeAbort(
   saveAndBroadcastEvent(fastify, userId, sessionId, resultMessage);
 
   // status は processAllEvents の finally で idle に戻す。
+}
+
+/**
+ * Abort を実行（非同期）
+ * user メッセージと result イベントを送信し、セッション状態を idle に更新する
+ *
+ * @param fastify - Fastify インスタンス
+ * @param userId - ユーザーID
+ * @param sessionId - SessionId オブジェクト
+ */
+export async function executeAbort(
+  fastify: FastifyInstance,
+  userId: string,
+  sessionId: SessionId
+): Promise<void> {
+  await abortActiveSession(fastify, userId, sessionId, 'user');
+}
+
+/**
+ * サーバー停止時に実行中のセッションをシステム都合として abort する。
+ * EventBatcher の onClose より先に呼び出される前提で、保存は既存のイベントバッファに任せる。
+ */
+export async function abortActiveSessionsForShutdown(fastify: FastifyInstance): Promise<void> {
+  const activeQueries = [...activeSessionQueries.entries()];
+  if (activeQueries.length === 0) return;
+
+  fastify.log.info(
+    { activeSessionCount: activeQueries.length },
+    'Aborting active sessions for server shutdown'
+  );
+
+  await Promise.all(
+    activeQueries.map(async ([sessionIdStr, activeQuery]) => {
+      const sessionId = SessionId.fromString(sessionIdStr);
+      try {
+        await abortActiveSession(fastify, activeQuery.userId, sessionId, 'system_shutdown');
+      } catch (error) {
+        fastify.log.error(
+          {
+            err: toLogError(error),
+            sessionId: sessionIdStr,
+            userId: activeQuery.userId,
+          },
+          'Failed to abort active session for server shutdown'
+        );
+      }
+    })
+  );
 }
 
 export const __testing = {
@@ -2774,6 +2831,8 @@ export const __testing = {
   validateGitRepositoryUrl,
   validateSparseCheckoutPath,
   handleCanUseTool,
+  USER_ABORT_MESSAGE_TEXT,
+  SYSTEM_SHUTDOWN_ABORT_MESSAGE_TEXT,
   clearActiveSessionQueries: () => activeSessionQueries.clear(),
   clearDatabricksAppCreateLocks: () => databricksAppOperationLocks.clear(),
   acquireDatabricksAppCreateLock,
@@ -2782,6 +2841,7 @@ export const __testing = {
     activeQuery: Partial<ActiveSessionQuery> & { query: Query }
   ) => {
     activeSessionQueries.set(sessionId.toString(), {
+      userId: activeQuery.userId ?? 'test-user',
       abortController: activeQuery.abortController ?? new AbortController(),
       query: activeQuery.query,
       permissionModeBeforePlan: activeQuery.permissionModeBeforePlan,

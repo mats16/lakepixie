@@ -176,15 +176,21 @@ export class EventBatcher {
       const events = eventsByUser.get(userId)!;
       if (results[i].status === 'rejected') {
         const error = (results[i] as PromiseRejectedResult).reason;
-        this.fastify.log.warn(
-          {
-            err: error,
-            userId,
-            ...this.summarizeEvents(events),
-          },
-          'Event flush failed for user, scheduling retry'
-        );
-        this.scheduleRetry(userId, events, 1);
+        const logContext = {
+          err: error,
+          userId,
+          ...this.summarizeEvents(events),
+        };
+        if (this.shuttingDown) {
+          this.fastify.log.warn(
+            logContext,
+            'Event flush failed during shutdown, falling back to individual writes'
+          );
+          await this.writeEventsIndividually(userId, events);
+        } else {
+          this.fastify.log.warn(logContext, 'Event flush failed for user, scheduling retry');
+          this.scheduleRetry(userId, events, 1);
+        }
       } else {
         this.fastify.log.info(
           {
