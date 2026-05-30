@@ -48,6 +48,11 @@ function parsePositiveCount(stdout: string): number {
   return Number.isFinite(count) && count > 0 ? count : 0;
 }
 
+function parseLsRemoteHead(stdout: string): string | null {
+  const [objectId] = stdout.trim().split(/\s+/);
+  return objectId || null;
+}
+
 async function resolveComparablePath(filePath: string): Promise<string> {
   try {
     return await realpath(filePath);
@@ -57,7 +62,7 @@ async function resolveComparablePath(filePath: string): Promise<string> {
 }
 
 async function isSameFilesystemPath(left: string, right: string): Promise<boolean> {
-  if (left === '') return false;
+  if (left === '' || right === '') return false;
   const [resolvedLeft, resolvedRight] = await Promise.all([
     resolveComparablePath(left),
     resolveComparablePath(right),
@@ -150,9 +155,11 @@ export async function runStopHookGitCheck(
   const signal = options.signal;
 
   const gitRoot = await git(['rev-parse', '--show-toplevel'], { cwd, signal });
+  if (gitRoot.exitCode !== 0) return continueHook();
+
   const gitRootPath = gitRoot.stdout.trim();
   const isSessionGitRoot = await isSameFilesystemPath(gitRootPath, cwd);
-  if (gitRoot.exitCode !== 0 || !isSessionGitRoot) {
+  if (!isSessionGitRoot) {
     return continueHook();
   }
 
@@ -177,15 +184,29 @@ export async function runStopHookGitCheck(
   const currentBranch = branch.stdout.trim();
   if (!currentBranch) return continueHook();
 
-  const remoteBranch = await git(['rev-parse', `origin/${currentBranch}`], { cwd, signal });
-  if (remoteBranch.exitCode === 0) {
-    const unpushed = await countUnpushedCommits(git, cwd, `origin/${currentBranch}..HEAD`, signal);
+  const head = await git(['rev-parse', 'HEAD'], { cwd, signal });
+  const localHead = head.stdout.trim();
+  if (head.exitCode !== 0 || !localHead) return continueHook();
+
+  const remoteBranch = await git(['ls-remote', 'origin', `refs/heads/${currentBranch}`], {
+    cwd,
+    signal,
+  });
+  if (remoteBranch.exitCode !== 0) return continueHook();
+
+  const remoteHead = parseLsRemoteHead(remoteBranch.stdout);
+  if (remoteHead) {
+    if (remoteHead === localHead) return continueHook();
+
+    const unpushed = await countUnpushedCommits(git, cwd, `${remoteHead}..HEAD`, signal);
     if (unpushed > 0) {
       return blockHook(
         `There are ${unpushed} unpushed commit(s) on branch '${currentBranch}'. Please push these changes to the remote repository.`
       );
     }
-    return continueHook();
+    return blockHook(
+      `Remote branch '${currentBranch}' does not match the local HEAD. Please push these changes to the remote repository.`
+    );
   }
 
   const unpushed = await countUnpushedCommits(git, cwd, 'origin/HEAD..HEAD', signal);

@@ -71,6 +71,16 @@ describe('stop-hook-git-check.service', () => {
     expect(git).toHaveBeenCalledTimes(1);
   });
 
+  it('does nothing when the session cwd is empty', async () => {
+    const git = createGitRunner([{ stdout: `${process.cwd()}\n` }]);
+
+    await expect(runStopHookGitCheck({ ...baseInput, cwd: '' }, { git })).resolves.toEqual({
+      continue: true,
+    });
+
+    expect(git).toHaveBeenCalledTimes(1);
+  });
+
   it('continues checking when git root and session cwd resolve to the same path', async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'ccbricks-stop-hook-'));
 
@@ -156,7 +166,8 @@ describe('stop-hook-git-check.service', () => {
       {},
       { stdout: '' },
       { stdout: 'feature/test\n' },
-      { stdout: 'abc123\n' },
+      { stdout: 'def456\n' },
+      { stdout: 'abc123\trefs/heads/feature/test\n' },
       { stdout: '2\n' },
     ]);
 
@@ -164,6 +175,26 @@ describe('stop-hook-git-check.service', () => {
       decision: 'block',
       reason:
         "There are 2 unpushed commit(s) on branch 'feature/test'. Please push these changes to the remote repository.",
+    });
+  });
+
+  it('does not block when the remote branch matches HEAD without a local tracking ref', async () => {
+    const git = createGitRunner([
+      sessionGitRoot,
+      { stdout: 'origin\n' },
+      {},
+      {},
+      { stdout: '' },
+      { stdout: 'feature/test\n' },
+      { stdout: 'abc123\n' },
+      { stdout: 'abc123\trefs/heads/feature/test\n' },
+    ]);
+
+    await expect(runStopHookGitCheck(baseInput, { git })).resolves.toEqual({ continue: true });
+
+    expect(git).toHaveBeenCalledWith(['ls-remote', 'origin', 'refs/heads/feature/test'], {
+      cwd: '/tmp/repo',
+      signal: undefined,
     });
   });
 
@@ -175,7 +206,8 @@ describe('stop-hook-git-check.service', () => {
       {},
       { stdout: '' },
       { stdout: 'feature/test\n' },
-      { exitCode: 1 },
+      { stdout: 'abc123\n' },
+      { stdout: '' },
       { stdout: '3\n' },
     ]);
 
@@ -194,7 +226,8 @@ describe('stop-hook-git-check.service', () => {
       {},
       { stdout: '' },
       { stdout: 'feature/test\n' },
-      { exitCode: 1 },
+      { stdout: 'abc123\n' },
+      { stdout: '' },
       { exitCode: 1 },
     ]);
 
