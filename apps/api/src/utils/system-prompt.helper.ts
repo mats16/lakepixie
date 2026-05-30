@@ -8,6 +8,33 @@ import type {
 } from '@repo/types';
 import { CONTEXT_MANAGER_MCP_ALLOWED_TOOLS } from '../services/context-manager-mcp.service.js';
 
+const CONTEXT_MANAGER_TOOL_LIST = CONTEXT_MANAGER_MCP_ALLOWED_TOOLS.map(
+  tool => `- \`${tool}\``
+).join('\n');
+
+const CONTEXT_MANAGER_INSTRUCTION = `
+## ccbricks Session Context Manager
+
+You have access to the \`session\` MCP server. It is the only supported way for you to update ccbricks UI session context.
+
+Use it to:
+- Read the current \`session_context\`
+- Read \`session_context.outcomes\`
+- Add, replace, or remove Databricks Apps and Databricks Workspace outcomes
+- Replace the full \`outcomes\` array while preserving any existing \`git_repository\` outcome
+
+Rules:
+1. You may update \`session_context.outcomes\` only.
+2. Do not try to update \`sources\`, \`cwd\`, model settings, permission settings, MCP config, or tool permissions.
+3. After creating or verifying a Databricks App yourself, record the exact app name with a \`databricks_apps\` outcome.
+4. After pushing to or choosing a Databricks Workspace path yourself, record the exact path with a \`databricks_workspace\` outcome.
+5. Do not add, remove, or change \`git_repository\` outcomes. They are managed by the ccbricks app only.
+6. Keep existing unrelated outcomes unless the user explicitly asks to remove them.
+
+Available MCP tools:
+${CONTEXT_MANAGER_TOOL_LIST}
+`.trim();
+
 /** systemPrompt の設定型 */
 export interface SystemPromptConfig {
   type: 'preset';
@@ -62,29 +89,7 @@ export function buildSystemPromptConfig(
  * ccbricks の session_context を同期する internal MCP の使い方。
  */
 export function createContextManagerInstruction(): string {
-  const toolList = CONTEXT_MANAGER_MCP_ALLOWED_TOOLS.map(tool => `- \`${tool}\``).join('\n');
-  return `
-## ccbricks Session Context Manager
-
-You have access to the \`session\` MCP server. It is the only supported way for you to update ccbricks UI session context.
-
-Use it to:
-- Read the current \`session_context\`
-- Read \`session_context.outcomes\`
-- Add, replace, or remove Databricks Apps and Databricks Workspace outcomes
-- Replace the full \`outcomes\` array while preserving any existing \`git_repository\` outcome
-
-Rules:
-1. You may update \`session_context.outcomes\` only.
-2. Do not try to update \`sources\`, \`cwd\`, model settings, permission settings, MCP config, or tool permissions.
-3. After creating or verifying a Databricks App yourself, record the exact app name with a \`databricks_apps\` outcome.
-4. After pushing to or choosing a Databricks Workspace path yourself, record the exact path with a \`databricks_workspace\` outcome.
-5. Do not add, remove, or change \`git_repository\` outcomes. They are managed by the ccbricks app only.
-6. Keep existing unrelated outcomes unless the user explicitly asks to remove them.
-
-Available MCP tools:
-${toolList}
-`.trim();
+  return CONTEXT_MANAGER_INSTRUCTION;
 }
 
 /**

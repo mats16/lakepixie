@@ -383,6 +383,26 @@ describe('session.service', () => {
         disallowed_tools: ['mcp__readonly__*'],
       });
     });
+
+    it('keeps the internal session MCP server out of deny patterns', () => {
+      expect(
+        __testing.removeContextManagerMcpDisallowPatterns({
+          allowedTools: [
+            'Read',
+            'mcp__dbsql__*',
+            'mcp__session__set_outcomes',
+            'mcp__session__upsert_outcome',
+          ],
+          disallowedTools: [
+            'Bash',
+            'mcp__session',
+            'mcp__session__*',
+            'mcp__session__set_outcomes',
+            'mcp__*',
+          ],
+        })
+      ).toEqual(['Bash', 'mcp__dbsql__*']);
+    });
   });
 
   describe('git repository source helpers', () => {
@@ -728,6 +748,46 @@ describe('session.service', () => {
       ).toThrow('git_repository outcomes can only be configured by the app');
     });
 
+    it('should compare git repository outcomes after normalization', () => {
+      const source = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets.git',
+      };
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [source],
+        outcomes: [
+          {
+            type: 'git_repository',
+            git_info: {
+              type: 'github',
+              repo: ' acme/widgets ',
+              branches: ['ccbricks/test-branch'],
+            },
+          },
+        ],
+      };
+
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          currentContext: context,
+          nextOutcomes: [
+            {
+              type: 'git_repository',
+              git_info: {
+                type: 'github',
+                branches: ['ccbricks/test-branch'],
+              },
+            },
+          ],
+        })
+      ).not.toThrow();
+    });
+
     it('should export workspace sources except when exactly one git source is present', () => {
       expect(__testing.shouldExportWorkspaceSources(0, 0)).toBe(false);
       expect(__testing.shouldExportWorkspaceSources(1, 0)).toBe(true);
@@ -1060,6 +1120,60 @@ describe('session.service', () => {
       expect(result).toEqual({
         behavior: 'deny',
         message: 'Session outcomes cannot be updated while permission_mode is plan',
+      });
+    });
+
+    it('uses active query permission mode for context manager write checks', async () => {
+      const { fastify } = createContextUpdateFastify({
+        permission_mode: 'plan',
+      });
+      const sessionId = new SessionId();
+      const input = { outcomes: [] };
+      __testing.registerActiveSessionQuery(sessionId, {
+        query: { setPermissionMode: vi.fn() } as unknown as Query,
+        permissionMode: 'auto',
+      });
+
+      const result = await __testing.handleCanUseTool({
+        fastify,
+        userId: 'user-123',
+        sessionId,
+        toolName: 'mcp__session__set_outcomes',
+        input,
+        options: {
+          signal: new AbortController().signal,
+          toolUseID: 'toolu-context-manager-write',
+        },
+      });
+
+      expect(result).toEqual({
+        behavior: 'allow',
+        updatedInput: input,
+      });
+      expect(fastify.withUserContext).not.toHaveBeenCalled();
+    });
+
+    it('returns a deny result when context manager write permission lookup fails', async () => {
+      const fastify = {
+        withUserContext: vi.fn().mockRejectedValue(new Error('Session not found')),
+      } as unknown as FastifyInstance;
+      const sessionId = new SessionId();
+
+      const result = await __testing.handleCanUseTool({
+        fastify,
+        userId: 'user-123',
+        sessionId,
+        toolName: 'mcp__session__set_outcomes',
+        input: { outcomes: [] },
+        options: {
+          signal: new AbortController().signal,
+          toolUseID: 'toolu-context-manager-write',
+        },
+      });
+
+      expect(result).toEqual({
+        behavior: 'deny',
+        message: 'Session not found',
       });
     });
 

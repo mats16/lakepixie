@@ -1,9 +1,4 @@
-import type {
-  DatabricksWorkspaceSource,
-  ResolvedDatabricksAppsOutcome,
-  ResolvedSessionOutcome,
-  SessionContextResponse,
-} from './session.js';
+import type { ResolvedSessionOutcome, SessionContextResponse } from './session.js';
 
 // =====================================================
 // Genie Space Types (Databricks API)
@@ -43,49 +38,6 @@ export interface McpServerEntry {
 
 export interface McpConfig {
   mcpServers: Record<string, McpServerEntry>;
-}
-
-// =====================================================
-// MCP Tool Types for session server
-// =====================================================
-
-/**
- * mcp__session__get_session_context のレスポンス
- */
-export interface GetSessionContextResponse {
-  session_context: SessionContextResponse;
-}
-
-/**
- * mcp__session__get_outcomes のレスポンス
- */
-export interface GetOutcomesResponse {
-  outcomes: ResolvedSessionOutcome[];
-}
-
-/**
- * mcp__session__set_outcomes のリクエスト
- */
-export interface SetOutcomesRequest {
-  outcomes: ResolvedSessionOutcome[];
-}
-
-export type ContextManagerMutableOutcome =
-  | DatabricksWorkspaceSource
-  | ResolvedDatabricksAppsOutcome;
-
-/**
- * mcp__session__upsert_outcome のリクエスト
- */
-export interface UpsertOutcomeRequest {
-  outcome: ContextManagerMutableOutcome;
-}
-
-/**
- * mcp__session__remove_outcome のリクエスト
- */
-export interface RemoveOutcomeRequest {
-  type: ContextManagerMutableOutcome['type'];
 }
 
 /**

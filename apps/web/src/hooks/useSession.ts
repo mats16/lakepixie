@@ -82,16 +82,10 @@ export function useSession({ sessionId }: UseSessionOptions): UseSessionReturn {
   const patchSessionContext = useCallback(
     (nextSession: SessionResponse) => {
       if (nextSession.id !== sessionId) return;
-      setSession(prevSession => {
-        if (!prevSession || prevSession.id !== nextSession.id) return nextSession;
-        return {
-          ...prevSession,
-          title: nextSession.title,
-          updated_at: nextSession.updated_at,
-          session_context: nextSession.session_context,
-        };
-      });
+      activeRequestId.current += 1;
+      setSession(nextSession);
       setError(null);
+      setIsLoading(false);
     },
     [sessionId]
   );

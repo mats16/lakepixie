@@ -180,6 +180,7 @@ export function MainArea({
   const [isExitPlanSuggestOpen, setIsExitPlanSuggestOpen] = useState(false);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gitRepositoryStatusRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasSessionStreamConnectedRef = useRef(false);
 
   // navigate state から初期メッセージを取得
   const initialMessage = useMemo(() => {
@@ -256,10 +257,15 @@ export function MainArea({
   );
 
   const handleSessionStreamConnected = useCallback(() => {
+    if (!hasSessionStreamConnectedRef.current) {
+      hasSessionStreamConnectedRef.current = true;
+      return;
+    }
     void refetchSession();
   }, [refetchSession]);
 
   useEffect(() => {
+    hasSessionStreamConnectedRef.current = false;
     return () => {
       if (gitDiffRefreshTimerRef.current) {
         clearTimeout(gitDiffRefreshTimerRef.current);
