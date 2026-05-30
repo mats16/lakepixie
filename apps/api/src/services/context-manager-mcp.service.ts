@@ -4,16 +4,29 @@ import type { SessionContextResponse, SessionResponse, UpdateOutcomesResponse } 
 
 export const CONTEXT_MANAGER_MCP_SERVER_ID = 'ccbricks_context';
 
-const CONTEXT_MANAGER_TOOL_NAMES = [
-  'get_session_context',
-  'get_outcomes',
+export const CONTEXT_MANAGER_MCP_READ_TOOL_NAMES = ['get_session_context', 'get_outcomes'] as const;
+
+export const CONTEXT_MANAGER_MCP_WRITE_TOOL_NAMES = [
   'set_outcomes',
   'upsert_outcome',
   'remove_outcome',
 ] as const;
 
+export const CONTEXT_MANAGER_TOOL_NAMES = [
+  ...CONTEXT_MANAGER_MCP_READ_TOOL_NAMES,
+  ...CONTEXT_MANAGER_MCP_WRITE_TOOL_NAMES,
+] as const;
+
+function toQualifiedContextManagerToolName(toolName: string): string {
+  return `mcp__${CONTEXT_MANAGER_MCP_SERVER_ID}__${toolName}`;
+}
+
 export const CONTEXT_MANAGER_MCP_ALLOWED_TOOLS = CONTEXT_MANAGER_TOOL_NAMES.map(
-  toolName => `mcp__${CONTEXT_MANAGER_MCP_SERVER_ID}__${toolName}`
+  toQualifiedContextManagerToolName
+);
+
+export const CONTEXT_MANAGER_MCP_WRITE_TOOLS = CONTEXT_MANAGER_MCP_WRITE_TOOL_NAMES.map(
+  toQualifiedContextManagerToolName
 );
 
 interface ContextManagerMcpHandlers {
@@ -29,6 +42,11 @@ const outcomeSchema = z
     type: outcomeTypeSchema,
   })
   .passthrough();
+const contextManagerMcpWriteTools = new Set<string>(CONTEXT_MANAGER_MCP_WRITE_TOOLS);
+
+export function isContextManagerMcpWriteTool(toolName: string): boolean {
+  return contextManagerMcpWriteTools.has(toolName);
+}
 
 function jsonContent(payload: unknown) {
   return {
@@ -126,7 +144,7 @@ export function createContextManagerMcpServer(handlers: ContextManagerMcpHandler
       },
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         openWorldHint: false,
       },
     },

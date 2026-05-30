@@ -6,6 +6,7 @@ import type {
   ResolvedSessionOutcome,
   SessionSource,
 } from '@repo/types';
+import { CONTEXT_MANAGER_MCP_ALLOWED_TOOLS } from '../services/context-manager-mcp.service.js';
 
 /** systemPrompt の設定型 */
 export interface SystemPromptConfig {
@@ -61,6 +62,7 @@ export function buildSystemPromptConfig(
  * ccbricks の session_context を同期する internal MCP の使い方。
  */
 export function createContextManagerInstruction(): string {
+  const toolList = CONTEXT_MANAGER_MCP_ALLOWED_TOOLS.map(tool => `- \`${tool}\``).join('\n');
   return `
 ## ccbricks Session Context Manager
 
@@ -74,16 +76,12 @@ Use it to:
 Rules:
 1. You may update \`session_context.outcomes\` only.
 2. Do not try to update \`sources\`, \`cwd\`, model settings, permission settings, MCP config, or tool permissions.
-3. After creating or discovering a Databricks App, record it with a \`databricks_apps\` outcome.
-4. After pushing or choosing a Databricks Workspace delivery path, record it with a \`databricks_workspace\` outcome.
+3. Record Databricks Apps only with the app name already assigned to this session.
+4. Record Databricks Workspace paths only when they match the session's assigned workspace path or its descendants.
 5. Keep existing unrelated outcomes unless the user explicitly asks to remove them.
 
 Available MCP tools:
-- \`mcp__ccbricks_context__get_session_context\`
-- \`mcp__ccbricks_context__get_outcomes\`
-- \`mcp__ccbricks_context__set_outcomes\`
-- \`mcp__ccbricks_context__upsert_outcome\`
-- \`mcp__ccbricks_context__remove_outcome\`
+${toolList}
 `.trim();
 }
 

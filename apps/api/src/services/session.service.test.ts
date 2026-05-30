@@ -180,6 +180,7 @@ describe('session.service', () => {
     vi.clearAllMocks();
     __testing.clearActiveSessionQueries();
     __testing.clearDatabricksAppCreateLocks();
+    __testing.clearSessionContextUpdateLocks();
     exitPlanModeTesting.clearPendingExitPlanModes();
     askUserQuestionTesting.clearPendingQuestions();
     mockSpawn.mockImplementation(() => {
@@ -640,6 +641,105 @@ describe('session.service', () => {
           ]
         )
       ).toThrow('Only one Databricks Workspace outcome');
+      expect(() =>
+        __testing.normalizeSessionOutcomes([
+          {
+            type: 'git_repository',
+            git_info: {
+              type: 'github',
+              repo: 'acme/widgets',
+              branches: ['ccbricks/one', 'ccbricks/two'],
+            },
+          },
+        ])
+      ).toThrow('exactly one branch');
+    });
+
+    it('should restrict context manager outcomes to session assignments', () => {
+      const sessionId = new SessionId();
+      const workspacePath = __testing.buildDefaultSessionWorkspacePath('ccbricks-dev', sessionId);
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [],
+        outcomes: [{ type: 'databricks_apps', name: 'assigned-app' }],
+      };
+
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          ccbricksAppName: 'ccbricks-dev',
+          sessionId,
+          currentContext: context,
+          nextOutcomes: [
+            { type: 'databricks_apps', name: 'assigned-app' },
+            { type: 'databricks_workspace', path: `${workspacePath}/deploy` },
+          ],
+        })
+      ).not.toThrow();
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          ccbricksAppName: 'ccbricks-dev',
+          sessionId,
+          currentContext: context,
+          nextOutcomes: [{ type: 'databricks_apps', name: 'other-app' }],
+        })
+      ).toThrow('assigned app');
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          ccbricksAppName: 'ccbricks-dev',
+          sessionId,
+          currentContext: context,
+          nextOutcomes: [{ type: 'databricks_workspace', path: '/Workspace/Users/other/project' }],
+        })
+      ).toThrow('session workspace path');
+    });
+
+    it('should require git repo identity for context manager single-repository outcomes', () => {
+      const sessionId = new SessionId();
+      const source = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets.git',
+      };
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [source],
+        outcomes: [],
+      };
+
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          ccbricksAppName: 'ccbricks-dev',
+          sessionId,
+          currentContext: context,
+          nextOutcomes: [
+            {
+              type: 'git_repository',
+              git_info: { type: 'github', branches: ['ccbricks/test-branch'] },
+            },
+          ],
+        })
+      ).toThrow('git_info.repo is required');
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          ccbricksAppName: 'ccbricks-dev',
+          sessionId,
+          currentContext: context,
+          nextOutcomes: [
+            {
+              type: 'git_repository',
+              git_info: {
+                type: 'github',
+                repo: 'acme/widgets',
+                branches: ['ccbricks/test-branch'],
+              },
+            },
+          ],
+        })
+      ).not.toThrow();
     });
 
     it('should export workspace sources except when exactly one git source is present', () => {
@@ -949,6 +1049,31 @@ describe('session.service', () => {
       expect(result).toEqual({
         behavior: 'allow',
         updatedInput: input,
+      });
+    });
+
+    it('denies context manager writes while permission mode is plan', async () => {
+      const { fastify } = createContextUpdateFastify({
+        permission_mode: 'plan',
+      });
+      const sessionId = new SessionId();
+      const input = { outcomes: [] };
+
+      const result = await __testing.handleCanUseTool({
+        fastify,
+        userId: 'user-123',
+        sessionId,
+        toolName: 'mcp__ccbricks_context__set_outcomes',
+        input,
+        options: {
+          signal: new AbortController().signal,
+          toolUseID: 'toolu-context-manager-write',
+        },
+      });
+
+      expect(result).toEqual({
+        behavior: 'deny',
+        message: 'Session outcomes cannot be updated while permission_mode is plan',
       });
     });
 

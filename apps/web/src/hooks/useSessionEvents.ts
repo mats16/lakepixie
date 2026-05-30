@@ -5,6 +5,7 @@ import type {
   WsAskUserQuestionRequest,
   WsExitPlanModeRequest,
   WsExitPlanModeResponseRequest,
+  WsConnectedMessage,
   WsSessionContextUpdatedMessage,
   WsEffortLevel,
   WsPermissionMode,
@@ -34,6 +35,8 @@ interface UseSessionEventsOptions {
   onGitDiffRefreshNeeded?: () => void;
   /** Agent の result 受信時に GitHub 側の branch / pull request 状態を再取得するためのコールバック */
   onGitRepositoryStatusRefreshNeeded?: () => void;
+  /** stream 接続・再接続時のコールバック */
+  onConnected?: (message: WsConnectedMessage) => void;
   /** session_context 更新通知受信時のコールバック */
   onSessionContextUpdated?: (message: WsSessionContextUpdatedMessage) => void;
 }
@@ -110,6 +113,7 @@ export function useSessionEvents({
   onExitPlanMode,
   onGitDiffRefreshNeeded,
   onGitRepositoryStatusRefreshNeeded,
+  onConnected,
   onSessionContextUpdated,
 }: UseSessionEventsOptions): UseSessionEventsReturn {
   const [events, setEvents] = useState<SDKMessage[]>([]);
@@ -243,6 +247,7 @@ export function useSessionEvents({
     onEvent: handleEvent,
     onAskUserQuestion,
     onExitPlanMode,
+    onConnected,
     onSessionContextUpdated,
   });
 

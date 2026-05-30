@@ -11,7 +11,7 @@ interface UseSessionReturn {
   isLoading: boolean;
   error: Error | null;
   updateSession: (request: SessionUpdateRequest) => Promise<SessionResponse | null>;
-  replaceSession: (nextSession: SessionResponse) => void;
+  patchSessionContext: (nextSession: SessionResponse) => void;
   refetch: () => Promise<void>;
 }
 
@@ -79,10 +79,18 @@ export function useSession({ sessionId }: UseSessionOptions): UseSessionReturn {
     [sessionId]
   );
 
-  const replaceSession = useCallback(
+  const patchSessionContext = useCallback(
     (nextSession: SessionResponse) => {
       if (nextSession.id !== sessionId) return;
-      setSession(nextSession);
+      setSession(prevSession => {
+        if (!prevSession || prevSession.id !== nextSession.id) return nextSession;
+        return {
+          ...prevSession,
+          title: nextSession.title,
+          updated_at: nextSession.updated_at,
+          session_context: nextSession.session_context,
+        };
+      });
       setError(null);
     },
     [sessionId]
@@ -93,7 +101,7 @@ export function useSession({ sessionId }: UseSessionOptions): UseSessionReturn {
     isLoading,
     error,
     updateSession,
-    replaceSession,
+    patchSessionContext,
     refetch: fetchSession,
   };
 }

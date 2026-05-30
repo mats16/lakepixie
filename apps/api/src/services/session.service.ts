@@ -55,6 +55,7 @@ import { DatabricksApiError, DatabricksAppsClient } from '../lib/databricks-apps
 import { DatabricksWorkspaceClient } from '../lib/databricks-workspace-client.js';
 import { getAuthProvider } from '../lib/databricks-auth.js';
 import { DATABRICKS_CONFIG_PROFILE, writeDatabricksConfig } from '../lib/databricks-cli-config.js';
+import type { RLSTransaction } from '../plugins/database.js';
 import { getAllowedModelIds, getAppSettings, getModelSettings } from './admin.service.js';
 import { writeHelperScripts } from './helper-scripts.service.js';
 import { buildClaudeTelemetryEnv } from './claude-telemetry-env.service.js';
@@ -86,6 +87,7 @@ import {
   CONTEXT_MANAGER_MCP_ALLOWED_TOOLS,
   CONTEXT_MANAGER_MCP_SERVER_ID,
   createContextManagerMcpServer,
+  isContextManagerMcpWriteTool,
 } from './context-manager-mcp.service.js';
 
 interface ActiveSessionQuery {
@@ -98,6 +100,7 @@ interface ActiveSessionQuery {
 /** セッションID → 実行中 SDK query のマッピング（abort / control request 用） */
 const activeSessionQueries = new Map<string, ActiveSessionQuery>();
 const shuttingDownApps = new WeakSet<FastifyInstance>();
+const sessionContextUpdateChains = new Map<string, Promise<void>>();
 const QUEUED_USER_EVENT_SUBTYPE = 'queued';
 const USER_ABORT_MESSAGE_TEXT = '[Request aborted by user]';
 const SYSTEM_SHUTDOWN_ABORT_MESSAGE_TEXT = '[Agent execution interrupted: server is shutting down]';
@@ -125,6 +128,12 @@ type EffectiveToolSettings = {
   allowed_tools: string[];
   disallowed_tools: string[];
 };
+type SessionContextRowErrorFactory = (message: string) => Error;
+
+interface MutableSessionContextRow {
+  context: SessionContextResponse;
+  status: SessionStatus;
+}
 
 function isValidPermissionMode(value: unknown): value is WsPermissionMode {
   return typeof value === 'string' && PERMISSION_MODES.has(value as WsPermissionMode);
@@ -172,10 +181,7 @@ export class SessionAppDeleteError extends Error {
 }
 
 export class SessionContextUpdateError extends Error {
-  constructor(
-    public readonly statusCode: 400 | 404,
-    message: string
-  ) {
+  constructor(message: string) {
     super(message);
     this.name = 'SessionContextUpdateError';
   }
@@ -225,19 +231,39 @@ function escapeXmlText(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+function findDatabricksAppsOutcomeInOutcomes(
+  outcomes: readonly ResolvedSessionOutcome[]
+): ResolvedDatabricksAppsOutcome | undefined {
+  return outcomes.find(
+    (outcome): outcome is ResolvedDatabricksAppsOutcome => outcome.type === 'databricks_apps'
+  );
+}
+
 function findDatabricksAppsOutcome(
   context: SessionContextResponse
 ): ResolvedDatabricksAppsOutcome | undefined {
-  return context.outcomes.find(
-    (outcome): outcome is ResolvedDatabricksAppsOutcome => outcome.type === 'databricks_apps'
+  return findDatabricksAppsOutcomeInOutcomes(context.outcomes);
+}
+
+function findDatabricksWorkspaceOutcomeInOutcomes(
+  outcomes: readonly ResolvedSessionOutcome[]
+): DatabricksWorkspaceSource | undefined {
+  return outcomes.find(
+    (outcome): outcome is DatabricksWorkspaceSource => outcome.type === 'databricks_workspace'
   );
 }
 
 function findDatabricksWorkspaceOutcome(
   context: SessionContextResponse
 ): DatabricksWorkspaceSource | undefined {
-  return context.outcomes.find(
-    (outcome): outcome is DatabricksWorkspaceSource => outcome.type === 'databricks_workspace'
+  return findDatabricksWorkspaceOutcomeInOutcomes(context.outcomes);
+}
+
+function findGitRepositoryOutcomeInOutcomes(
+  outcomes: readonly ResolvedSessionOutcome[]
+): GitRepositoryOutcome | undefined {
+  return outcomes.find(
+    (outcome): outcome is GitRepositoryOutcome => outcome.type === 'git_repository'
   );
 }
 
@@ -252,18 +278,22 @@ function requireStringField(
 ): string {
   const value = object[field];
   if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new SessionContextUpdateError(400, message);
+    throw new SessionContextUpdateError(message);
   }
   return value.trim();
 }
 
+function isValidDatabricksWorkspacePath(workspacePath: string): boolean {
+  return (
+    workspacePath.startsWith('/') &&
+    !workspacePath.split('/').some(segment => segment === '..') &&
+    !hasControlCharacter(workspacePath)
+  );
+}
+
 function assertValidOutcomeWorkspacePath(workspacePath: string): void {
-  if (
-    !workspacePath.startsWith('/') ||
-    workspacePath.split('/').some(segment => segment === '..') ||
-    hasControlCharacter(workspacePath)
-  ) {
-    throw new SessionContextUpdateError(400, 'Databricks Workspace outcome path is invalid');
+  if (!isValidDatabricksWorkspacePath(workspacePath)) {
+    throw new SessionContextUpdateError('Databricks Workspace outcome path is invalid');
   }
 }
 
@@ -285,7 +315,6 @@ function normalizeDatabricksAppsOutcome(
   const appName = requireStringField(value, 'name', 'databricks_apps outcome requires a name');
   if (!isValidDatabricksAppName(appName)) {
     throw new SessionContextUpdateError(
-      400,
       'databricks_apps outcome name must contain only lowercase alphanumeric characters and hyphens'
     );
   }
@@ -295,21 +324,25 @@ function normalizeDatabricksAppsOutcome(
 function normalizeGitRepositoryOutcome(value: Record<string, unknown>): GitRepositoryOutcome {
   const gitInfo = value.git_info;
   if (!isRecord(gitInfo)) {
-    throw new SessionContextUpdateError(400, 'git_repository outcome requires git_info');
+    throw new SessionContextUpdateError('git_repository outcome requires git_info');
   }
   if (gitInfo.type !== 'github') {
-    throw new SessionContextUpdateError(400, 'git_repository outcome git_info.type must be github');
+    throw new SessionContextUpdateError('git_repository outcome git_info.type must be github');
   }
-  if (!Array.isArray(gitInfo.branches) || gitInfo.branches.length === 0) {
+  if (!Array.isArray(gitInfo.branches)) {
     throw new SessionContextUpdateError(
-      400,
-      'git_repository outcome git_info.branches must be a non-empty array'
+      'git_repository outcome git_info.branches must be an array'
+    );
+  }
+  if (gitInfo.branches.length !== 1) {
+    throw new SessionContextUpdateError(
+      'git_repository outcome git_info.branches must contain exactly one branch'
     );
   }
 
   const branches = gitInfo.branches.map(branch => {
     if (typeof branch !== 'string') {
-      throw new SessionContextUpdateError(400, 'git_repository outcome branches must be strings');
+      throw new SessionContextUpdateError('git_repository outcome branches must be strings');
     }
     validateGitBranchName(branch);
     return branch;
@@ -318,7 +351,6 @@ function normalizeGitRepositoryOutcome(value: Record<string, unknown>): GitRepos
   const repo = gitInfo.repo;
   if (repo !== undefined && (typeof repo !== 'string' || repo.trim().length === 0)) {
     throw new SessionContextUpdateError(
-      400,
       'git_repository outcome git_info.repo must be a non-empty string when provided'
     );
   }
@@ -335,7 +367,7 @@ function normalizeGitRepositoryOutcome(value: Record<string, unknown>): GitRepos
 
 function normalizeSessionOutcome(value: unknown): ResolvedSessionOutcome {
   if (!isRecord(value)) {
-    throw new SessionContextUpdateError(400, 'outcome must be an object');
+    throw new SessionContextUpdateError('outcome must be an object');
   }
 
   switch (value.type) {
@@ -346,13 +378,13 @@ function normalizeSessionOutcome(value: unknown): ResolvedSessionOutcome {
     case 'git_repository':
       return normalizeGitRepositoryOutcome(value);
     default:
-      throw new SessionContextUpdateError(400, 'outcome.type is invalid');
+      throw new SessionContextUpdateError('outcome.type is invalid');
   }
 }
 
 function normalizeSessionOutcomes(outcomes: unknown): ResolvedSessionOutcome[] {
   if (!Array.isArray(outcomes)) {
-    throw new SessionContextUpdateError(400, 'outcomes must be an array');
+    throw new SessionContextUpdateError('outcomes must be an array');
   }
   return outcomes.map(outcome => normalizeSessionOutcome(outcome));
 }
@@ -365,7 +397,7 @@ function normalizeOutcomeType(value: unknown): ResolvedSessionOutcome['type'] {
   ) {
     return value;
   }
-  throw new SessionContextUpdateError(400, 'outcome type is invalid');
+  throw new SessionContextUpdateError('outcome type is invalid');
 }
 
 function validateSessionOutcomesForContext(
@@ -374,22 +406,117 @@ function validateSessionOutcomesForContext(
 ): void {
   const workspaceOutcomes = outcomes.filter(outcome => outcome.type === 'databricks_workspace');
   if (workspaceOutcomes.length > 1) {
-    throw new SessionContextUpdateError(400, 'Only one Databricks Workspace outcome is supported');
+    throw new SessionContextUpdateError('Only one Databricks Workspace outcome is supported');
   }
 
   const appsOutcomes = outcomes.filter(outcome => outcome.type === 'databricks_apps');
   if (appsOutcomes.length > 1) {
-    throw new SessionContextUpdateError(400, 'Only one Databricks Apps outcome is supported');
+    throw new SessionContextUpdateError('Only one Databricks Apps outcome is supported');
   }
 
   try {
     validateGitSessionContext(sources, outcomes);
   } catch (error) {
     throw new SessionContextUpdateError(
-      400,
       error instanceof Error ? error.message : 'Invalid session outcomes'
     );
   }
+}
+
+function trimWorkspacePathForComparison(workspacePath: string): string {
+  return workspacePath.length > 1 ? workspacePath.replace(/\/+$/g, '') : workspacePath;
+}
+
+function isWorkspacePathWithinOrEqual(workspacePath: string, parentPath: string): boolean {
+  const normalizedWorkspacePath = trimWorkspacePathForComparison(workspacePath);
+  const normalizedParentPath = trimWorkspacePathForComparison(parentPath);
+  return (
+    normalizedWorkspacePath === normalizedParentPath ||
+    normalizedWorkspacePath.startsWith(`${normalizedParentPath}/`)
+  );
+}
+
+function getContextManagerAllowedWorkspacePath(
+  ccbricksAppName: string,
+  sessionId: SessionId,
+  currentContext: SessionContextResponse
+): string {
+  const existingWorkspaceOutcome = findDatabricksWorkspaceOutcome(currentContext);
+  if (existingWorkspaceOutcome) return existingWorkspaceOutcome.path;
+
+  try {
+    return buildDefaultSessionWorkspacePath(ccbricksAppName, sessionId);
+  } catch (error) {
+    throw new SessionContextUpdateError(errorMessage(error));
+  }
+}
+
+function validateContextManagerWorkspaceOutcome(params: {
+  ccbricksAppName: string;
+  sessionId: SessionId;
+  currentContext: SessionContextResponse;
+  nextOutcomes: ResolvedSessionOutcome[];
+}): void {
+  const nextWorkspaceOutcome = findDatabricksWorkspaceOutcomeInOutcomes(params.nextOutcomes);
+  if (!nextWorkspaceOutcome) return;
+
+  const allowedPath = getContextManagerAllowedWorkspacePath(
+    params.ccbricksAppName,
+    params.sessionId,
+    params.currentContext
+  );
+  if (!isWorkspacePathWithinOrEqual(nextWorkspaceOutcome.path, allowedPath)) {
+    throw new SessionContextUpdateError(
+      `databricks_workspace outcome path must stay under this session workspace path: ${allowedPath}`
+    );
+  }
+}
+
+function validateContextManagerAppsOutcome(params: {
+  currentContext: SessionContextResponse;
+  nextOutcomes: ResolvedSessionOutcome[];
+}): void {
+  const nextAppsOutcome = findDatabricksAppsOutcomeInOutcomes(params.nextOutcomes);
+  if (!nextAppsOutcome) return;
+
+  const existingAppsOutcome = findDatabricksAppsOutcome(params.currentContext);
+  if (!existingAppsOutcome) {
+    throw new SessionContextUpdateError(
+      'databricks_apps outcome can only use the Databricks App already assigned to this session'
+    );
+  }
+  if (nextAppsOutcome.name !== existingAppsOutcome.name) {
+    throw new SessionContextUpdateError(
+      `databricks_apps outcome name must match this session's assigned app: ${existingAppsOutcome.name}`
+    );
+  }
+}
+
+function validateContextManagerGitOutcome(params: {
+  currentContext: SessionContextResponse;
+  nextOutcomes: ResolvedSessionOutcome[];
+}): void {
+  const gitSources = params.currentContext.sources.filter(
+    (source): source is GitRepositorySource => source.type === 'git_repository'
+  );
+  const gitOutcome = findGitRepositoryOutcomeInOutcomes(params.nextOutcomes);
+  if (gitSources.length === 1 && gitOutcome && gitOutcome.git_info.repo === undefined) {
+    throw new SessionContextUpdateError(
+      'git_repository outcome git_info.repo is required for single-repository sessions'
+    );
+  }
+}
+
+function validateSessionOutcomesForContextManager(params: {
+  ccbricksAppName: string;
+  sessionId: SessionId;
+  currentContext: SessionContextResponse;
+  nextOutcomes: ResolvedSessionOutcome[];
+}): void {
+  validateSessionOutcomesForContext(params.currentContext.sources, params.nextOutcomes);
+  validateContextManagerWorkspaceOutcome(params);
+  validateContextManagerAppsOutcome(params);
+  validateContextManagerGitOutcome(params);
 }
 
 function upsertOutcome(
@@ -460,11 +587,7 @@ function hasControlCharacter(value: string): boolean {
 }
 
 function assertValidDatabricksWorkspacePath(workspacePath: string): void {
-  if (
-    !workspacePath.startsWith('/') ||
-    workspacePath.split('/').some(segment => segment === '..') ||
-    hasControlCharacter(workspacePath)
-  ) {
+  if (!isValidDatabricksWorkspacePath(workspacePath)) {
     throw new SessionAppCreateError(400, 'Databricks Workspace path is invalid');
   }
 }
@@ -496,6 +619,30 @@ function acquireDatabricksAppDeleteLock(sessionId: SessionId): () => void {
     sessionId,
     new SessionAppDeleteError(409, 'Databricks App operation is already in progress')
   );
+}
+
+async function withSessionContextUpdateLock<T>(
+  sessionId: SessionId,
+  operation: () => Promise<T>
+): Promise<T> {
+  const key = sessionId.toString();
+  const previous = sessionContextUpdateChains.get(key) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>(resolve => {
+    releaseCurrent = resolve;
+  });
+  const next = previous.catch(() => undefined).then(() => current);
+  sessionContextUpdateChains.set(key, next);
+
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    releaseCurrent();
+    if (sessionContextUpdateChains.get(key) === next) {
+      sessionContextUpdateChains.delete(key);
+    }
+  }
 }
 
 function getSupportedClaudeArch(): SupportedClaudeArch {
@@ -685,6 +832,16 @@ async function handleCanUseTool({
 
     await restorePermissionModeAfterPlan(fastify, userId, sessionId);
     return { behavior: 'allow', updatedInput: input };
+  }
+
+  if (isContextManagerMcpWriteTool(toolName)) {
+    const sessionContext = await getLatestSessionContext(fastify, userId, sessionId);
+    if (sessionContext.permission_mode === 'plan') {
+      return {
+        behavior: 'deny',
+        message: 'Session outcomes cannot be updated while permission_mode is plan',
+      };
+    }
   }
 
   return { behavior: 'allow', updatedInput: input };
@@ -1356,6 +1513,36 @@ async function getLatestSessionContext(
   return sessionRow.context as SessionContextResponse;
 }
 
+async function getMutableSessionContextRow(
+  tx: RLSTransaction,
+  sessionId: SessionId,
+  createError: SessionContextRowErrorFactory
+): Promise<MutableSessionContextRow> {
+  const [sessionRow] = await tx
+    .select({
+      context: sessions.context,
+      status: sessions.status,
+    })
+    .from(sessions)
+    .where(eq(sessions.id, sessionId.toUUID()))
+    .limit(1);
+
+  if (!sessionRow) {
+    throw createError('Session not found');
+  }
+  if (sessionRow.status === 'archived') {
+    throw createError('Session is archived');
+  }
+  if (!sessionRow.context) {
+    throw createError('Session context not found');
+  }
+
+  return {
+    context: sessionRow.context as SessionContextResponse,
+    status: sessionRow.status,
+  };
+}
+
 async function updateSessionContext(
   fastify: FastifyInstance,
   userId: string,
@@ -1367,38 +1554,25 @@ async function updateSessionContext(
     >
   >
 ): Promise<SessionContextResponse> {
-  return fastify.withUserContext(userId, async tx => {
-    const [sessionRow] = await tx
-      .select({
-        context: sessions.context,
-        status: sessions.status,
-      })
-      .from(sessions)
-      .where(eq(sessions.id, sessionId.toUUID()))
-      .limit(1);
+  return withSessionContextUpdateLock(sessionId, () =>
+    fastify.withUserContext(userId, async tx => {
+      const sessionRow = await getMutableSessionContextRow(tx, sessionId, message => {
+        return new Error(message);
+      });
 
-    if (!sessionRow) {
-      throw new Error('Session not found');
-    }
-    if (sessionRow.status === 'archived') {
-      throw new Error('Session is archived');
-    }
-    if (!sessionRow.context) {
-      throw new Error('Session context not found');
-    }
+      const nextContext: SessionContextResponse = {
+        ...sessionRow.context,
+        ...patch,
+      };
 
-    const nextContext: SessionContextResponse = {
-      ...(sessionRow.context as SessionContextResponse),
-      ...patch,
-    };
+      await tx
+        .update(sessions)
+        .set({ context: nextContext, updatedAt: new Date() })
+        .where(eq(sessions.id, sessionId.toUUID()));
 
-    await tx
-      .update(sessions)
-      .set({ context: nextContext, updatedAt: new Date() })
-      .where(eq(sessions.id, sessionId.toUUID()));
-
-    return nextContext;
-  });
+      return nextContext;
+    })
+  );
 }
 
 function broadcastSessionContextUpdated(session: SessionResponse): void {
@@ -1432,45 +1606,37 @@ async function updateSessionOutcomesForContextManager(
   sessionId: SessionId,
   deriveOutcomes: (currentContext: SessionContextResponse) => ResolvedSessionOutcome[]
 ): Promise<SessionResponse> {
-  const updatedSession = await fastify.withUserContext(userId, async tx => {
-    const [sessionRow] = await tx
-      .select({
-        context: sessions.context,
-        status: sessions.status,
-      })
-      .from(sessions)
-      .where(eq(sessions.id, sessionId.toUUID()))
-      .limit(1);
+  const updatedSession = await withSessionContextUpdateLock(sessionId, () =>
+    fastify.withUserContext(userId, async tx => {
+      const sessionRow = await getMutableSessionContextRow(tx, sessionId, message => {
+        return new SessionContextUpdateError(message);
+      });
 
-    if (!sessionRow) {
-      throw new SessionContextUpdateError(404, 'Session not found');
-    }
-    if (sessionRow.status === 'archived') {
-      throw new SessionContextUpdateError(400, 'Session is archived');
-    }
-    if (!sessionRow.context) {
-      throw new SessionContextUpdateError(400, 'Session context not found');
-    }
+      const currentContext = sessionRow.context;
+      const nextOutcomes = deriveOutcomes(currentContext);
+      validateSessionOutcomesForContextManager({
+        ccbricksAppName: fastify.config.DATABRICKS_APP_NAME,
+        sessionId,
+        currentContext,
+        nextOutcomes,
+      });
+      const nextContext: SessionContextResponse = {
+        ...currentContext,
+        outcomes: nextOutcomes,
+      };
 
-    const currentContext = sessionRow.context as SessionContextResponse;
-    const nextOutcomes = deriveOutcomes(currentContext);
-    validateSessionOutcomesForContext(currentContext.sources, nextOutcomes);
-    const nextContext: SessionContextResponse = {
-      ...currentContext,
-      outcomes: nextOutcomes,
-    };
+      const rows = await tx
+        .update(sessions)
+        .set({ context: nextContext, updatedAt: new Date() })
+        .where(eq(sessions.id, sessionId.toUUID()))
+        .returning(SESSION_SELECT_COLUMNS);
 
-    const rows = await tx
-      .update(sessions)
-      .set({ context: nextContext, updatedAt: new Date() })
-      .where(eq(sessions.id, sessionId.toUUID()))
-      .returning(SESSION_SELECT_COLUMNS);
-
-    if (rows.length === 0) {
-      throw new SessionContextUpdateError(404, 'Session not found');
-    }
-    return toSessionResponse(rows[0]);
-  });
+      if (rows.length === 0) {
+        throw new SessionContextUpdateError('Session not found');
+      }
+      return toSessionResponse(rows[0]);
+    })
+  );
 
   broadcastSessionContextUpdated(updatedSession);
   return updatedSession;
@@ -1481,7 +1647,11 @@ export async function getSessionContextForContextManager(
   userId: string,
   sessionId: SessionId
 ): Promise<SessionContextResponse> {
-  return getLatestSessionContext(fastify, userId, sessionId);
+  try {
+    return await getLatestSessionContext(fastify, userId, sessionId);
+  } catch (error) {
+    throw new SessionContextUpdateError(errorMessage(error));
+  }
 }
 
 export async function setSessionOutcomesForContextManager(
@@ -1690,16 +1860,11 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       requestedAllowedTools: sessionContext.allowed_tools,
       requestedDisallowedTools: sessionContext.disallowed_tools,
     });
-    const contextManagerToolPrefix = `mcp__${CONTEXT_MANAGER_MCP_SERVER_ID}__`;
     const allowedTools = uniqueTools([
       ...effectiveToolSettings.allowed_tools,
       ...CONTEXT_MANAGER_MCP_ALLOWED_TOOLS,
     ]);
-    const disallowedTools = effectiveToolSettings.disallowed_tools.filter(
-      tool =>
-        tool !== `mcp__${CONTEXT_MANAGER_MCP_SERVER_ID}` &&
-        !tool.startsWith(contextManagerToolPrefix)
-    );
+    const disallowedTools = effectiveToolSettings.disallowed_tools;
 
     // Databricks CLI / helper が SP 権限で動作するように設定ファイルを配置
     const claudeNativePackage = getClaudeNativePackageName();
@@ -2573,47 +2738,49 @@ async function appendDatabricksAppsOutcome(
   workspacePath: string,
   appName: string
 ): Promise<{ canNotifyAgent: boolean }> {
-  return fastify.withUserContext(userId, async tx => {
-    const rows = await tx
-      .select({
-        status: sessions.status,
-        context: sessions.context,
-      })
-      .from(sessions)
-      .where(eq(sessions.id, sessionId.toUUID()))
-      .limit(1);
-    const row = rows[0] ?? null;
-    if (!row) {
-      throw new SessionAppCreateError(404, 'Session not found');
-    }
-
-    const currentContext = (row.context as SessionContextResponse | null) ?? context;
-    const existingWorkspaceOutcome = findDatabricksWorkspaceOutcome(currentContext);
-    const existingAppsOutcome = findDatabricksAppsOutcome(currentContext);
-    const canNotifyAgent = canNotifyAgentAfterAppCreation(row.status);
-    if (existingAppsOutcome && existingWorkspaceOutcome) {
-      if (existingAppsOutcome.name !== appName) {
-        throw new SessionAppCreateError(
-          400,
-          `Session already has Databricks Apps outcome '${existingAppsOutcome.name}'`
-        );
+  return withSessionContextUpdateLock(sessionId, () =>
+    fastify.withUserContext(userId, async tx => {
+      const rows = await tx
+        .select({
+          status: sessions.status,
+          context: sessions.context,
+        })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId.toUUID()))
+        .limit(1);
+      const row = rows[0] ?? null;
+      if (!row) {
+        throw new SessionAppCreateError(404, 'Session not found');
       }
+
+      const currentContext = (row.context as SessionContextResponse | null) ?? context;
+      const existingWorkspaceOutcome = findDatabricksWorkspaceOutcome(currentContext);
+      const existingAppsOutcome = findDatabricksAppsOutcome(currentContext);
+      const canNotifyAgent = canNotifyAgentAfterAppCreation(row.status);
+      if (existingAppsOutcome && existingWorkspaceOutcome) {
+        if (existingAppsOutcome.name !== appName) {
+          throw new SessionAppCreateError(
+            400,
+            `Session already has Databricks Apps outcome '${existingAppsOutcome.name}'`
+          );
+        }
+        return { canNotifyAgent };
+      }
+
+      const nextContext = buildSessionContextWithDatabricksAppOutcomes(
+        currentContext,
+        workspacePath,
+        appName
+      );
+
+      await tx
+        .update(sessions)
+        .set({ context: nextContext, updatedAt: new Date() })
+        .where(eq(sessions.id, sessionId.toUUID()));
+
       return { canNotifyAgent };
-    }
-
-    const nextContext = buildSessionContextWithDatabricksAppOutcomes(
-      currentContext,
-      workspacePath,
-      appName
-    );
-
-    await tx
-      .update(sessions)
-      .set({ context: nextContext, updatedAt: new Date() })
-      .where(eq(sessions.id, sessionId.toUUID()));
-
-    return { canNotifyAgent };
-  });
+    })
+  );
 }
 
 export async function createDatabricksAppForSession(
@@ -2844,31 +3011,33 @@ export async function deleteDatabricksAppForSession(params: {
     const appsClient = new DatabricksAppsClient(authProvider);
     await appsClient.delete(appsOutcome.name);
 
-    const updatedSession = await fastify.withUserContext(userId, async tx => {
-      const [currentRow] = await tx
-        .select({
-          context: sessions.context,
-        })
-        .from(sessions)
-        .where(eq(sessions.id, sessionId.toUUID()))
-        .limit(1);
+    const updatedSession = await withSessionContextUpdateLock(sessionId, () =>
+      fastify.withUserContext(userId, async tx => {
+        const [currentRow] = await tx
+          .select({
+            context: sessions.context,
+          })
+          .from(sessions)
+          .where(eq(sessions.id, sessionId.toUUID()))
+          .limit(1);
 
-      if (!currentRow?.context) return null;
+        if (!currentRow?.context) return null;
 
-      const currentContext = currentRow.context as SessionContextResponse;
-      const nextContext: SessionContextResponse = {
-        ...currentContext,
-        outcomes: currentContext.outcomes.filter(outcome => outcome.type !== 'databricks_apps'),
-      };
+        const currentContext = currentRow.context as SessionContextResponse;
+        const nextContext: SessionContextResponse = {
+          ...currentContext,
+          outcomes: currentContext.outcomes.filter(outcome => outcome.type !== 'databricks_apps'),
+        };
 
-      const rows = await tx
-        .update(sessions)
-        .set({ context: nextContext, updatedAt: new Date() })
-        .where(eq(sessions.id, sessionId.toUUID()))
-        .returning(SESSION_SELECT_COLUMNS);
+        const rows = await tx
+          .update(sessions)
+          .set({ context: nextContext, updatedAt: new Date() })
+          .where(eq(sessions.id, sessionId.toUUID()))
+          .returning(SESSION_SELECT_COLUMNS);
 
-      return rows[0] ? toSessionResponse(rows[0]) : null;
-    });
+        return rows[0] ? toSessionResponse(rows[0]) : null;
+      })
+    );
 
     if (!updatedSession) {
       throw new SessionAppDeleteError(404, 'Session not found');
@@ -3192,6 +3361,7 @@ export const __testing = {
   validateSparseCheckoutPath,
   normalizeSessionOutcomes,
   validateSessionOutcomesForContext,
+  validateSessionOutcomesForContextManager,
   handleCanUseTool,
   completeRunAndClaimQueuedMessage,
   USER_ABORT_MESSAGE_TEXT,
@@ -3200,6 +3370,7 @@ export const __testing = {
     activeSessionQueries.clear();
   },
   clearDatabricksAppCreateLocks: () => databricksAppOperationLocks.clear(),
+  clearSessionContextUpdateLocks: () => sessionContextUpdateChains.clear(),
   acquireDatabricksAppCreateLock,
   registerActiveSessionQuery: (
     sessionId: SessionId,

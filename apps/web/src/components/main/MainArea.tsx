@@ -192,7 +192,7 @@ export function MainArea({
   const {
     session,
     updateSession,
-    replaceSession,
+    patchSessionContext,
     refetch: refetchSession,
     isLoading: isSessionLoading,
     error: sessionLoadError,
@@ -250,10 +250,14 @@ export function MainArea({
   const handleSessionContextUpdated = useCallback(
     (message: WsSessionContextUpdatedMessage) => {
       if (message.session_id !== sessionId) return;
-      replaceSession(message.session);
+      patchSessionContext(message.session);
     },
-    [replaceSession, sessionId]
+    [patchSessionContext, sessionId]
   );
+
+  const handleSessionStreamConnected = useCallback(() => {
+    void refetchSession();
+  }, [refetchSession]);
 
   useEffect(() => {
     return () => {
@@ -293,6 +297,7 @@ export function MainArea({
     onExitPlanMode: handleExitPlanMode,
     onGitDiffRefreshNeeded: handleGitDiffRefreshNeeded,
     onGitRepositoryStatusRefreshNeeded: handleGitRepositoryStatusRefreshNeeded,
+    onConnected: handleSessionStreamConnected,
     onSessionContextUpdated: handleSessionContextUpdated,
   });
 
