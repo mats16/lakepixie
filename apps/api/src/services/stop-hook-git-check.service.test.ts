@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import type { HookInput, StopHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -19,6 +22,8 @@ const baseInput: StopHookInput = {
   cwd: '/tmp/repo',
   stop_hook_active: false,
 };
+
+const sessionGitRoot: MockGitResult = { stdout: `${baseInput.cwd}\n` };
 
 function createGitRunner(results: MockGitResult[]): GitCommandRunner {
   return vi.fn<GitCommandRunner>(async () => {
@@ -48,14 +53,59 @@ describe('stop-hook-git-check.service', () => {
 
     await expect(runStopHookGitCheck(baseInput, { git })).resolves.toEqual({ continue: true });
 
-    expect(git).toHaveBeenCalledWith(['rev-parse', '--git-dir'], {
+    expect(git).toHaveBeenCalledWith(['rev-parse', '--show-toplevel'], {
       cwd: '/tmp/repo',
       signal: undefined,
     });
   });
 
+  it('does nothing when git is discovered above the session cwd', async () => {
+    const git = createGitRunner([{ stdout: '/tmp\n' }]);
+
+    await expect(runStopHookGitCheck(baseInput, { git })).resolves.toEqual({ continue: true });
+
+    expect(git).toHaveBeenCalledWith(['rev-parse', '--show-toplevel'], {
+      cwd: '/tmp/repo',
+      signal: undefined,
+    });
+    expect(git).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing when the session cwd is empty', async () => {
+    const git = createGitRunner([{ stdout: `${process.cwd()}\n` }]);
+
+    await expect(runStopHookGitCheck({ ...baseInput, cwd: '' }, { git })).resolves.toEqual({
+      continue: true,
+    });
+
+    expect(git).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues checking when git root and session cwd resolve to the same path', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'ccbricks-stop-hook-'));
+
+    try {
+      const repoDir = path.join(tempDir, 'repo');
+      const symlinkDir = path.join(tempDir, 'repo-link');
+      await mkdir(repoDir);
+      await symlink(repoDir, symlinkDir, 'dir');
+
+      const git = createGitRunner([{ stdout: `${await realpath(repoDir)}\n` }, { stdout: '' }]);
+      const input = { ...baseInput, cwd: symlinkDir };
+
+      await expect(runStopHookGitCheck(input, { git })).resolves.toEqual({ continue: true });
+
+      expect(git).toHaveBeenCalledWith(['remote'], {
+        cwd: symlinkDir,
+        signal: undefined,
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('does nothing when the repository has no remote', async () => {
-    const git = createGitRunner([{ stdout: '.git\n' }, { stdout: '' }]);
+    const git = createGitRunner([sessionGitRoot, { stdout: '' }]);
 
     await expect(runStopHookGitCheck(baseInput, { git })).resolves.toEqual({ continue: true });
 
@@ -63,7 +113,7 @@ describe('stop-hook-git-check.service', () => {
   });
 
   it('blocks when staged or unstaged changes exist', async () => {
-    const git = createGitRunner([{ stdout: '.git\n' }, { stdout: 'origin\n' }, { exitCode: 1 }]);
+    const git = createGitRunner([sessionGitRoot, { stdout: 'origin\n' }, { exitCode: 1 }]);
 
     await expect(runStopHookGitCheck(baseInput, { git })).resolves.toEqual({
       decision: 'block',
@@ -78,12 +128,7 @@ describe('stop-hook-git-check.service', () => {
   });
 
   it('blocks when only staged changes exist', async () => {
-    const git = createGitRunner([
-      { stdout: '.git\n' },
-      { stdout: 'origin\n' },
-      {},
-      { exitCode: 1 },
-    ]);
+    const git = createGitRunner([sessionGitRoot, { stdout: 'origin\n' }, {}, { exitCode: 1 }]);
 
     await expect(runStopHookGitCheck(baseInput, { git })).resolves.toEqual({
       decision: 'block',
@@ -99,7 +144,7 @@ describe('stop-hook-git-check.service', () => {
 
   it('blocks when untracked files exist', async () => {
     const git = createGitRunner([
-      { stdout: '.git\n' },
+      sessionGitRoot,
       { stdout: 'origin\n' },
       {},
       {},
@@ -115,13 +160,14 @@ describe('stop-hook-git-check.service', () => {
 
   it('blocks when the current branch has unpushed commits on its remote branch', async () => {
     const git = createGitRunner([
-      { stdout: '.git\n' },
+      sessionGitRoot,
       { stdout: 'origin\n' },
       {},
       {},
       { stdout: '' },
       { stdout: 'feature/test\n' },
-      { stdout: 'abc123\n' },
+      { stdout: 'def456\n' },
+      { stdout: 'abc123\trefs/heads/feature/test\n' },
       { stdout: '2\n' },
     ]);
 
@@ -132,15 +178,36 @@ describe('stop-hook-git-check.service', () => {
     });
   });
 
-  it('blocks when the current branch has no remote branch but is ahead of origin HEAD', async () => {
+  it('does not block when the remote branch matches HEAD without a local tracking ref', async () => {
     const git = createGitRunner([
-      { stdout: '.git\n' },
+      sessionGitRoot,
       { stdout: 'origin\n' },
       {},
       {},
       { stdout: '' },
       { stdout: 'feature/test\n' },
-      { exitCode: 1 },
+      { stdout: 'abc123\n' },
+      { stdout: 'abc123\trefs/heads/feature/test\n' },
+    ]);
+
+    await expect(runStopHookGitCheck(baseInput, { git })).resolves.toEqual({ continue: true });
+
+    expect(git).toHaveBeenCalledWith(['ls-remote', 'origin', 'refs/heads/feature/test'], {
+      cwd: '/tmp/repo',
+      signal: undefined,
+    });
+  });
+
+  it('blocks when the current branch has no remote branch but is ahead of origin HEAD', async () => {
+    const git = createGitRunner([
+      sessionGitRoot,
+      { stdout: 'origin\n' },
+      {},
+      {},
+      { stdout: '' },
+      { stdout: 'feature/test\n' },
+      { stdout: 'abc123\n' },
+      { stdout: '' },
       { stdout: '3\n' },
     ]);
 
@@ -153,13 +220,14 @@ describe('stop-hook-git-check.service', () => {
 
   it('does not block when rev-list fails for a branch without a remote branch', async () => {
     const git = createGitRunner([
-      { stdout: '.git\n' },
+      sessionGitRoot,
       { stdout: 'origin\n' },
       {},
       {},
       { stdout: '' },
       { stdout: 'feature/test\n' },
-      { exitCode: 1 },
+      { stdout: 'abc123\n' },
+      { stdout: '' },
       { exitCode: 1 },
     ]);
 
