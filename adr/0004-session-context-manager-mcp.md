@@ -12,7 +12,7 @@ CLI wrappers can help with specific operations, but they are awkward to expose r
 
 ## Decision
 
-ccbricks provides an internal `ccbricks_context` MCP server to every Claude session.
+ccbricks provides an internal `session` MCP server to every Claude session.
 
 The MCP server is a session context manager. It may read the current `session_context`, read `session_context.outcomes`, and update only the `outcomes` array. It must not update `sources`, `cwd`, model settings, permission settings, MCP config, or tool permissions.
 
@@ -25,7 +25,7 @@ Outcome updates are validated by the backend before persistence:
 
 After a successful outcome update, the backend broadcasts a `session_context_updated` message over the existing session stream so the UI can update its displayed session state.
 
-The MCP server does not create Databricks Apps, push Workspace files, or perform external Databricks actions. Agents may use existing CLI/API tools for those side effects, then use `ccbricks_context` to record the resulting outcomes.
+The MCP server does not create Databricks Apps, push Workspace files, or perform external Databricks actions. Agents may use existing CLI/API tools for those side effects, then use `session` to record the resulting outcomes.
 
 ## Consequences
 

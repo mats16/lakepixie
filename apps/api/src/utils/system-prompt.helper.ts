@@ -66,7 +66,7 @@ export function createContextManagerInstruction(): string {
   return `
 ## ccbricks Session Context Manager
 
-You have access to the \`ccbricks_context\` MCP server. It is the only supported way for you to update ccbricks UI session context.
+You have access to the \`session\` MCP server. It is the only supported way for you to update ccbricks UI session context.
 
 Use it to:
 - Read the current \`session_context\`
@@ -114,7 +114,7 @@ The workspace path is provided via the \`SESSION_WORKSPACE_PATH\` environment va
 1. **DEVELOP** all your changes in the current working directory
 2. **PUSH** your completed work to the specified Workspace path
 3. **NEVER** push to a different workspace path without explicit permission
-4. **UPDATE** the session outcomes with \`mcp__ccbricks_context__upsert_outcome\` after a successful push
+4. **UPDATE** the session outcomes with \`mcp__session__upsert_outcome\` after a successful push
 
 ### CLI Reference:
 
@@ -157,7 +157,7 @@ The app name is also available via the \`SESSION_APP_NAME\` environment variable
 - The app name \`${appName}\` is pre-assigned. Always use this exact name.
 - Ensure your app has a valid \`app.yaml\` configuration file before deploying.
 - After deploying, verify the app status shows \`RUNNING\` before reporting success.
-- After creating or verifying the app, upsert this outcome with \`mcp__ccbricks_context__upsert_outcome\`:
+- After creating or verifying the app, upsert this outcome with \`mcp__session__upsert_outcome\`:
   \`{"type":"databricks_apps","name":"${appName}"}\`
 - Do not consider the work done until the app is successfully deployed and verified.
 `.trim();

@@ -41,39 +41,39 @@ export interface McpConfig {
 }
 
 // =====================================================
-// MCP Tool Types for ctx server
+// MCP Tool Types for session server
 // =====================================================
 
 /**
- * mcp__ccbricks_context__get_session_context のレスポンス
+ * mcp__session__get_session_context のレスポンス
  */
 export interface GetSessionContextResponse {
   session_context: SessionContextResponse;
 }
 
 /**
- * mcp__ccbricks_context__get_outcomes のレスポンス
+ * mcp__session__get_outcomes のレスポンス
  */
 export interface GetOutcomesResponse {
   outcomes: ResolvedSessionOutcome[];
 }
 
 /**
- * mcp__ccbricks_context__set_outcomes のリクエスト
+ * mcp__session__set_outcomes のリクエスト
  */
 export interface SetOutcomesRequest {
   outcomes: ResolvedSessionOutcome[];
 }
 
 /**
- * mcp__ccbricks_context__upsert_outcome のリクエスト
+ * mcp__session__upsert_outcome のリクエスト
  */
 export interface UpsertOutcomeRequest {
   outcome: ResolvedSessionOutcome;
 }
 
 /**
- * mcp__ccbricks_context__remove_outcome のリクエスト
+ * mcp__session__remove_outcome のリクエスト
  */
 export interface RemoveOutcomeRequest {
   type: ResolvedSessionOutcome['type'];

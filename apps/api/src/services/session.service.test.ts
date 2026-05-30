@@ -1063,7 +1063,7 @@ describe('session.service', () => {
         fastify,
         userId: 'user-123',
         sessionId,
-        toolName: 'mcp__ccbricks_context__set_outcomes',
+        toolName: 'mcp__session__set_outcomes',
         input,
         options: {
           signal: new AbortController().signal,

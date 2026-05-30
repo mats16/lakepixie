@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
 import type { SessionContextResponse, SessionResponse, UpdateOutcomesResponse } from '@repo/types';
 
-export const CONTEXT_MANAGER_MCP_SERVER_ID = 'ccbricks_context';
+export const CONTEXT_MANAGER_MCP_SERVER_ID = 'session';
 
 export const CONTEXT_MANAGER_MCP_READ_TOOL_NAMES = ['get_session_context', 'get_outcomes'] as const;
 

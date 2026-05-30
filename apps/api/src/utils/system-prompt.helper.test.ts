@@ -43,7 +43,7 @@ describe('buildSystemPromptConfig', () => {
     expect(result.type).toBe('preset');
     expect(result.preset).toBe('claude_code');
     expect(result.append).toContain('ccbricks Session Context Manager');
-    expect(result.append).toContain('mcp__ccbricks_context__upsert_outcome');
+    expect(result.append).toContain('mcp__session__upsert_outcome');
   });
 
   it('should include context manager instructions for undefined outcomes', () => {
@@ -174,7 +174,7 @@ describe('createContextManagerInstruction', () => {
     expect(result).toContain('ccbricks Session Context Manager');
     expect(result).toContain('session_context.outcomes');
     expect(result).toContain('Do not try to update `sources`');
-    expect(result).toContain('mcp__ccbricks_context__set_outcomes');
+    expect(result).toContain('mcp__session__set_outcomes');
   });
 });
 
