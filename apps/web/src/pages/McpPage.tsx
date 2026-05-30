@@ -8,7 +8,6 @@ import {
   Plus,
   Trash2,
   Pencil,
-  Server,
   Terminal,
   Globe,
   X,
@@ -16,6 +15,7 @@ import {
   Construction,
   Network,
   LogIn,
+  ExternalLink,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
@@ -50,6 +50,8 @@ import type {
 } from '@repo/types';
 
 // ─── Shared helpers ──────────────────────────────────────────
+
+const SYSTEM_AI_AGENT_PREFIX = 'system_ai_agent_';
 
 interface KeyValuePair {
   key: string;
@@ -125,6 +127,21 @@ function extractConnectionName(server: McpServerRecord): string | null {
   }
 }
 
+function prioritizeSystemAiAgentExternalServers<T extends { name: string }>(servers: T[]) {
+  const systemAiAgentServers: T[] = [];
+  const otherServers: T[] = [];
+
+  for (const server of servers) {
+    if (server.name.startsWith(SYSTEM_AI_AGENT_PREFIX)) {
+      systemAiAgentServers.push(server);
+    } else {
+      otherServers.push(server);
+    }
+  }
+
+  return [...systemAiAgentServers, ...otherServers];
+}
+
 function ManagedIcon({ managedType }: { managedType: ManagedMcpType }) {
   if (managedType === 'databricks_sql')
     return <DatabaseSearch className="h-4 w-4 shrink-0 text-muted-foreground" />;
@@ -151,6 +168,74 @@ function ServerSubtitle({ server }: { server: McpServerRecord }) {
     );
   }
   return null;
+}
+
+function ManagedServerCard({
+  server,
+  idPrefix,
+  isEnabled,
+  databricksHost,
+  loginLabel,
+  onToggle,
+  onDelete,
+}: {
+  server: McpServerRecord;
+  idPrefix: string;
+  isEnabled: boolean;
+  databricksHost: string | null | undefined;
+  loginLabel: string;
+  onToggle: (serverId: string, checked: boolean) => void;
+  onDelete: (server: McpServerRecord) => void;
+}) {
+  const connectionName = extractConnectionName(server);
+
+  return (
+    <div className="group flex items-center justify-between p-4 rounded-lg border border-border bg-card hover:bg-accent/50 transition-colors">
+      <div className="flex-1 min-w-0 mr-4">
+        <div className="flex items-center gap-2">
+          <ManagedIcon managedType={server.managed_type!} />
+          <Label htmlFor={`${idPrefix}-${server.id}`} className="font-medium cursor-pointer">
+            {server.name}
+          </Label>
+          <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+            {server.id}
+          </span>
+        </div>
+        <ServerSubtitle server={server} />
+      </div>
+      <div className="flex items-center gap-2">
+        {connectionName && databricksHost && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs mr-2"
+            onClick={() =>
+              window.open(
+                `https://${databricksHost}/explore/connections/${connectionName}`,
+                '_blank'
+              )
+            }
+          >
+            <LogIn className="h-3.5 w-3.5 mr-1" />
+            {loginLabel}
+          </Button>
+        )}
+        <Switch
+          id={`${idPrefix}-${server.id}`}
+          checked={isEnabled}
+          onCheckedChange={checked => onToggle(server.id, checked)}
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-destructive invisible group-hover:visible"
+          onClick={() => onDelete(server)}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function pairsToRecord(pairs: KeyValuePair[]): Record<string, string> | undefined {
@@ -426,7 +511,7 @@ const MCP_TILES: McpTileConfig[] = [
     type: 'custom',
     labelKey: 'mcp.customMcpLabel',
     descriptionKey: 'mcp.customMcpDescription',
-    icon: Server,
+    icon: ExternalLink,
   },
 ];
 
@@ -491,11 +576,13 @@ function UnityAiGatewayStep({
 
   const availableUcMcpServers = useMemo(() => {
     const q = ucSearchQuery.toLowerCase().trim();
-    return ucMcpServers.filter(s => {
+    const filteredServers = ucMcpServers.filter(s => {
       if (registeredUcConnectionIds.has(s.id)) return false;
       if (!q) return true;
       return s.name.toLowerCase().includes(q) || s.owner?.toLowerCase().includes(q);
     });
+
+    return prioritizeSystemAiAgentExternalServers(filteredServers);
   }, [ucMcpServers, registeredUcConnectionIds, ucSearchQuery]);
 
   const handleSubmit = async () => {
@@ -635,14 +722,12 @@ function AddMcpDialog({
   open,
   onOpenChange,
   onCreated,
-  onOpenCustomForm,
   databricksHost,
   existingServers,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
-  onOpenCustomForm: () => void;
   databricksHost: string | null | undefined;
   existingServers: McpServerRecord[];
 }) {
@@ -776,12 +861,6 @@ function AddMcpDialog({
   const handleTileClick = async (tileType: McpTileConfig['type']) => {
     setFormError(null);
 
-    if (tileType === 'custom') {
-      handleOpenChange(false);
-      onOpenCustomForm();
-      return;
-    }
-
     if (tileType === 'databricks_sql') {
       setSelectedManagedType('databricks_sql');
       setServerName('Databricks SQL');
@@ -824,20 +903,16 @@ function AddMcpDialog({
               {MCP_TILES.map(tile => {
                 const Icon = tile.icon;
                 const isDisabled =
-                  tile.disabled || (tile.type === 'databricks_sql' && dbsqlAlreadyRegistered);
-
-                return (
-                  <button
-                    key={tile.type}
-                    type="button"
-                    disabled={isDisabled}
-                    className={cn(
-                      'flex flex-col items-center gap-2 p-4 rounded-lg border border-border bg-card',
-                      'hover:bg-accent/50 transition-colors text-center',
-                      'disabled:opacity-50 disabled:cursor-not-allowed'
-                    )}
-                    onClick={() => handleTileClick(tile.type)}
-                  >
+                  tile.disabled ||
+                  (tile.type === 'databricks_sql' && dbsqlAlreadyRegistered) ||
+                  (tile.type === 'custom' && !databricksHost);
+                const tileClassName = cn(
+                  'flex flex-col items-center gap-2 p-4 rounded-lg border border-border bg-card',
+                  'hover:bg-accent/50 transition-colors text-center',
+                  'disabled:opacity-50 disabled:cursor-not-allowed'
+                );
+                const tileContent = (
+                  <>
                     <Icon className="h-8 w-8 text-muted-foreground" />
                     <div>
                       <p className="font-medium text-sm">{t(tile.labelKey)}</p>
@@ -852,6 +927,32 @@ function AddMcpDialog({
                     {tile.type === 'databricks_sql' && dbsqlAlreadyRegistered && (
                       <p className="text-xs text-amber-500">{t('mcp.dbsqlAlreadyRegistered')}</p>
                     )}
+                  </>
+                );
+
+                if (tile.type === 'custom' && databricksHost) {
+                  return (
+                    <a
+                      key={tile.type}
+                      href={`https://${databricksHost}/ml/ai-gateway/mcp`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={tileClassName}
+                    >
+                      {tileContent}
+                    </a>
+                  );
+                }
+
+                return (
+                  <button
+                    key={tile.type}
+                    type="button"
+                    disabled={isDisabled}
+                    className={tileClassName}
+                    onClick={() => handleTileClick(tile.type)}
+                  >
+                    {tileContent}
                   </button>
                 );
               })}
@@ -1040,15 +1141,26 @@ export function McpContent() {
     fetchServers().finally(() => setIsLoading(false));
   }, [fetchServers]);
 
-  const { managedServers, customServers } = useMemo(() => {
+  const { managedServers, externalServers, customServers } = useMemo(() => {
     const managed: McpServerRecord[] = [];
+    const external: McpServerRecord[] = [];
     const custom: McpServerRecord[] = [];
     for (const s of allServers) {
-      (s.managed_type != null ? managed : custom).push(s);
+      if (s.managed_type === 'unity_ai_gateway') {
+        external.push(s);
+      } else if (s.managed_type != null) {
+        managed.push(s);
+      } else {
+        custom.push(s);
+      }
     }
     managed.sort((a, b) => a.id.localeCompare(b.id));
     custom.sort((a, b) => a.id.localeCompare(b.id));
-    return { managedServers: managed, customServers: custom };
+    return {
+      managedServers: managed,
+      externalServers: prioritizeSystemAiAgentExternalServers(external),
+      customServers: custom,
+    };
   }, [allServers]);
 
   const handleToggle = (key: string, checked: boolean) => {
@@ -1067,12 +1179,6 @@ export function McpContent() {
     setEditingServerId(null);
     setForm(EMPTY_FORM);
     setFormError(null);
-  };
-
-  const openAddDialog = () => {
-    setForm(EMPTY_FORM);
-    setFormError(null);
-    setDialogMode('add');
   };
 
   const openEditDialog = (server: McpServerRecord) => {
@@ -1181,125 +1287,110 @@ export function McpContent() {
               const isEnabled = enabledServers[server.id] ?? true;
 
               return (
-                <div
+                <ManagedServerCard
                   key={server.id}
-                  className="group flex items-center justify-between p-4 rounded-lg border border-border bg-card hover:bg-accent/50 transition-colors"
-                >
-                  <div className="flex-1 min-w-0 mr-4">
-                    <div className="flex items-center gap-2">
-                      <ManagedIcon managedType={server.managed_type!} />
-                      <Label
-                        htmlFor={`managed-${server.id}`}
-                        className="font-medium cursor-pointer"
-                      >
-                        {server.name}
-                      </Label>
-                      <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                        {server.id}
-                      </span>
-                    </div>
-                    <ServerSubtitle server={server} />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {(() => {
-                      const connectionName = extractConnectionName(server);
-                      return connectionName && databricksHost ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 text-xs mr-2"
-                          onClick={() =>
-                            window.open(
-                              `https://${databricksHost}/explore/connections/${connectionName}`,
-                              '_blank'
-                            )
-                          }
-                        >
-                          <LogIn className="h-3.5 w-3.5 mr-1" />
-                          {t('mcp.login')}
-                        </Button>
-                      ) : null;
-                    })()}
-                    <Switch
-                      id={`managed-${server.id}`}
-                      checked={isEnabled}
-                      onCheckedChange={checked => handleToggle(server.id, checked)}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive invisible group-hover:visible"
-                      onClick={() => handleDelete(server)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
+                  server={server}
+                  idPrefix="managed"
+                  isEnabled={isEnabled}
+                  databricksHost={databricksHost}
+                  loginLabel={t('mcp.login')}
+                  onToggle={handleToggle}
+                  onDelete={handleDelete}
+                />
               );
             })}
           </div>
         </section>
 
-        {/* Custom MCP section */}
+        {/* External MCP section */}
         <section className="mb-6">
           <h2 className="text-sm font-semibold text-muted-foreground mb-2">
-            {t('mcp.customSection')}
+            {t('mcp.externalSection')}
           </h2>
-          {customServers.length === 0 && (
+          {externalServers.length === 0 && (
             <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-              <Server className="h-10 w-10 mb-3 opacity-50" />
-              <p className="text-sm">{t('mcp.customEmpty')}</p>
+              <Network className="h-10 w-10 mb-3 opacity-50" />
+              <p className="text-sm">{t('mcp.externalEmpty')}</p>
             </div>
           )}
           <div className="space-y-2">
-            {customServers.map(server => {
-              const isEnabled = enabledServers[server.id] ?? false;
+            {externalServers.map(server => {
+              const isEnabled = enabledServers[server.id] ?? true;
 
               return (
-                <div
+                <ManagedServerCard
                   key={server.id}
-                  className="group flex items-center justify-between p-4 rounded-lg border border-border bg-card hover:bg-accent/50 transition-colors"
-                >
-                  <div className="flex-1 min-w-0 mr-4">
-                    <div className="flex items-center gap-2">
-                      <ServerTypeIcon type={server.type} />
-                      <Label htmlFor={`custom-${server.id}`} className="font-medium cursor-pointer">
-                        {server.name}
-                      </Label>
-                      <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                        {server.type}
-                      </span>
-                    </div>
-                    <ServerSubtitle server={server} />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                      onClick={() => openEditDialog(server)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Switch
-                      id={`custom-${server.id}`}
-                      checked={isEnabled}
-                      onCheckedChange={checked => handleToggle(server.id, checked)}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive invisible group-hover:visible"
-                      onClick={() => handleDelete(server)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
+                  server={server}
+                  idPrefix="external"
+                  isEnabled={isEnabled}
+                  databricksHost={databricksHost}
+                  loginLabel={t('mcp.login')}
+                  onToggle={handleToggle}
+                  onDelete={handleDelete}
+                />
               );
             })}
           </div>
         </section>
+
+        {customServers.length > 0 && (
+          <section className="mb-6">
+            <h2 className="text-sm font-semibold text-muted-foreground mb-2">
+              {t('mcp.customSection')}
+            </h2>
+            <div className="space-y-2">
+              {customServers.map(server => {
+                const isEnabled = enabledServers[server.id] ?? false;
+
+                return (
+                  <div
+                    key={server.id}
+                    className="group flex items-center justify-between p-4 rounded-lg border border-border bg-card hover:bg-accent/50 transition-colors"
+                  >
+                    <div className="flex-1 min-w-0 mr-4">
+                      <div className="flex items-center gap-2">
+                        <ServerTypeIcon type={server.type} />
+                        <Label
+                          htmlFor={`custom-${server.id}`}
+                          className="font-medium cursor-pointer"
+                        >
+                          {server.name}
+                        </Label>
+                        <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                          {server.type}
+                        </span>
+                      </div>
+                      <ServerSubtitle server={server} />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                        onClick={() => openEditDialog(server)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Switch
+                        id={`custom-${server.id}`}
+                        checked={isEnabled}
+                        onCheckedChange={checked => handleToggle(server.id, checked)}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive invisible group-hover:visible"
+                        onClick={() => handleDelete(server)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </div>
 
       {/* Add MCP dialog */}
@@ -1307,7 +1398,6 @@ export function McpContent() {
         open={showAddDialog}
         onOpenChange={setShowAddDialog}
         onCreated={fetchServers}
-        onOpenCustomForm={openAddDialog}
         databricksHost={databricksHost}
         existingServers={allServers}
       />
