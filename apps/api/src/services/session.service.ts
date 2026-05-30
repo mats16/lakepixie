@@ -79,6 +79,7 @@ import {
   resolveSessionModelIdFromSettings,
   UserSettingsValidationError,
 } from './user-settings.service.js';
+import { createStopHookGitCheck } from './stop-hook-git-check.service.js';
 
 interface ActiveSessionQuery {
   abortController: AbortController;
@@ -108,6 +109,7 @@ const LIVE_APPLY_FLAG_EFFORT_LEVELS = new Set<Exclude<WsEffortLevel, 'max'>>([
   'high',
   'xhigh',
 ]);
+const stopHookGitCheck = createStopHookGitCheck();
 type EffectiveToolSettings = {
   allowed_tools: string[];
   disallowed_tools: string[];
@@ -1433,6 +1435,9 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
         ...(sessionContext.effort_level ? { effort: sessionContext.effort_level } : {}),
         canUseTool: (toolName, input, options) =>
           handleCanUseTool({ fastify, userId, sessionId, toolName, input, options }),
+        hooks: {
+          Stop: [{ hooks: [stopHookGitCheck] }],
+        },
         systemPrompt: systemPromptConfig,
         mcpServers,
         tools: {
