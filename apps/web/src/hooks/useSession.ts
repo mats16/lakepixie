@@ -11,6 +11,7 @@ interface UseSessionReturn {
   isLoading: boolean;
   error: Error | null;
   updateSession: (request: SessionUpdateRequest) => Promise<SessionResponse | null>;
+  patchSessionContext: (nextSession: SessionResponse) => void;
   refetch: () => Promise<void>;
 }
 
@@ -78,11 +79,23 @@ export function useSession({ sessionId }: UseSessionOptions): UseSessionReturn {
     [sessionId]
   );
 
+  const patchSessionContext = useCallback(
+    (nextSession: SessionResponse) => {
+      if (nextSession.id !== sessionId) return;
+      activeRequestId.current += 1;
+      setSession(nextSession);
+      setError(null);
+      setIsLoading(false);
+    },
+    [sessionId]
+  );
+
   return {
     session,
     isLoading,
     error,
     updateSession,
+    patchSessionContext,
     refetch: fetchSession,
   };
 }

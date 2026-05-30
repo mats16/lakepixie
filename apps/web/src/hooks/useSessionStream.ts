@@ -8,6 +8,7 @@ import type {
   WsAskUserQuestionRequest,
   WsExitPlanModeRequest,
   WsExitPlanModeResponseRequest,
+  WsSessionContextUpdatedMessage,
   WsEffortLevel,
   WsPermissionMode,
   UserMessageContentBlock,
@@ -21,6 +22,7 @@ interface UseSessionStreamOptions {
   onConnected?: (message: WsConnectedMessage) => void;
   onAskUserQuestion?: (request: WsAskUserQuestionRequest) => void;
   onExitPlanMode?: (request: WsExitPlanModeRequest) => void;
+  onSessionContextUpdated?: (message: WsSessionContextUpdatedMessage) => void;
   onError?: (error: Error) => void;
 }
 
@@ -61,6 +63,7 @@ export function useSessionStream({
   onConnected,
   onAskUserQuestion,
   onExitPlanMode,
+  onSessionContextUpdated,
   onError,
 }: UseSessionStreamOptions): UseSessionStreamReturn {
   const [isConnected, setIsConnected] = useState(false);
@@ -75,12 +78,14 @@ export function useSessionStream({
   const onConnectedRef = useRef(onConnected);
   const onAskUserQuestionRef = useRef(onAskUserQuestion);
   const onExitPlanModeRef = useRef(onExitPlanMode);
+  const onSessionContextUpdatedRef = useRef(onSessionContextUpdated);
   const onErrorRef = useRef(onError);
 
   onEventRef.current = onEvent;
   onConnectedRef.current = onConnected;
   onAskUserQuestionRef.current = onAskUserQuestion;
   onExitPlanModeRef.current = onExitPlanMode;
+  onSessionContextUpdatedRef.current = onSessionContextUpdated;
   onErrorRef.current = onError;
 
   const handleMessage = useCallback((event: MessageEvent<string>) => {
@@ -102,6 +107,8 @@ export function useSessionStream({
       onAskUserQuestionRef.current?.(message as WsAskUserQuestionRequest);
     } else if (message.type === 'exit_plan_mode') {
       onExitPlanModeRef.current?.(message as WsExitPlanModeRequest);
+    } else if (message.type === 'session_context_updated') {
+      onSessionContextUpdatedRef.current?.(message as WsSessionContextUpdatedMessage);
     } else if (message.type === 'error') {
       const errorMessage = (message as { message: string }).message;
       const nextError = new Error(errorMessage);
@@ -149,6 +156,7 @@ export function useSessionStream({
       'message',
       'ask_user_question',
       'exit_plan_mode',
+      'session_context_updated',
       'control_response',
     ]) {
       eventSource.addEventListener(name, event => {

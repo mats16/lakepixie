@@ -6,6 +6,32 @@ import type {
   ResolvedSessionOutcome,
   SessionSource,
 } from '@repo/types';
+import { CONTEXT_MANAGER_MCP_TOOLS } from '../services/context-manager-mcp.service.js';
+
+const CONTEXT_MANAGER_TOOL_LIST = CONTEXT_MANAGER_MCP_TOOLS.map(tool => `- \`${tool}\``).join('\n');
+
+const CONTEXT_MANAGER_INSTRUCTION = `
+## ccbricks Session Context Manager
+
+You have access to the \`session\` MCP server. It is the only supported way for you to update ccbricks UI session context.
+
+Use it to:
+- Read the current \`session_context\`
+- Read \`session_context.outcomes\`
+- Add, replace, or remove Databricks Apps and Databricks Workspace outcomes
+- Replace the full \`outcomes\` array while preserving any existing \`git_repository\` outcome
+
+Rules:
+1. You may update \`session_context.outcomes\` only.
+2. Do not try to update \`sources\`, \`cwd\`, model settings, permission settings, MCP config, or tool permissions.
+3. After creating or verifying a Databricks App yourself, record the exact app name with a \`databricks_apps\` outcome.
+4. After pushing to or choosing a Databricks Workspace path yourself, record the exact path with a \`databricks_workspace\` outcome.
+5. Do not add, remove, or change \`git_repository\` outcomes. They are managed by the ccbricks app only.
+6. Keep existing unrelated outcomes unless the user explicitly asks to remove them.
+
+Available MCP tools:
+${CONTEXT_MANAGER_TOOL_LIST}
+`.trim();
 
 /** systemPrompt の設定型 */
 export interface SystemPromptConfig {
@@ -38,7 +64,7 @@ export function buildSystemPromptConfig(
   );
   const gitOutcome = outcomes.find((o): o is GitRepositoryOutcome => o.type === 'git_repository');
 
-  const instructions: string[] = [];
+  const instructions: string[] = [createContextManagerInstruction()];
 
   if (workspaceOutcome?.path) {
     instructions.push(createWorkspacePushInstruction(workspaceOutcome.path));
@@ -50,14 +76,18 @@ export function buildSystemPromptConfig(
     instructions.push(createGitRepositoryInstruction(gitOutcome, sources));
   }
 
-  if (instructions.length > 0) {
-    return {
-      type: 'preset',
-      preset: 'claude_code',
-      append: instructions.join('\n\n'),
-    };
-  }
-  return { type: 'preset', preset: 'claude_code' };
+  return {
+    type: 'preset',
+    preset: 'claude_code',
+    append: instructions.join('\n\n'),
+  };
+}
+
+/**
+ * ccbricks の session_context を同期する internal MCP の使い方。
+ */
+export function createContextManagerInstruction(): string {
+  return CONTEXT_MANAGER_INSTRUCTION;
 }
 
 /**
@@ -89,6 +119,7 @@ The workspace path is provided via the \`SESSION_WORKSPACE_PATH\` environment va
 1. **DEVELOP** all your changes in the current working directory
 2. **PUSH** your completed work to the specified Workspace path
 3. **NEVER** push to a different workspace path without explicit permission
+4. **UPDATE** the session outcomes with \`mcp__session__upsert_outcome\` after a successful push
 
 ### CLI Reference:
 
@@ -96,6 +127,9 @@ The workspace path is provided via the \`SESSION_WORKSPACE_PATH\` environment va
   \`workspace-push . "$SESSION_WORKSPACE_PATH"\`
 - To check the upload result:
   \`workspace-push --list "$SESSION_WORKSPACE_PATH"\`
+
+After a successful push, upsert this outcome:
+\`{"type":"databricks_workspace","path":"${workspacePath}"}\`
 `.trim();
 }
 
@@ -128,6 +162,8 @@ The app name is also available via the \`SESSION_APP_NAME\` environment variable
 - The app name \`${appName}\` is pre-assigned. Always use this exact name.
 - Ensure your app has a valid \`app.yaml\` configuration file before deploying.
 - After deploying, verify the app status shows \`RUNNING\` before reporting success.
+- After creating or verifying the app, upsert this outcome with \`mcp__session__upsert_outcome\`:
+  \`{"type":"databricks_apps","name":"${appName}"}\`
 - Do not consider the work done until the app is successfully deployed and verified.
 `.trim();
 }

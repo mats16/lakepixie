@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { ResolvedSessionOutcome } from '@repo/types';
 import {
   buildSystemPromptConfig,
+  createContextManagerInstruction,
   createWorkspacePushInstruction,
   createDatabricksAppsInstruction,
   createGitRepositoryInstruction,
@@ -36,22 +37,21 @@ describe('createWorkspacePushInstruction', () => {
 });
 
 describe('buildSystemPromptConfig', () => {
-  it('should return base config for empty outcomes', () => {
+  it('should include context manager instructions for empty outcomes', () => {
     const result = buildSystemPromptConfig([]);
 
-    expect(result).toEqual({
-      type: 'preset',
-      preset: 'claude_code',
-    });
+    expect(result.type).toBe('preset');
+    expect(result.preset).toBe('claude_code');
+    expect(result.append).toContain('ccbricks Session Context Manager');
+    expect(result.append).toContain('mcp__session__upsert_outcome');
   });
 
-  it('should return base config for undefined outcomes', () => {
+  it('should include context manager instructions for undefined outcomes', () => {
     const result = buildSystemPromptConfig();
 
-    expect(result).toEqual({
-      type: 'preset',
-      preset: 'claude_code',
-    });
+    expect(result.type).toBe('preset');
+    expect(result.preset).toBe('claude_code');
+    expect(result.append).toContain('ccbricks Session Context Manager');
   });
 
   it('should return config with Workspace instruction for workspace-only outcome', () => {
@@ -164,6 +164,17 @@ describe('buildSystemPromptConfig', () => {
       'widgets/ (acme/widgets): Develop on branch `ccbricks/multi-repo`'
     );
     expect(result.append).toContain('`api/`: acme/api');
+  });
+});
+
+describe('createContextManagerInstruction', () => {
+  it('should describe outcomes-only context updates', () => {
+    const result = createContextManagerInstruction();
+
+    expect(result).toContain('ccbricks Session Context Manager');
+    expect(result).toContain('session_context.outcomes');
+    expect(result).toContain('Do not try to update `sources`');
+    expect(result).toContain('mcp__session__set_outcomes');
   });
 });
 

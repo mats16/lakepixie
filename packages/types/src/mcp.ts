@@ -1,4 +1,4 @@
-import type { SessionOutcome } from './session.js';
+import type { ResolvedSessionOutcome, SessionContextResponse } from './session.js';
 
 // =====================================================
 // Genie Space Types (Databricks API)
@@ -40,33 +40,13 @@ export interface McpConfig {
   mcpServers: Record<string, McpServerEntry>;
 }
 
-// =====================================================
-// MCP Tool Types for ctx server
-// =====================================================
-
 /**
- * mcp__ctx__get_outcomes のレスポンス
+ * outcomes 更新系 MCP tool のレスポンス
  */
-export interface GetOutcomesResponse {
-  outcomes: SessionOutcome[];
-}
-
-/**
- * mcp__ctx__update_outcome のリクエスト
- */
-export interface UpdateOutcomeRequest {
-  /** 更新対象の outcome のインデックス */
-  index: number;
-  /** 新しい outcome データ */
-  outcome: SessionOutcome;
-}
-
-/**
- * mcp__ctx__update_outcome のレスポンス
- */
-export interface UpdateOutcomeResponse {
+export interface UpdateOutcomesResponse {
   success: boolean;
-  outcomes: SessionOutcome[];
+  outcomes: ResolvedSessionOutcome[];
+  session_context: SessionContextResponse;
 }
 
 // =====================================================

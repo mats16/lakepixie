@@ -63,6 +63,7 @@ import {
   applySessionFlagSettings,
   canAbortSession,
   executeAbort,
+  SessionContextUpdateError,
   setSessionModel,
   setSessionPermissionMode,
 } from './session.service.js';
@@ -179,6 +180,7 @@ describe('session.service', () => {
     vi.clearAllMocks();
     __testing.clearActiveSessionQueries();
     __testing.clearDatabricksAppCreateLocks();
+    __testing.clearSessionContextUpdateLocks();
     exitPlanModeTesting.clearPendingExitPlanModes();
     askUserQuestionTesting.clearPendingQuestions();
     mockSpawn.mockImplementation(() => {
@@ -380,6 +382,21 @@ describe('session.service', () => {
         allowed_tools: ['mcp__vector__*'],
         disallowed_tools: ['mcp__readonly__*'],
       });
+    });
+
+    it('keeps the internal session MCP server out of deny patterns', () => {
+      expect(
+        __testing.removeContextManagerMcpDisallowPatterns({
+          allowedTools: ['Read', 'mcp__dbsql__*'],
+          disallowedTools: [
+            'Bash',
+            'mcp__session',
+            'mcp__session__*',
+            'mcp__session__set_outcomes',
+            'mcp__*',
+          ],
+        })
+      ).toEqual(['Bash', 'mcp__dbsql__*']);
     });
   });
 
@@ -585,6 +602,185 @@ describe('session.service', () => {
           [{ ...outcome, git_info: { ...outcome.git_info, repo: 'acme/other' } }]
         )
       ).toThrow('must match');
+    });
+
+    it('should normalize and validate context manager outcomes', () => {
+      const source = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets.git',
+      };
+      const outcomes = __testing.normalizeSessionOutcomes([
+        { type: 'databricks_workspace', path: '/Workspace/Shared/app' },
+        { type: 'databricks_apps', name: 'generated-app' },
+        {
+          type: 'git_repository',
+          git_info: {
+            type: 'github',
+            repo: 'acme/widgets',
+            branches: ['ccbricks/test-branch'],
+          },
+        },
+      ]);
+
+      expect(outcomes).toEqual([
+        { type: 'databricks_workspace', path: '/Workspace/Shared/app' },
+        { type: 'databricks_apps', name: 'generated-app' },
+        {
+          type: 'git_repository',
+          git_info: {
+            type: 'github',
+            repo: 'acme/widgets',
+            branches: ['ccbricks/test-branch'],
+          },
+        },
+      ]);
+      expect(() => __testing.validateSessionOutcomesForContext([source], outcomes)).not.toThrow();
+    });
+
+    it('should reject invalid context manager outcome updates', () => {
+      expect(() =>
+        __testing.normalizeSessionOutcomes([{ type: 'databricks_workspace', path: '../bad' }])
+      ).toThrow(SessionContextUpdateError);
+      expect(() =>
+        __testing.normalizeSessionOutcomes([{ type: 'databricks_apps', name: 'Bad_Name' }])
+      ).toThrow('databricks_apps outcome name');
+      expect(() =>
+        __testing.validateSessionOutcomesForContext(
+          [],
+          [
+            { type: 'databricks_workspace', path: '/Workspace/one' },
+            { type: 'databricks_workspace', path: '/Workspace/two' },
+          ]
+        )
+      ).toThrow('Only one Databricks Workspace outcome');
+      expect(() =>
+        __testing.normalizeSessionOutcomes([
+          {
+            type: 'git_repository',
+            git_info: {
+              type: 'github',
+              repo: 'acme/widgets',
+              branches: ['ccbricks/one', 'ccbricks/two'],
+            },
+          },
+        ])
+      ).toThrow('exactly one branch');
+    });
+
+    it('should allow context manager to record agent-created app and workspace outcomes', () => {
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [],
+        outcomes: [],
+      };
+
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          currentContext: context,
+          nextOutcomes: [
+            { type: 'databricks_apps', name: 'demo-app' },
+            { type: 'databricks_workspace', path: '/Workspace/Users/test@example.com/demo-app' },
+          ],
+        })
+      ).not.toThrow();
+    });
+
+    it('should keep git repository outcomes app-managed for context manager updates', () => {
+      const source = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets.git',
+      };
+      const gitOutcome = {
+        type: 'git_repository' as const,
+        git_info: {
+          type: 'github' as const,
+          repo: 'acme/widgets',
+          branches: ['ccbricks/test-branch'],
+        },
+      };
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [source],
+        outcomes: [gitOutcome],
+      };
+
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          currentContext: context,
+          nextOutcomes: [gitOutcome, { type: 'databricks_apps', name: 'demo-app' }],
+        })
+      ).not.toThrow();
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          currentContext: context,
+          nextOutcomes: [
+            {
+              ...gitOutcome,
+              git_info: { ...gitOutcome.git_info, branches: ['ccbricks/other-branch'] },
+            },
+          ],
+        })
+      ).toThrow('git_repository outcomes can only be configured by the app');
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          currentContext: context,
+          nextOutcomes: [],
+        })
+      ).toThrow('git_repository outcomes can only be configured by the app');
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          currentContext: { ...context, sources: [], outcomes: [] },
+          nextOutcomes: [gitOutcome],
+        })
+      ).toThrow('git_repository outcomes can only be configured by the app');
+    });
+
+    it('should compare git repository outcomes after normalization', () => {
+      const source = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets.git',
+      };
+      const context: SessionContextResponse = {
+        cwd: '/home/app/sessions/session-test',
+        model: 'claude-sonnet-4-6',
+        sources: [source],
+        outcomes: [
+          {
+            type: 'git_repository',
+            git_info: {
+              type: 'github',
+              repo: ' acme/widgets ',
+              branches: ['ccbricks/test-branch'],
+            },
+          },
+        ],
+      };
+
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          currentContext: context,
+          nextOutcomes: [
+            {
+              type: 'git_repository',
+              git_info: {
+                type: 'github',
+                branches: ['ccbricks/test-branch'],
+              },
+            },
+          ],
+        })
+      ).not.toThrow();
     });
 
     it('should export workspace sources except when exactly one git source is present', () => {
@@ -894,6 +1090,85 @@ describe('session.service', () => {
       expect(result).toEqual({
         behavior: 'allow',
         updatedInput: input,
+      });
+    });
+
+    it('denies context manager writes while permission mode is plan', async () => {
+      const { fastify } = createContextUpdateFastify({
+        permission_mode: 'plan',
+      });
+      const sessionId = new SessionId();
+      const input = { outcomes: [] };
+
+      const result = await __testing.handleCanUseTool({
+        fastify,
+        userId: 'user-123',
+        sessionId,
+        toolName: 'mcp__session__set_outcomes',
+        input,
+        options: {
+          signal: new AbortController().signal,
+          toolUseID: 'toolu-context-manager-write',
+        },
+      });
+
+      expect(result).toEqual({
+        behavior: 'deny',
+        message: 'Session outcomes cannot be updated while permission_mode is plan',
+      });
+    });
+
+    it('uses active query permission mode for context manager write checks', async () => {
+      const { fastify } = createContextUpdateFastify({
+        permission_mode: 'plan',
+      });
+      const sessionId = new SessionId();
+      const input = { outcomes: [] };
+      __testing.registerActiveSessionQuery(sessionId, {
+        query: { setPermissionMode: vi.fn() } as unknown as Query,
+        permissionMode: 'auto',
+      });
+
+      const result = await __testing.handleCanUseTool({
+        fastify,
+        userId: 'user-123',
+        sessionId,
+        toolName: 'mcp__session__set_outcomes',
+        input,
+        options: {
+          signal: new AbortController().signal,
+          toolUseID: 'toolu-context-manager-write',
+        },
+      });
+
+      expect(result).toEqual({
+        behavior: 'allow',
+        updatedInput: input,
+      });
+      expect(fastify.withUserContext).not.toHaveBeenCalled();
+    });
+
+    it('returns a deny result when context manager write permission lookup fails', async () => {
+      const fastify = {
+        withUserContext: vi.fn().mockRejectedValue(new Error('Session not found')),
+      } as unknown as FastifyInstance;
+      const sessionId = new SessionId();
+
+      const result = await __testing.handleCanUseTool({
+        fastify,
+        userId: 'user-123',
+        sessionId,
+        toolName: 'mcp__session__set_outcomes',
+        input: { outcomes: [] },
+        options: {
+          signal: new AbortController().signal,
+          toolUseID: 'toolu-context-manager-write',
+        },
+      });
+
+      expect(result).toEqual({
+        behavior: 'deny',
+        message: 'Session not found',
       });
     });
 

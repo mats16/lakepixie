@@ -16,6 +16,7 @@ import {
   type UserMessageContentBlock,
   type WsAskUserQuestionRequest,
   type WsExitPlanModeRequest,
+  type WsSessionContextUpdatedMessage,
   type WsEffortLevel,
 } from '@repo/types';
 import { MainHeader } from './MainHeader';
@@ -179,6 +180,7 @@ export function MainArea({
   const [isExitPlanSuggestOpen, setIsExitPlanSuggestOpen] = useState(false);
   const gitDiffRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gitRepositoryStatusRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasSessionStreamConnectedRef = useRef(false);
 
   // navigate state から初期メッセージを取得
   const initialMessage = useMemo(() => {
@@ -191,6 +193,7 @@ export function MainArea({
   const {
     session,
     updateSession,
+    patchSessionContext,
     refetch: refetchSession,
     isLoading: isSessionLoading,
     error: sessionLoadError,
@@ -245,7 +248,24 @@ export function MainArea({
     }, GIT_DIFF_REFRESH_DEBOUNCE_MS);
   }, []);
 
+  const handleSessionContextUpdated = useCallback(
+    (message: WsSessionContextUpdatedMessage) => {
+      if (message.session_id !== sessionId) return;
+      patchSessionContext(message.session);
+    },
+    [patchSessionContext, sessionId]
+  );
+
+  const handleSessionStreamConnected = useCallback(() => {
+    if (!hasSessionStreamConnectedRef.current) {
+      hasSessionStreamConnectedRef.current = true;
+      return;
+    }
+    void refetchSession();
+  }, [refetchSession]);
+
   useEffect(() => {
+    hasSessionStreamConnectedRef.current = false;
     return () => {
       if (gitDiffRefreshTimerRef.current) {
         clearTimeout(gitDiffRefreshTimerRef.current);
@@ -283,6 +303,8 @@ export function MainArea({
     onExitPlanMode: handleExitPlanMode,
     onGitDiffRefreshNeeded: handleGitDiffRefreshNeeded,
     onGitRepositoryStatusRefreshNeeded: handleGitRepositoryStatusRefreshNeeded,
+    onConnected: handleSessionStreamConnected,
+    onSessionContextUpdated: handleSessionContextUpdated,
   });
 
   const submitAnswer = useCallback(
