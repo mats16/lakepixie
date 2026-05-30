@@ -197,7 +197,13 @@ describe('database plugin', () => {
       verifyClient.close();
 
       expect(columns.map(column => column.name)).toEqual(
-        expect.arrayContaining(['allowed_tools', 'disallowed_tools', 'created_at', 'updated_at'])
+        expect.arrayContaining([
+          'allowed_tools',
+          'disallowed_tools',
+          'claude_language',
+          'created_at',
+          'updated_at',
+        ])
       );
     });
 

@@ -85,6 +85,14 @@
     "description": "Claude Code の動作と外部連携を設定します。",
     "claudeCodeTab": "Claude Code",
     "integrationTab": "Integration",
+    "responseLanguage": "応答言語",
+    "claudeLanguage": "Claude の応答言語",
+    "claudeLanguageDescription": "新しいセッションで Claude が応答に使う優先言語です。",
+    "claudeLanguageDefault": "デフォルト",
+    "claudeLanguages": {
+      "english": "英語",
+      "japanese": "日本語"
+    },
     "modelConfiguration": "モデル",
     "toolConfiguration": "ツール",
     "toolConfigurationDescription": "MCP ツールを除く Claude Code 標準ツールの利用可否を選択します。",

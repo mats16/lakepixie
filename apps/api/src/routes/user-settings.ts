@@ -7,6 +7,7 @@ import { SessionId } from '../models/session.model.js';
 import {
   getUserSettings,
   updateUserSettings,
+  USER_CLAUDE_LANGUAGE_SETTING_KEY,
   USER_ALLOWED_TOOLS_SETTING_KEY,
   USER_DISALLOWED_TOOLS_SETTING_KEY,
   USER_MODEL_SETTING_KEYS,
@@ -78,6 +79,21 @@ const userSettingsRoute: FastifyPluginAsync = async fastify => {
         return sendError(reply, 400, 'BadRequest', `${key} must be a non-empty string or null`);
       }
       settings[key] = value === null ? null : value.trim();
+    }
+    const claudeLanguage = request.body[USER_CLAUDE_LANGUAGE_SETTING_KEY];
+    if (claudeLanguage !== undefined) {
+      if (
+        claudeLanguage !== null &&
+        (typeof claudeLanguage !== 'string' || claudeLanguage.trim().length === 0)
+      ) {
+        return sendError(
+          reply,
+          400,
+          'BadRequest',
+          `${USER_CLAUDE_LANGUAGE_SETTING_KEY} must be a non-empty string or null`
+        );
+      }
+      settings[USER_CLAUDE_LANGUAGE_SETTING_KEY] = claudeLanguage?.trim() ?? null;
     }
     for (const key of [
       USER_ALLOWED_TOOLS_SETTING_KEY,

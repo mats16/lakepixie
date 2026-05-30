@@ -1421,6 +1421,9 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
         settings: {
           apiKeyHelper: helperPaths.apiKeyHelper,
           otelHeadersHelper: helperPaths.otelHeadersHelper,
+          ...(userModelSettings.claude_language
+            ? { language: userModelSettings.claude_language }
+            : {}),
         },
         settingSources: ['user', 'project', 'local'],
         permissionMode: sessionContext.permission_mode ?? 'auto',

@@ -85,6 +85,14 @@
     "description": "Configure Claude Code behavior and external integrations.",
     "claudeCodeTab": "Claude Code",
     "integrationTab": "Integration",
+    "responseLanguage": "Response language",
+    "claudeLanguage": "Claude response language",
+    "claudeLanguageDescription": "Preferred language for Claude responses in new sessions.",
+    "claudeLanguageDefault": "Default",
+    "claudeLanguages": {
+      "english": "English",
+      "japanese": "Japanese"
+    },
     "modelConfiguration": "Models",
     "toolConfiguration": "Tools",
     "toolConfigurationDescription": "Choose which Claude Code standard tools are available. MCP tools are controlled separately.",

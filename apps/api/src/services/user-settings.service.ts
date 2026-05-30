@@ -19,11 +19,17 @@ export const USER_MODEL_SETTING_KEYS = [
 export type UserModelSettingKey = (typeof USER_MODEL_SETTING_KEYS)[number];
 export const USER_ALLOWED_TOOLS_SETTING_KEY = 'allowed_tools';
 export const USER_DISALLOWED_TOOLS_SETTING_KEY = 'disallowed_tools';
+export const USER_CLAUDE_LANGUAGE_SETTING_KEY = 'claude_language';
 export type LegacyModelTier = 'opus' | 'sonnet' | 'haiku';
 type UserSettingsUpdates = Partial<
   Pick<
     InsertUserSettings,
-    'opusModelId' | 'sonnetModelId' | 'haikuModelId' | 'allowedTools' | 'disallowedTools'
+    | 'opusModelId'
+    | 'sonnetModelId'
+    | 'haikuModelId'
+    | 'claudeLanguage'
+    | 'allowedTools'
+    | 'disallowedTools'
   >
 >;
 
@@ -101,6 +107,38 @@ function validateToolList(settingKey: string, tools: string[]): void {
   }
 }
 
+function normalizeClaudeLanguage(language: string): string {
+  const normalized = language.trim().toLowerCase();
+  if (!normalized) {
+    throw new UserSettingsValidationError(
+      `${USER_CLAUDE_LANGUAGE_SETTING_KEY} must be a non-empty string or null`
+    );
+  }
+  if (normalized.length > 64) {
+    throw new UserSettingsValidationError(
+      `${USER_CLAUDE_LANGUAGE_SETTING_KEY} must be 64 characters or fewer`
+    );
+  }
+  return normalized;
+}
+
+function parseStoredClaudeLanguage(
+  value: string | null | undefined,
+  logger?: FastifyBaseLogger
+): string | null {
+  if (value == null) return null;
+
+  try {
+    return normalizeClaudeLanguage(value);
+  } catch (error) {
+    logger?.warn(
+      { err: error, settingKey: USER_CLAUDE_LANGUAGE_SETTING_KEY },
+      'Failed to parse stored Claude language, using default'
+    );
+    return null;
+  }
+}
+
 async function getUserSettingRow(
   fastify: FastifyInstance,
   userId: string
@@ -146,6 +184,7 @@ export async function getUserSettings(
       hardcodedDefaultModelId: DEFAULT_MODEL_SETTINGS.default_haiku_model,
       allowedModelIds,
     }),
+    claude_language: parseStoredClaudeLanguage(userSettingRow?.claudeLanguage, fastify.log),
     allowed_tools: parseToolList(userSettingRow?.allowedTools, [...CLAUDE_CODE_PRESET_TOOLS], {
       logger: fastify.log,
       settingKey: USER_ALLOWED_TOOLS_SETTING_KEY,
@@ -166,6 +205,7 @@ export async function updateUserSettings(
   const allowedModelIds = new Set(await getAllowedModelIds(fastify));
   const allowedTools = settings.allowed_tools;
   const disallowedTools = settings.disallowed_tools;
+  const claudeLanguage = settings.claude_language;
   const updates: UserSettingsUpdates = {};
 
   for (const { requestKey, column } of USER_MODEL_SETTING_COLUMNS) {
@@ -187,6 +227,11 @@ export async function updateUserSettings(
     updates.disallowedTools = normalizeToolList(disallowedTools);
   } else if (disallowedTools === null) {
     updates.disallowedTools = null;
+  }
+  if (claudeLanguage !== undefined && claudeLanguage !== null) {
+    updates.claudeLanguage = normalizeClaudeLanguage(claudeLanguage);
+  } else if (claudeLanguage === null) {
+    updates.claudeLanguage = null;
   }
 
   if (Object.keys(updates).length > 0) {

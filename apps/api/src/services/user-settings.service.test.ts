@@ -49,6 +49,7 @@ type MockUserSettingsRow = {
   opusModelId: string | null;
   sonnetModelId: string | null;
   haikuModelId: string | null;
+  claudeLanguage?: string | null;
   allowedTools: string[] | string | null;
   disallowedTools: string[] | string | null;
 };
@@ -63,6 +64,7 @@ function createMockFastify(rows: MockUserSettingsRow[] = []): FastifyInstance {
     opusModelId: values.opusModelId ?? null,
     sonnetModelId: values.sonnetModelId ?? null,
     haikuModelId: values.haikuModelId ?? null,
+    claudeLanguage: values.claudeLanguage ?? null,
     allowedTools: values.allowedTools ?? null,
     disallowedTools: values.disallowedTools ?? null,
   });
@@ -123,6 +125,7 @@ describe('user-settings.service', () => {
         opusModelId: 'not-allowed',
         sonnetModelId: 'databricks-claude-sonnet-custom',
         haikuModelId: null,
+        claudeLanguage: null,
         allowedTools: null,
         disallowedTools: null,
       },
@@ -133,6 +136,7 @@ describe('user-settings.service', () => {
     expect(settings.opus_model_id).toBe(DEFAULT_MODEL_SETTINGS.default_opus_model);
     expect(settings.sonnet_model_id).toBe('databricks-claude-sonnet-custom');
     expect(settings.haiku_model_id).toBe(DEFAULT_MODEL_SETTINGS.default_haiku_model);
+    expect(settings.claude_language).toBeNull();
     expect(settings.allowed_tools).toEqual(CLAUDE_CODE_PRESET_TOOLS);
     expect(settings.disallowed_tools).toEqual([]);
   });
@@ -144,6 +148,7 @@ describe('user-settings.service', () => {
         opusModelId: null,
         sonnetModelId: null,
         haikuModelId: null,
+        claudeLanguage: 'japanese',
         allowedTools: ['Read', 'WebSearch', 'Bash(*)'],
         disallowedTools: ['Bash', 'mcp__dbsql__*', '*'],
       },
@@ -153,6 +158,43 @@ describe('user-settings.service', () => {
 
     expect(settings.allowed_tools).toEqual(['Read', 'WebSearch', 'Bash(*)']);
     expect(settings.disallowed_tools).toEqual(['Bash', 'mcp__dbsql__*', '*']);
+    expect(settings.claude_language).toBe('japanese');
+  });
+
+  it('normalizes stored Claude response language settings on read', async () => {
+    const fastify = createMockFastify([
+      {
+        userId: 'user-1',
+        opusModelId: null,
+        sonnetModelId: null,
+        haikuModelId: null,
+        claudeLanguage: 'Japanese',
+        allowedTools: null,
+        disallowedTools: null,
+      },
+    ]);
+
+    const settings = await getUserSettings(fastify, 'user-1');
+
+    expect(settings.claude_language).toBe('japanese');
+  });
+
+  it('falls back to default for invalid stored Claude response language settings', async () => {
+    const fastify = createMockFastify([
+      {
+        userId: 'user-1',
+        opusModelId: null,
+        sonnetModelId: null,
+        haikuModelId: null,
+        claudeLanguage: '   ',
+        allowedTools: null,
+        disallowedTools: null,
+      },
+    ]);
+
+    const settings = await getUserSettings(fastify, 'user-1');
+
+    expect(settings.claude_language).toBeNull();
   });
 
   it('reads settings for the requested user from the mock transaction', async () => {
@@ -162,6 +204,7 @@ describe('user-settings.service', () => {
         opusModelId: null,
         sonnetModelId: null,
         haikuModelId: null,
+        claudeLanguage: null,
         allowedTools: ['Read'],
         disallowedTools: ['Bash'],
       },
@@ -170,6 +213,7 @@ describe('user-settings.service', () => {
         opusModelId: null,
         sonnetModelId: 'databricks-claude-sonnet-custom',
         haikuModelId: null,
+        claudeLanguage: 'english',
         allowedTools: ['Write'],
         disallowedTools: ['WebSearch'],
       },
@@ -178,6 +222,7 @@ describe('user-settings.service', () => {
     const settings = await getUserSettings(fastify, 'user-2');
 
     expect(settings.sonnet_model_id).toBe('databricks-claude-sonnet-custom');
+    expect(settings.claude_language).toBe('english');
     expect(settings.allowed_tools).toEqual(['Write']);
     expect(settings.disallowed_tools).toEqual(['WebSearch']);
   });
@@ -236,13 +281,23 @@ describe('user-settings.service', () => {
 
     await expect(
       updateUserSettings(fastify, 'user-1', {
+        claude_language: 'Japanese',
         allowed_tools: ['Read', 'Bash(*)'],
         disallowed_tools: ['mcp__dbsql__*', '*'],
       })
     ).resolves.toMatchObject({
+      claude_language: 'japanese',
       allowed_tools: ['Read', 'Bash(*)'],
       disallowed_tools: ['mcp__dbsql__*', '*'],
     });
+  });
+
+  it('rejects blank Claude response language settings', async () => {
+    const fastify = createMockFastify();
+
+    await expect(updateUserSettings(fastify, 'user-1', { claude_language: '   ' })).rejects.toThrow(
+      'claude_language must be a non-empty string or null'
+    );
   });
 
   it('upserts personal settings', async () => {
@@ -256,6 +311,7 @@ describe('user-settings.service', () => {
     await updateUserSettings(fastify, 'user-1', {
       opus_model_id: DEFAULT_MODEL_SETTINGS.default_opus_model,
       haiku_model_id: null,
+      claude_language: 'japanese',
       allowed_tools: ['Read', 'WebSearch'],
       disallowed_tools: ['Bash'],
     });

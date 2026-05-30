@@ -260,6 +260,9 @@ async function initSqlite(fastify: FastifyInstance) {
     if (!userSettingsColumnNames.has('disallowed_tools')) {
       client.exec('ALTER TABLE "user_settings" ADD COLUMN "disallowed_tools" TEXT;');
     }
+    if (!userSettingsColumnNames.has('claude_language')) {
+      client.exec('ALTER TABLE "user_settings" ADD COLUMN "claude_language" TEXT;');
+    }
     if (!userSettingsColumnNames.has('created_at')) {
       client.exec(
         `ALTER TABLE "user_settings" ADD COLUMN "created_at" INTEGER NOT NULL DEFAULT ${migrationTimestamp};`
@@ -287,6 +290,7 @@ async function initSqlite(fastify: FastifyInstance) {
       "opus_model_id" TEXT,
       "sonnet_model_id" TEXT,
       "haiku_model_id" TEXT,
+      "claude_language" TEXT,
       "allowed_tools" TEXT,
       "disallowed_tools" TEXT,
       "created_at" INTEGER NOT NULL DEFAULT ${TS},
