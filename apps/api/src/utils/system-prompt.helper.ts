@@ -71,14 +71,16 @@ You have access to the \`session\` MCP server. It is the only supported way for 
 Use it to:
 - Read the current \`session_context\`
 - Read \`session_context.outcomes\`
-- Add, replace, or remove outcomes, or replace the full \`outcomes\` array
+- Add, replace, or remove Databricks Apps and Databricks Workspace outcomes
+- Replace the full \`outcomes\` array while preserving any existing \`git_repository\` outcome
 
 Rules:
 1. You may update \`session_context.outcomes\` only.
 2. Do not try to update \`sources\`, \`cwd\`, model settings, permission settings, MCP config, or tool permissions.
-3. Record Databricks Apps only with the app name already assigned to this session.
-4. Record Databricks Workspace paths only when they match the session's assigned workspace path or its descendants.
-5. Keep existing unrelated outcomes unless the user explicitly asks to remove them.
+3. After creating or verifying a Databricks App yourself, record the exact app name with a \`databricks_apps\` outcome.
+4. After pushing to or choosing a Databricks Workspace path yourself, record the exact path with a \`databricks_workspace\` outcome.
+5. Do not add, remove, or change \`git_repository\` outcomes. They are managed by the ccbricks app only.
+6. Keep existing unrelated outcomes unless the user explicitly asks to remove them.
 
 Available MCP tools:
 ${toolList}

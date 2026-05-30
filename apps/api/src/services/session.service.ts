@@ -259,14 +259,6 @@ function findDatabricksWorkspaceOutcome(
   return findDatabricksWorkspaceOutcomeInOutcomes(context.outcomes);
 }
 
-function findGitRepositoryOutcomeInOutcomes(
-  outcomes: readonly ResolvedSessionOutcome[]
-): GitRepositoryOutcome | undefined {
-  return outcomes.find(
-    (outcome): outcome is GitRepositoryOutcome => outcome.type === 'git_repository'
-  );
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -423,100 +415,55 @@ function validateSessionOutcomesForContext(
   }
 }
 
-function trimWorkspacePathForComparison(workspacePath: string): string {
-  return workspacePath.length > 1 ? workspacePath.replace(/\/+$/g, '') : workspacePath;
-}
-
-function isWorkspacePathWithinOrEqual(workspacePath: string, parentPath: string): boolean {
-  const normalizedWorkspacePath = trimWorkspacePathForComparison(workspacePath);
-  const normalizedParentPath = trimWorkspacePathForComparison(parentPath);
-  return (
-    normalizedWorkspacePath === normalizedParentPath ||
-    normalizedWorkspacePath.startsWith(`${normalizedParentPath}/`)
-  );
-}
-
-function getContextManagerAllowedWorkspacePath(
-  ccbricksAppName: string,
-  sessionId: SessionId,
-  currentContext: SessionContextResponse
-): string {
-  const existingWorkspaceOutcome = findDatabricksWorkspaceOutcome(currentContext);
-  if (existingWorkspaceOutcome) return existingWorkspaceOutcome.path;
-
-  try {
-    return buildDefaultSessionWorkspacePath(ccbricksAppName, sessionId);
-  } catch (error) {
-    throw new SessionContextUpdateError(errorMessage(error));
-  }
-}
-
-function validateContextManagerWorkspaceOutcome(params: {
-  ccbricksAppName: string;
-  sessionId: SessionId;
-  currentContext: SessionContextResponse;
-  nextOutcomes: ResolvedSessionOutcome[];
-}): void {
-  const nextWorkspaceOutcome = findDatabricksWorkspaceOutcomeInOutcomes(params.nextOutcomes);
-  if (!nextWorkspaceOutcome) return;
-
-  const allowedPath = getContextManagerAllowedWorkspacePath(
-    params.ccbricksAppName,
-    params.sessionId,
-    params.currentContext
-  );
-  if (!isWorkspacePathWithinOrEqual(nextWorkspaceOutcome.path, allowedPath)) {
-    throw new SessionContextUpdateError(
-      `databricks_workspace outcome path must stay under this session workspace path: ${allowedPath}`
-    );
-  }
-}
-
-function validateContextManagerAppsOutcome(params: {
-  currentContext: SessionContextResponse;
-  nextOutcomes: ResolvedSessionOutcome[];
-}): void {
-  const nextAppsOutcome = findDatabricksAppsOutcomeInOutcomes(params.nextOutcomes);
-  if (!nextAppsOutcome) return;
-
-  const existingAppsOutcome = findDatabricksAppsOutcome(params.currentContext);
-  if (!existingAppsOutcome) {
-    throw new SessionContextUpdateError(
-      'databricks_apps outcome can only use the Databricks App already assigned to this session'
-    );
-  }
-  if (nextAppsOutcome.name !== existingAppsOutcome.name) {
-    throw new SessionContextUpdateError(
-      `databricks_apps outcome name must match this session's assigned app: ${existingAppsOutcome.name}`
-    );
-  }
-}
-
-function validateContextManagerGitOutcome(params: {
-  currentContext: SessionContextResponse;
-  nextOutcomes: ResolvedSessionOutcome[];
-}): void {
-  const gitSources = params.currentContext.sources.filter(
-    (source): source is GitRepositorySource => source.type === 'git_repository'
-  );
-  const gitOutcome = findGitRepositoryOutcomeInOutcomes(params.nextOutcomes);
-  if (gitSources.length === 1 && gitOutcome && gitOutcome.git_info.repo === undefined) {
-    throw new SessionContextUpdateError(
-      'git_repository outcome git_info.repo is required for single-repository sessions'
-    );
-  }
-}
-
 function validateSessionOutcomesForContextManager(params: {
-  ccbricksAppName: string;
-  sessionId: SessionId;
   currentContext: SessionContextResponse;
   nextOutcomes: ResolvedSessionOutcome[];
 }): void {
+  validateContextManagerGitOutcome(params.currentContext, params.nextOutcomes);
   validateSessionOutcomesForContext(params.currentContext.sources, params.nextOutcomes);
-  validateContextManagerWorkspaceOutcome(params);
-  validateContextManagerAppsOutcome(params);
-  validateContextManagerGitOutcome(params);
+}
+
+function getGitRepositoryOutcomes(
+  outcomes: readonly ResolvedSessionOutcome[]
+): GitRepositoryOutcome[] {
+  return outcomes.filter(
+    (outcome): outcome is GitRepositoryOutcome => outcome.type === 'git_repository'
+  );
+}
+
+function areGitRepositoryOutcomesEqual(
+  currentOutcome: GitRepositoryOutcome,
+  nextOutcome: GitRepositoryOutcome
+): boolean {
+  const currentInfo = currentOutcome.git_info;
+  const nextInfo = nextOutcome.git_info;
+  return (
+    currentInfo.type === nextInfo.type &&
+    currentInfo.repo === nextInfo.repo &&
+    currentInfo.branches.length === nextInfo.branches.length &&
+    currentInfo.branches.every((branch, index) => branch === nextInfo.branches[index])
+  );
+}
+
+function validateContextManagerGitOutcome(
+  currentContext: SessionContextResponse,
+  nextOutcomes: ResolvedSessionOutcome[]
+): void {
+  const currentGitOutcomes = getGitRepositoryOutcomes(currentContext.outcomes);
+  const nextGitOutcomes = getGitRepositoryOutcomes(nextOutcomes);
+  if (currentGitOutcomes.length !== nextGitOutcomes.length) {
+    throw new SessionContextUpdateError(
+      'git_repository outcomes can only be configured by the app'
+    );
+  }
+
+  for (let index = 0; index < currentGitOutcomes.length; index += 1) {
+    if (!areGitRepositoryOutcomesEqual(currentGitOutcomes[index], nextGitOutcomes[index])) {
+      throw new SessionContextUpdateError(
+        'git_repository outcomes can only be configured by the app'
+      );
+    }
+  }
 }
 
 function upsertOutcome(
@@ -1615,8 +1562,6 @@ async function updateSessionOutcomesForContextManager(
       const currentContext = sessionRow.context;
       const nextOutcomes = deriveOutcomes(currentContext);
       validateSessionOutcomesForContextManager({
-        ccbricksAppName: fastify.config.DATABRICKS_APP_NAME,
-        sessionId,
         currentContext,
         nextOutcomes,
       });
@@ -1673,6 +1618,11 @@ export async function upsertSessionOutcomeForContextManager(
 ): Promise<SessionResponse> {
   return updateSessionOutcomesForContextManager(fastify, userId, sessionId, currentContext => {
     const normalizedOutcome = normalizeSessionOutcome(outcome);
+    if (normalizedOutcome.type === 'git_repository') {
+      throw new SessionContextUpdateError(
+        'git_repository outcomes can only be configured by the app'
+      );
+    }
     return upsertOutcome(currentContext.outcomes, normalizedOutcome);
   });
 }
@@ -1684,7 +1634,13 @@ export async function removeSessionOutcomeForContextManager(
   outcomeType: unknown
 ): Promise<SessionResponse> {
   return updateSessionOutcomesForContextManager(fastify, userId, sessionId, currentContext => {
-    return removeOutcomeByType(currentContext.outcomes, normalizeOutcomeType(outcomeType));
+    const normalizedOutcomeType = normalizeOutcomeType(outcomeType);
+    if (normalizedOutcomeType === 'git_repository') {
+      throw new SessionContextUpdateError(
+        'git_repository outcomes can only be configured by the app'
+      );
+    }
+    return removeOutcomeByType(currentContext.outcomes, normalizedOutcomeType);
   });
 }
 

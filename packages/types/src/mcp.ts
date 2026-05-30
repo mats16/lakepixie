@@ -1,4 +1,9 @@
-import type { ResolvedSessionOutcome, SessionContextResponse } from './session.js';
+import type {
+  DatabricksWorkspaceSource,
+  ResolvedDatabricksAppsOutcome,
+  ResolvedSessionOutcome,
+  SessionContextResponse,
+} from './session.js';
 
 // =====================================================
 // Genie Space Types (Databricks API)
@@ -65,18 +70,22 @@ export interface SetOutcomesRequest {
   outcomes: ResolvedSessionOutcome[];
 }
 
+export type ContextManagerMutableOutcome =
+  | DatabricksWorkspaceSource
+  | ResolvedDatabricksAppsOutcome;
+
 /**
  * mcp__session__upsert_outcome のリクエスト
  */
 export interface UpsertOutcomeRequest {
-  outcome: ResolvedSessionOutcome;
+  outcome: ContextManagerMutableOutcome;
 }
 
 /**
  * mcp__session__remove_outcome のリクエスト
  */
 export interface RemoveOutcomeRequest {
-  type: ResolvedSessionOutcome['type'];
+  type: ContextManagerMutableOutcome['type'];
 }
 
 /**

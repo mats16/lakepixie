@@ -37,9 +37,15 @@ interface ContextManagerMcpHandlers {
 }
 
 const outcomeTypeSchema = z.enum(['databricks_workspace', 'databricks_apps', 'git_repository']);
+const mutableOutcomeTypeSchema = z.enum(['databricks_workspace', 'databricks_apps']);
 const outcomeSchema = z
   .object({
     type: outcomeTypeSchema,
+  })
+  .passthrough();
+const mutableOutcomeSchema = z
+  .object({
+    type: mutableOutcomeTypeSchema,
   })
   .passthrough();
 const contextManagerMcpWriteTools = new Set<string>(CONTEXT_MANAGER_MCP_WRITE_TOOLS);
@@ -117,7 +123,7 @@ export function createContextManagerMcpServer(handlers: ContextManagerMcpHandler
     {
       title: 'Set session outcomes',
       description:
-        'Replace session_context.outcomes after validation. No other session_context fields can be changed.',
+        'Replace session_context.outcomes after validation. Databricks Apps and Workspace outcomes may change; git_repository outcomes must be preserved.',
       inputSchema: {
         outcomes: z.array(outcomeSchema).describe('Complete replacement outcomes array.'),
       },
@@ -138,9 +144,9 @@ export function createContextManagerMcpServer(handlers: ContextManagerMcpHandler
     {
       title: 'Upsert session outcome',
       description:
-        'Add or replace one outcome by outcome.type after validation. No other session_context fields can be changed.',
+        'Add or replace one Databricks Apps or Workspace outcome by outcome.type after validation. git_repository outcomes cannot be changed through MCP.',
       inputSchema: {
-        outcome: outcomeSchema.describe('Outcome object to add or replace by type.'),
+        outcome: mutableOutcomeSchema.describe('Outcome object to add or replace by type.'),
       },
       annotations: {
         readOnlyHint: false,
@@ -159,9 +165,9 @@ export function createContextManagerMcpServer(handlers: ContextManagerMcpHandler
     {
       title: 'Remove session outcome',
       description:
-        'Remove outcomes matching a type after validation. No other session_context fields can be changed.',
+        'Remove Databricks Apps or Workspace outcomes matching a type after validation. git_repository outcomes cannot be removed through MCP.',
       inputSchema: {
-        type: outcomeTypeSchema.describe('Outcome type to remove.'),
+        type: mutableOutcomeTypeSchema.describe('Outcome type to remove.'),
       },
       annotations: {
         readOnlyHint: false,

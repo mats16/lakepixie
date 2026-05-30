@@ -655,47 +655,26 @@ describe('session.service', () => {
       ).toThrow('exactly one branch');
     });
 
-    it('should restrict context manager outcomes to session assignments', () => {
-      const sessionId = new SessionId();
-      const workspacePath = __testing.buildDefaultSessionWorkspacePath('ccbricks-dev', sessionId);
+    it('should allow context manager to record agent-created app and workspace outcomes', () => {
       const context: SessionContextResponse = {
         cwd: '/home/app/sessions/session-test',
         model: 'claude-sonnet-4-6',
         sources: [],
-        outcomes: [{ type: 'databricks_apps', name: 'assigned-app' }],
+        outcomes: [],
       };
 
       expect(() =>
         __testing.validateSessionOutcomesForContextManager({
-          ccbricksAppName: 'ccbricks-dev',
-          sessionId,
           currentContext: context,
           nextOutcomes: [
-            { type: 'databricks_apps', name: 'assigned-app' },
-            { type: 'databricks_workspace', path: `${workspacePath}/deploy` },
+            { type: 'databricks_apps', name: 'demo-app' },
+            { type: 'databricks_workspace', path: '/Workspace/Users/test@example.com/demo-app' },
           ],
         })
       ).not.toThrow();
-      expect(() =>
-        __testing.validateSessionOutcomesForContextManager({
-          ccbricksAppName: 'ccbricks-dev',
-          sessionId,
-          currentContext: context,
-          nextOutcomes: [{ type: 'databricks_apps', name: 'other-app' }],
-        })
-      ).toThrow('assigned app');
-      expect(() =>
-        __testing.validateSessionOutcomesForContextManager({
-          ccbricksAppName: 'ccbricks-dev',
-          sessionId,
-          currentContext: context,
-          nextOutcomes: [{ type: 'databricks_workspace', path: '/Workspace/Users/other/project' }],
-        })
-      ).toThrow('session workspace path');
     });
 
-    it('should require git repo identity for context manager single-repository outcomes', () => {
-      const sessionId = new SessionId();
+    it('should keep git repository outcomes app-managed for context manager updates', () => {
       const source = {
         allow_unrestricted_git_push: true,
         revision: 'refs/heads/main',
@@ -703,43 +682,50 @@ describe('session.service', () => {
         type: 'git_repository' as const,
         url: 'https://github.com/acme/widgets.git',
       };
+      const gitOutcome = {
+        type: 'git_repository' as const,
+        git_info: {
+          type: 'github' as const,
+          repo: 'acme/widgets',
+          branches: ['ccbricks/test-branch'],
+        },
+      };
       const context: SessionContextResponse = {
         cwd: '/home/app/sessions/session-test',
         model: 'claude-sonnet-4-6',
         sources: [source],
-        outcomes: [],
+        outcomes: [gitOutcome],
       };
 
       expect(() =>
         __testing.validateSessionOutcomesForContextManager({
-          ccbricksAppName: 'ccbricks-dev',
-          sessionId,
           currentContext: context,
-          nextOutcomes: [
-            {
-              type: 'git_repository',
-              git_info: { type: 'github', branches: ['ccbricks/test-branch'] },
-            },
-          ],
-        })
-      ).toThrow('git_info.repo is required');
-      expect(() =>
-        __testing.validateSessionOutcomesForContextManager({
-          ccbricksAppName: 'ccbricks-dev',
-          sessionId,
-          currentContext: context,
-          nextOutcomes: [
-            {
-              type: 'git_repository',
-              git_info: {
-                type: 'github',
-                repo: 'acme/widgets',
-                branches: ['ccbricks/test-branch'],
-              },
-            },
-          ],
+          nextOutcomes: [gitOutcome, { type: 'databricks_apps', name: 'demo-app' }],
         })
       ).not.toThrow();
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          currentContext: context,
+          nextOutcomes: [
+            {
+              ...gitOutcome,
+              git_info: { ...gitOutcome.git_info, branches: ['ccbricks/other-branch'] },
+            },
+          ],
+        })
+      ).toThrow('git_repository outcomes can only be configured by the app');
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          currentContext: context,
+          nextOutcomes: [],
+        })
+      ).toThrow('git_repository outcomes can only be configured by the app');
+      expect(() =>
+        __testing.validateSessionOutcomesForContextManager({
+          currentContext: { ...context, sources: [], outcomes: [] },
+          nextOutcomes: [gitOutcome],
+        })
+      ).toThrow('git_repository outcomes can only be configured by the app');
     });
 
     it('should export workspace sources except when exactly one git source is present', () => {

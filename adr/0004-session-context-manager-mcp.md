@@ -21,7 +21,7 @@ Outcome updates are validated by the backend before persistence:
 - `databricks_workspace` outcomes must have a valid Workspace path.
 - `databricks_apps` outcomes must have a valid resolved app name.
 - At most one Workspace outcome and one Apps outcome may be present.
-- Git outcomes must remain consistent with the session's Git sources.
+- `git_repository` outcomes cannot be added, removed, or changed through this MCP server. They are configured only by the application session flow.
 
 After a successful outcome update, the backend broadcasts a `session_context_updated` message over the existing session stream so the UI can update its displayed session state.
 
