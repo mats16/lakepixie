@@ -112,7 +112,15 @@ export function GitRepositoryStatusBar({
   const [localDiff, setLocalDiff] = useState<GitRepositoryDiffResponse | null>(null);
   const [pull, setPull] = useState<GitRepositoryPullRequest | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [isPullRequestMenuOpen, setIsPullRequestMenuOpen] = useState(false);
+  const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [pendingPullRequestDraft, setPendingPullRequestDraft] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!isHidden) return;
+    setIsPullRequestMenuOpen(false);
+    setIsBranchMenuOpen(false);
+  }, [isHidden]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -237,7 +245,10 @@ export function GitRepositoryStatusBar({
       >
         {t('gitStatus.createPullRequest')}
       </Button>
-      <DropdownMenu>
+      <DropdownMenu
+        open={isPullRequestMenuOpen && !isHidden}
+        onOpenChange={open => setIsPullRequestMenuOpen(!isHidden && open)}
+      >
         <DropdownMenuTrigger asChild>
           <Button
             type="button"
@@ -324,7 +335,10 @@ export function GitRepositoryStatusBar({
                 </TooltipContent>
               </Tooltip>
 
-              <DropdownMenu>
+              <DropdownMenu
+                open={isBranchMenuOpen && !isHidden}
+                onOpenChange={open => setIsBranchMenuOpen(!isHidden && open)}
+              >
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
