@@ -46,7 +46,7 @@ interface GitRepositoryStatusBarProps {
   sessionTitle?: string;
   diffRefreshKey?: number;
   remoteRefreshKey?: number;
-  bottomClassName?: string;
+  isHidden?: boolean;
 }
 
 function repositoryFullName(owner: string, repo: string): string {
@@ -104,7 +104,7 @@ export function GitRepositoryStatusBar({
   sessionTitle,
   diffRefreshKey = 0,
   remoteRefreshKey = 0,
-  bottomClassName = 'pb-[7.5rem]',
+  isHidden = false,
 }: GitRepositoryStatusBarProps) {
   const { t, i18n } = useTranslation();
   const fullName = repositoryFullName(owner, repo);
@@ -273,8 +273,8 @@ export function GitRepositoryStatusBar({
     <>
       <div
         className={cn(
-          'absolute bottom-0 left-0 right-0 px-4 pointer-events-none z-10',
-          bottomClassName
+          'absolute bottom-0 left-0 right-0 z-10 px-4 pb-[7.5rem] pointer-events-none',
+          isHidden && 'hidden'
         )}
       >
         <div className="w-full max-w-[735px] mx-auto pointer-events-auto">

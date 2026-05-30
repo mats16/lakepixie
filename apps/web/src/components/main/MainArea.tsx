@@ -96,17 +96,17 @@ type GitNewSessionSourceSelection = Extract<NewSessionSourceSelection, { type: '
 function getMessageBottomPaddingClassName({
   hasActiveExitPlan,
   isExitPlanSuggestOpen,
-  hasVisibleGitRepositoryStatus,
+  hasGitRepositoryStatus,
 }: {
   hasActiveExitPlan: boolean;
   isExitPlanSuggestOpen: boolean;
-  hasVisibleGitRepositoryStatus: boolean;
+  hasGitRepositoryStatus: boolean;
 }): string {
   if (hasActiveExitPlan && isExitPlanSuggestOpen) {
     return MESSAGE_PADDING_EXIT_PLAN_SUGGEST;
   }
 
-  if (hasActiveExitPlan || hasVisibleGitRepositoryStatus) {
+  if (hasActiveExitPlan || hasGitRepositoryStatus) {
     return MESSAGE_PADDING_FLOATING;
   }
 
@@ -430,11 +430,10 @@ export function MainArea({
     };
   }, [gitRepositoryOutcome, activeSession?.session_context?.sources]);
 
-  const visibleGitRepositoryStatus = activeExitPlan ? null : gitRepositoryStatus;
   const messageBottomPaddingClassName = getMessageBottomPaddingClassName({
     hasActiveExitPlan: activeExitPlan !== null,
     isExitPlanSuggestOpen,
-    hasVisibleGitRepositoryStatus: visibleGitRepositoryStatus !== null,
+    hasGitRepositoryStatus: gitRepositoryStatus !== null,
   });
   const { openWorkspace, isOpeningWorkspace } = useOpenWorkspace(databricksWorkspaceOutcome?.path);
 
@@ -798,17 +797,18 @@ export function MainArea({
             onPlanModeChange={handlePlanModeChange}
           />
         )}
-        {visibleGitRepositoryStatus && (
+        {gitRepositoryStatus && (
           <GitRepositoryStatusBar
-            key={`${sessionId ?? 'new'}:${visibleGitRepositoryStatus.owner}/${visibleGitRepositoryStatus.repo}:${visibleGitRepositoryStatus.headBranch}:${visibleGitRepositoryStatus.baseBranch}`}
+            key={`${sessionId ?? 'new'}:${gitRepositoryStatus.owner}/${gitRepositoryStatus.repo}:${gitRepositoryStatus.headBranch}:${gitRepositoryStatus.baseBranch}`}
             sessionId={sessionId}
-            owner={visibleGitRepositoryStatus.owner}
-            repo={visibleGitRepositoryStatus.repo}
-            headBranch={visibleGitRepositoryStatus.headBranch}
-            baseBranch={visibleGitRepositoryStatus.baseBranch}
+            owner={gitRepositoryStatus.owner}
+            repo={gitRepositoryStatus.repo}
+            headBranch={gitRepositoryStatus.headBranch}
+            baseBranch={gitRepositoryStatus.baseBranch}
             sessionTitle={activeSession?.title ?? undefined}
             diffRefreshKey={gitDiffRefreshKey}
             remoteRefreshKey={gitRepositoryStatusRefreshKey}
+            isHidden={activeExitPlan !== null}
           />
         )}
       </div>

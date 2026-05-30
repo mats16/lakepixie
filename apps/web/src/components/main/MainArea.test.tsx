@@ -156,7 +156,11 @@ vi.mock('./ExitPlanModeInputArea', async () => {
 vi.mock('./GitRepositoryStatusBar', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
   return {
-    GitRepositoryStatusBar: () => React.createElement('div', { 'data-testid': 'git-status-bar' }),
+    GitRepositoryStatusBar: ({ isHidden }: { isHidden?: boolean }) =>
+      React.createElement('div', {
+        'data-testid': 'git-status-bar',
+        'data-hidden': isHidden ? 'true' : 'false',
+      }),
   };
 });
 
@@ -183,18 +187,18 @@ describe('MainArea git repository status', () => {
   it('shows the git status bar for a git repository session', () => {
     render(<MainArea />);
 
-    expect(screen.getByTestId('git-status-bar')).toBeTruthy();
+    expect(screen.getByTestId('git-status-bar').getAttribute('data-hidden')).toBe('false');
     expect(screen.getByTestId('message-area').getAttribute('data-bottom-padding')).toBe('pb-36');
     expect(screen.queryByTestId('exit-plan-input')).toBeNull();
   });
 
-  it('hides the git status bar while exit plan approval is pending', async () => {
+  it('keeps the git status mounted but hidden while exit plan approval is pending', async () => {
     emitExitPlanMode.value = true;
 
     render(<MainArea />);
 
     expect(await screen.findByTestId('exit-plan-input')).toBeTruthy();
-    expect(screen.queryByTestId('git-status-bar')).toBeNull();
+    expect(screen.getByTestId('git-status-bar').getAttribute('data-hidden')).toBe('true');
     expect(screen.getByTestId('message-area').getAttribute('data-bottom-padding')).toBe('pb-36');
   });
 });
