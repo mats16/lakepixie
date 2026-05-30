@@ -84,8 +84,8 @@ import {
 } from './user-settings.service.js';
 import { createStopHookGitCheck } from './stop-hook-git-check.service.js';
 import {
-  CONTEXT_MANAGER_MCP_ALLOWED_TOOLS,
   CONTEXT_MANAGER_MCP_SERVER_ID,
+  CONTEXT_MANAGER_MCP_TOOLS,
   createContextManagerMcpServer,
   isContextManagerMcpWriteTool,
 } from './context-manager-mcp.service.js';
@@ -1084,13 +1084,13 @@ function isContextManagerMcpTool(tool: string): boolean {
   return (
     tool === `mcp__${CONTEXT_MANAGER_MCP_SERVER_ID}` ||
     tool === `${serverToolPrefix}*` ||
-    CONTEXT_MANAGER_MCP_ALLOWED_TOOLS.includes(tool) ||
+    CONTEXT_MANAGER_MCP_TOOLS.includes(tool) ||
     tool.startsWith(serverToolPrefix)
   );
 }
 
 function patternAffectsContextManagerMcpTools(pattern: string): boolean {
-  return CONTEXT_MANAGER_MCP_ALLOWED_TOOLS.some(tool => toolPatternMatches(pattern, tool));
+  return CONTEXT_MANAGER_MCP_TOOLS.some(tool => toolPatternMatches(pattern, tool));
 }
 
 function removeContextManagerMcpDisallowPatterns(params: {
@@ -1878,10 +1878,7 @@ async function startQueryPipeline(params: StartQueryPipelineParams): Promise<voi
       requestedAllowedTools: sessionContext.allowed_tools,
       requestedDisallowedTools: sessionContext.disallowed_tools,
     });
-    const allowedTools = uniqueTools([
-      ...effectiveToolSettings.allowed_tools,
-      ...CONTEXT_MANAGER_MCP_ALLOWED_TOOLS,
-    ]);
+    const allowedTools = effectiveToolSettings.allowed_tools;
     const disallowedTools = removeContextManagerMcpDisallowPatterns({
       allowedTools,
       disallowedTools: effectiveToolSettings.disallowed_tools,
@@ -3124,9 +3121,7 @@ export async function archiveSession(
     }
 
     // 4. Databricks App を削除（outcomes に databricks_apps がある場合、トランザクション外で非同期実行）
-    const appsOutcome = context
-      ? findDatabricksAppsOutcomeInOutcomes(context.outcomes)
-      : undefined;
+    const appsOutcome = context ? findDatabricksAppsOutcomeInOutcomes(context.outcomes) : undefined;
     if (appsOutcome) {
       const authProvider = getAuthProvider(fastify);
       const appsClient = new DatabricksAppsClient(authProvider);

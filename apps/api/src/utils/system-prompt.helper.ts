@@ -6,11 +6,9 @@ import type {
   ResolvedSessionOutcome,
   SessionSource,
 } from '@repo/types';
-import { CONTEXT_MANAGER_MCP_ALLOWED_TOOLS } from '../services/context-manager-mcp.service.js';
+import { CONTEXT_MANAGER_MCP_TOOLS } from '../services/context-manager-mcp.service.js';
 
-const CONTEXT_MANAGER_TOOL_LIST = CONTEXT_MANAGER_MCP_ALLOWED_TOOLS.map(
-  tool => `- \`${tool}\``
-).join('\n');
+const CONTEXT_MANAGER_TOOL_LIST = CONTEXT_MANAGER_MCP_TOOLS.map(tool => `- \`${tool}\``).join('\n');
 
 const CONTEXT_MANAGER_INSTRUCTION = `
 ## ccbricks Session Context Manager

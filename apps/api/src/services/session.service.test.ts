@@ -387,12 +387,7 @@ describe('session.service', () => {
     it('keeps the internal session MCP server out of deny patterns', () => {
       expect(
         __testing.removeContextManagerMcpDisallowPatterns({
-          allowedTools: [
-            'Read',
-            'mcp__dbsql__*',
-            'mcp__session__set_outcomes',
-            'mcp__session__upsert_outcome',
-          ],
+          allowedTools: ['Read', 'mcp__dbsql__*'],
           disallowedTools: [
             'Bash',
             'mcp__session',

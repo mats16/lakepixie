@@ -21,7 +21,7 @@ function toQualifiedContextManagerToolName(toolName: string): string {
   return `mcp__${CONTEXT_MANAGER_MCP_SERVER_ID}__${toolName}`;
 }
 
-export const CONTEXT_MANAGER_MCP_ALLOWED_TOOLS = CONTEXT_MANAGER_TOOL_NAMES.map(
+export const CONTEXT_MANAGER_MCP_TOOLS = CONTEXT_MANAGER_TOOL_NAMES.map(
   toQualifiedContextManagerToolName
 );
 
