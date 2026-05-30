@@ -59,7 +59,7 @@ function jsonContent(payload: unknown) {
     content: [
       {
         type: 'text' as const,
-        text: JSON.stringify(payload, null, 2),
+        text: JSON.stringify(payload),
       },
     ],
   };
@@ -183,3 +183,7 @@ export function createContextManagerMcpServer(handlers: ContextManagerMcpHandler
 
   return server;
 }
+
+export const __testing = {
+  jsonContent,
+};
