@@ -77,8 +77,8 @@ beforeEach(async () => {
   });
 });
 
-function renderStatusBar(props: Partial<ComponentProps<typeof GitRepositoryStatusBar>> = {}) {
-  return render(
+function statusBarElement(props: Partial<ComponentProps<typeof GitRepositoryStatusBar>> = {}) {
+  return (
     <I18nextProvider i18n={i18n}>
       <TooltipProvider delayDuration={0}>
         <GitRepositoryStatusBar
@@ -93,6 +93,10 @@ function renderStatusBar(props: Partial<ComponentProps<typeof GitRepositoryStatu
       </TooltipProvider>
     </I18nextProvider>
   );
+}
+
+function renderStatusBar(props: Partial<ComponentProps<typeof GitRepositoryStatusBar>> = {}) {
+  return render(statusBarElement(props));
 }
 
 function deferred<T>() {
@@ -425,26 +429,73 @@ describe('GitRepositoryStatusBar', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Create PR' }));
     expect(await screen.findByRole('dialog')).toBeTruthy();
 
-    rerender(
-      <I18nextProvider i18n={i18n}>
-        <TooltipProvider delayDuration={0}>
-          <GitRepositoryStatusBar
-            sessionId="019729a8-0000-7000-8000-000000000000"
-            owner="acme"
-            repo="widgets"
-            headBranch="ccbricks/test"
-            baseBranch="main"
-            sessionTitle="Update widgets"
-            isHidden
-          />
-        </TooltipProvider>
-      </I18nextProvider>
-    );
+    rerender(statusBarElement({ isHidden: true }));
 
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('Generate PR metadata')).toBeTruthy();
     expect(mockGitRepositoryService.getBranch).toHaveBeenCalledTimes(1);
     expect(mockSessionService.getGitDiff).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes portaled status bar menus while the status bar is hidden', async () => {
+    mockGitRepositoryService.getBranch.mockResolvedValue({
+      name: 'ccbricks/test',
+      html_url: 'https://github.com/acme/widgets/tree/ccbricks%2Ftest',
+      compare: null,
+    });
+    mockGitRepositoryService.listPullRequests.mockResolvedValue({ pulls: [] });
+    mockSessionService.getGitDiff.mockResolvedValue(gitDiff());
+
+    const { rerender } = renderStatusBar({ isHidden: false });
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Pull request options' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect(await screen.findByText('Create draft PR')).toBeTruthy();
+
+    rerender(statusBarElement({ isHidden: true }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Create draft PR')).toBeNull();
+      expect(screen.queryByText('Create PR manually')).toBeNull();
+    });
+
+    rerender(statusBarElement({ isHidden: false }));
+
+    expect(screen.queryByText('Create draft PR')).toBeNull();
+    expect(screen.queryByText('Create PR manually')).toBeNull();
+  });
+
+  it('closes the portaled branch menu while the status bar is hidden', async () => {
+    mockGitRepositoryService.getBranch.mockResolvedValue({
+      name: 'ccbricks/test',
+      html_url: 'https://github.com/acme/widgets/tree/ccbricks%2Ftest',
+      compare: null,
+    });
+    mockGitRepositoryService.listPullRequests.mockResolvedValue({ pulls: [] });
+    mockSessionService.getGitDiff.mockResolvedValue(gitDiff());
+
+    const { rerender } = renderStatusBar({ isHidden: false });
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'ccbricks/test' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect(await screen.findByText('Copy branch name')).toBeTruthy();
+    expect(screen.getByText('Open branch on GitHub')).toBeTruthy();
+
+    rerender(statusBarElement({ isHidden: true }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Copy branch name')).toBeNull();
+      expect(screen.queryByText('Open branch on GitHub')).toBeNull();
+    });
+
+    rerender(statusBarElement({ isHidden: false }));
+
+    expect(screen.queryByText('Copy branch name')).toBeNull();
+    expect(screen.queryByText('Open branch on GitHub')).toBeNull();
   });
 
   it('creates a draft pull request from the split button menu', async () => {
