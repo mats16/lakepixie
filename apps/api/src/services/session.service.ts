@@ -90,6 +90,7 @@ interface ActiveSessionQuery {
 
 /** セッションID → 実行中 SDK query のマッピング（abort / control request 用） */
 const activeSessionQueries = new Map<string, ActiveSessionQuery>();
+let isServerShuttingDown = false;
 const QUEUED_USER_EVENT_SUBTYPE = 'queued';
 const USER_ABORT_MESSAGE_TEXT = '[Request aborted by user]';
 const SYSTEM_SHUTDOWN_ABORT_MESSAGE_TEXT = '[Agent execution interrupted: server is shutting down]';
@@ -1040,7 +1041,8 @@ async function processAllEvents(
           fastify,
           userId,
           sessionId,
-          pendingSdkSessionId
+          pendingSdkSessionId,
+          { claimQueuedMessage: !isServerShuttingDown }
         );
         if (queuedResume) {
           await startQueryPipeline({
@@ -1067,7 +1069,8 @@ async function completeRunAndClaimQueuedMessage(
   fastify: FastifyInstance,
   userId: string,
   sessionId: SessionId,
-  pendingSdkSessionId: string | null
+  pendingSdkSessionId: string | null,
+  options: { claimQueuedMessage?: boolean } = {}
 ): Promise<QueuedUserMessageResume | null> {
   return fastify.withUserContext(userId, async tx => {
     const [sessionRow] = await tx
@@ -1086,42 +1089,44 @@ async function completeRunAndClaimQueuedMessage(
 
     const effectiveSdkSessionId = pendingSdkSessionId ?? sessionRow.sdkSessionId;
 
-    const [queuedEvent] = await tx
-      .select({
-        uuid: sessionEvents.uuid,
-        message: sessionEvents.message,
-      })
-      .from(sessionEvents)
-      .where(
-        and(
-          eq(sessionEvents.sessionId, sessionId.toUUID()),
-          eq(sessionEvents.type, 'user'),
-          eq(sessionEvents.subtype, QUEUED_USER_EVENT_SUBTYPE)
-        )
-      )
-      .orderBy(asc(sessionEvents.createdAt))
-      .limit(1);
-
-    if (queuedEvent && effectiveSdkSessionId) {
-      await tx
-        .update(sessionEvents)
-        .set({ subtype: null })
-        .where(eq(sessionEvents.uuid, queuedEvent.uuid));
-
-      await tx
-        .update(sessions)
-        .set({
-          status: 'running',
-          sdkSessionId: effectiveSdkSessionId,
-          updatedAt: new Date(),
+    if (options.claimQueuedMessage ?? true) {
+      const [queuedEvent] = await tx
+        .select({
+          uuid: sessionEvents.uuid,
+          message: sessionEvents.message,
         })
-        .where(eq(sessions.id, sessionId.toUUID()));
+        .from(sessionEvents)
+        .where(
+          and(
+            eq(sessionEvents.sessionId, sessionId.toUUID()),
+            eq(sessionEvents.type, 'user'),
+            eq(sessionEvents.subtype, QUEUED_USER_EVENT_SUBTYPE)
+          )
+        )
+        .orderBy(asc(sessionEvents.createdAt))
+        .limit(1);
 
-      return {
-        userMessage: queuedEvent.message as SDKUserMessage,
-        sessionContext: sessionRow.context as SessionContextResponse,
-        sdkSessionId: effectiveSdkSessionId,
-      };
+      if (queuedEvent && effectiveSdkSessionId) {
+        await tx
+          .update(sessionEvents)
+          .set({ subtype: null })
+          .where(eq(sessionEvents.uuid, queuedEvent.uuid));
+
+        await tx
+          .update(sessions)
+          .set({
+            status: 'running',
+            sdkSessionId: effectiveSdkSessionId,
+            updatedAt: new Date(),
+          })
+          .where(eq(sessions.id, sessionId.toUUID()));
+
+        return {
+          userMessage: queuedEvent.message as SDKUserMessage,
+          sessionContext: sessionRow.context as SessionContextResponse,
+          sdkSessionId: effectiveSdkSessionId,
+        };
+      }
     }
 
     await tx
@@ -2786,6 +2791,7 @@ export async function executeAbort(
  * EventBatcher の onClose より先に呼び出される前提で、保存は既存のイベントバッファに任せる。
  */
 export async function abortActiveSessionsForShutdown(fastify: FastifyInstance): Promise<void> {
+  isServerShuttingDown = true;
   const activeQueries = [...activeSessionQueries.entries()];
   if (activeQueries.length === 0) return;
 
@@ -2831,9 +2837,13 @@ export const __testing = {
   validateGitRepositoryUrl,
   validateSparseCheckoutPath,
   handleCanUseTool,
+  completeRunAndClaimQueuedMessage,
   USER_ABORT_MESSAGE_TEXT,
   SYSTEM_SHUTDOWN_ABORT_MESSAGE_TEXT,
-  clearActiveSessionQueries: () => activeSessionQueries.clear(),
+  clearActiveSessionQueries: () => {
+    activeSessionQueries.clear();
+    isServerShuttingDown = false;
+  },
   clearDatabricksAppCreateLocks: () => databricksAppOperationLocks.clear(),
   acquireDatabricksAppCreateLock,
   registerActiveSessionQuery: (

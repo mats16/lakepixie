@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionContextResponse } from '@repo/types';
 import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -1222,6 +1222,105 @@ describe('session.service', () => {
 
       expect(wsManager.broadcast).not.toHaveBeenCalled();
       expect(enqueueSessionEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('completeRunAndClaimQueuedMessage', () => {
+    const userId = 'user-123';
+
+    function createQueuedResumeFastify() {
+      const sessionContext = {} as SessionContextResponse;
+      const userMessage = {
+        type: 'user',
+        uuid: '019bdf24-b923-7aaa-918c-8ce71422def1',
+        session_id: 'session-id',
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'queued prompt' }],
+        },
+      } as SDKUserMessage;
+      const sessionRow = {
+        sdkSessionId: 'sdk-session-id',
+        status: 'running',
+        context: sessionContext,
+      };
+      const queuedEvent = {
+        uuid: 'queued-event-uuid',
+        message: userMessage,
+      };
+      const sessionSelectLimit = vi.fn().mockResolvedValue([sessionRow]);
+      const queuedSelectLimit = vi.fn().mockResolvedValue([queuedEvent]);
+      const select = vi
+        .fn()
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: sessionSelectLimit,
+            }),
+          }),
+        })
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              orderBy: vi.fn().mockReturnValue({
+                limit: queuedSelectLimit,
+              }),
+            }),
+          }),
+        });
+      const update = vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(undefined),
+        }),
+      });
+      const tx = { select, update };
+      const withUserContext = vi.fn(
+        async (_userId: string, callback: (transaction: typeof tx) => Promise<unknown>) =>
+          callback(tx)
+      );
+      const fastify = {
+        withUserContext,
+      } as unknown as FastifyInstance;
+
+      return { fastify, select, update, sessionContext, userMessage };
+    }
+
+    it('should claim queued message when queued resume is enabled', async () => {
+      const sessionId = new SessionId();
+      const { fastify, select, update, sessionContext, userMessage } = createQueuedResumeFastify();
+
+      const result = await __testing.completeRunAndClaimQueuedMessage(
+        fastify,
+        userId,
+        sessionId,
+        null
+      );
+
+      expect(result).toEqual({
+        userMessage,
+        sessionContext,
+        sdkSessionId: 'sdk-session-id',
+      });
+      expect(select).toHaveBeenCalledTimes(2);
+      expect(update).toHaveBeenCalledTimes(2);
+    });
+
+    it('should not claim queued message when queued resume is disabled', async () => {
+      const sessionId = new SessionId();
+      const { fastify, select, update } = createQueuedResumeFastify();
+
+      const result = await __testing.completeRunAndClaimQueuedMessage(
+        fastify,
+        userId,
+        sessionId,
+        null,
+        { claimQueuedMessage: false }
+      );
+
+      expect(result).toBeNull();
+      expect(select).toHaveBeenCalledTimes(1);
+      expect(update).toHaveBeenCalledTimes(1);
     });
   });
 
