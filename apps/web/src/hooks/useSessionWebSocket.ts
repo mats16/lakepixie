@@ -9,6 +9,7 @@ import type {
   WsAskUserQuestionRequest,
   WsExitPlanModeRequest,
   WsExitPlanModeResponseRequest,
+  WsSessionContextUpdatedMessage,
   UserMessageContentBlock,
 } from '@repo/types';
 import {
@@ -24,6 +25,7 @@ interface UseSessionWebSocketOptions {
   onConnected?: (message: WsConnectedMessage) => void;
   onAskUserQuestion?: (request: WsAskUserQuestionRequest) => void;
   onExitPlanMode?: (request: WsExitPlanModeRequest) => void;
+  onSessionContextUpdated?: (message: WsSessionContextUpdatedMessage) => void;
   onError?: (error: Error) => void;
 }
 
@@ -55,6 +57,7 @@ export function useSessionWebSocket({
   onConnected,
   onAskUserQuestion,
   onExitPlanMode,
+  onSessionContextUpdated,
   onError,
 }: UseSessionWebSocketOptions): UseSessionWebSocketReturn {
   const [isConnected, setIsConnected] = useState(false);
@@ -74,6 +77,7 @@ export function useSessionWebSocket({
   const onConnectedRef = useRef(onConnected);
   const onAskUserQuestionRef = useRef(onAskUserQuestion);
   const onExitPlanModeRef = useRef(onExitPlanMode);
+  const onSessionContextUpdatedRef = useRef(onSessionContextUpdated);
   const onErrorRef = useRef(onError);
 
   // 毎レンダリングで ref を更新
@@ -81,6 +85,7 @@ export function useSessionWebSocket({
   onConnectedRef.current = onConnected;
   onAskUserQuestionRef.current = onAskUserQuestion;
   onExitPlanModeRef.current = onExitPlanMode;
+  onSessionContextUpdatedRef.current = onSessionContextUpdated;
   onErrorRef.current = onError;
 
   const connect = useCallback(() => {
@@ -152,6 +157,8 @@ export function useSessionWebSocket({
           onAskUserQuestionRef.current?.(message as WsAskUserQuestionRequest);
         } else if (message.type === 'exit_plan_mode') {
           onExitPlanModeRef.current?.(message as WsExitPlanModeRequest);
+        } else if (message.type === 'session_context_updated') {
+          onSessionContextUpdatedRef.current?.(message as WsSessionContextUpdatedMessage);
         } else if ('session_id' in message) {
           // SDKMessage - ref 経由で最新のコールバックを呼び出す
           onEventRef.current?.(message as SDKMessage);

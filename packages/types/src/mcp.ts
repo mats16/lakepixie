@@ -1,4 +1,4 @@
-import type { SessionOutcome } from './session.js';
+import type { ResolvedSessionOutcome, SessionContextResponse } from './session.js';
 
 // =====================================================
 // Genie Space Types (Databricks API)
@@ -45,28 +45,47 @@ export interface McpConfig {
 // =====================================================
 
 /**
- * mcp__ctx__get_outcomes のレスポンス
+ * mcp__ccbricks_context__get_session_context のレスポンス
+ */
+export interface GetSessionContextResponse {
+  session_context: SessionContextResponse;
+}
+
+/**
+ * mcp__ccbricks_context__get_outcomes のレスポンス
  */
 export interface GetOutcomesResponse {
-  outcomes: SessionOutcome[];
+  outcomes: ResolvedSessionOutcome[];
 }
 
 /**
- * mcp__ctx__update_outcome のリクエスト
+ * mcp__ccbricks_context__set_outcomes のリクエスト
  */
-export interface UpdateOutcomeRequest {
-  /** 更新対象の outcome のインデックス */
-  index: number;
-  /** 新しい outcome データ */
-  outcome: SessionOutcome;
+export interface SetOutcomesRequest {
+  outcomes: ResolvedSessionOutcome[];
 }
 
 /**
- * mcp__ctx__update_outcome のレスポンス
+ * mcp__ccbricks_context__upsert_outcome のリクエスト
  */
-export interface UpdateOutcomeResponse {
+export interface UpsertOutcomeRequest {
+  outcome: ResolvedSessionOutcome;
+}
+
+/**
+ * mcp__ccbricks_context__remove_outcome のリクエスト
+ */
+export interface RemoveOutcomeRequest {
+  type: ResolvedSessionOutcome['type'];
+}
+
+/**
+ * outcomes 更新系 MCP tool のレスポンス
+ */
+export interface UpdateOutcomesResponse {
   success: boolean;
-  outcomes: SessionOutcome[];
+  outcomes: ResolvedSessionOutcome[];
+  session_context: SessionContextResponse;
 }
 
 // =====================================================

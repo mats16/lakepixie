@@ -7,6 +7,7 @@ export type SseEventName =
   | 'message'
   | 'ask_user_question'
   | 'exit_plan_mode'
+  | 'session_context_updated'
   | 'control_response'
   | 'error';
 
@@ -26,6 +27,7 @@ function getEventName(message: WsServerMessage | SDKMessage): SseEventName {
   if (message.type === 'connected') return 'connected';
   if (message.type === 'ask_user_question') return 'ask_user_question';
   if (message.type === 'exit_plan_mode') return 'exit_plan_mode';
+  if (message.type === 'session_context_updated') return 'session_context_updated';
   if (message.type === 'control_response') return 'control_response';
   if (message.type === 'error') return 'error';
   return 'message';

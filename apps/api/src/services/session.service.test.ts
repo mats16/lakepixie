@@ -63,6 +63,7 @@ import {
   applySessionFlagSettings,
   canAbortSession,
   executeAbort,
+  SessionContextUpdateError,
   setSessionModel,
   setSessionPermissionMode,
 } from './session.service.js';
@@ -585,6 +586,60 @@ describe('session.service', () => {
           [{ ...outcome, git_info: { ...outcome.git_info, repo: 'acme/other' } }]
         )
       ).toThrow('must match');
+    });
+
+    it('should normalize and validate context manager outcomes', () => {
+      const source = {
+        allow_unrestricted_git_push: true,
+        revision: 'refs/heads/main',
+        sparse_checkout_paths: [],
+        type: 'git_repository' as const,
+        url: 'https://github.com/acme/widgets.git',
+      };
+      const outcomes = __testing.normalizeSessionOutcomes([
+        { type: 'databricks_workspace', path: '/Workspace/Shared/app' },
+        { type: 'databricks_apps', name: 'generated-app' },
+        {
+          type: 'git_repository',
+          git_info: {
+            type: 'github',
+            repo: 'acme/widgets',
+            branches: ['ccbricks/test-branch'],
+          },
+        },
+      ]);
+
+      expect(outcomes).toEqual([
+        { type: 'databricks_workspace', path: '/Workspace/Shared/app' },
+        { type: 'databricks_apps', name: 'generated-app' },
+        {
+          type: 'git_repository',
+          git_info: {
+            type: 'github',
+            repo: 'acme/widgets',
+            branches: ['ccbricks/test-branch'],
+          },
+        },
+      ]);
+      expect(() => __testing.validateSessionOutcomesForContext([source], outcomes)).not.toThrow();
+    });
+
+    it('should reject invalid context manager outcome updates', () => {
+      expect(() =>
+        __testing.normalizeSessionOutcomes([{ type: 'databricks_workspace', path: '../bad' }])
+      ).toThrow(SessionContextUpdateError);
+      expect(() =>
+        __testing.normalizeSessionOutcomes([{ type: 'databricks_apps', name: 'Bad_Name' }])
+      ).toThrow('databricks_apps outcome name');
+      expect(() =>
+        __testing.validateSessionOutcomesForContext(
+          [],
+          [
+            { type: 'databricks_workspace', path: '/Workspace/one' },
+            { type: 'databricks_workspace', path: '/Workspace/two' },
+          ]
+        )
+      ).toThrow('Only one Databricks Workspace outcome');
     });
 
     it('should export workspace sources except when exactly one git source is present', () => {

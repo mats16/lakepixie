@@ -16,6 +16,7 @@ import {
   type UserMessageContentBlock,
   type WsAskUserQuestionRequest,
   type WsExitPlanModeRequest,
+  type WsSessionContextUpdatedMessage,
   type WsEffortLevel,
 } from '@repo/types';
 import { MainHeader } from './MainHeader';
@@ -191,6 +192,7 @@ export function MainArea({
   const {
     session,
     updateSession,
+    replaceSession,
     refetch: refetchSession,
     isLoading: isSessionLoading,
     error: sessionLoadError,
@@ -245,6 +247,14 @@ export function MainArea({
     }, GIT_DIFF_REFRESH_DEBOUNCE_MS);
   }, []);
 
+  const handleSessionContextUpdated = useCallback(
+    (message: WsSessionContextUpdatedMessage) => {
+      if (message.session_id !== sessionId) return;
+      replaceSession(message.session);
+    },
+    [replaceSession, sessionId]
+  );
+
   useEffect(() => {
     return () => {
       if (gitDiffRefreshTimerRef.current) {
@@ -283,6 +293,7 @@ export function MainArea({
     onExitPlanMode: handleExitPlanMode,
     onGitDiffRefreshNeeded: handleGitDiffRefreshNeeded,
     onGitRepositoryStatusRefreshNeeded: handleGitRepositoryStatusRefreshNeeded,
+    onSessionContextUpdated: handleSessionContextUpdated,
   });
 
   const submitAnswer = useCallback(

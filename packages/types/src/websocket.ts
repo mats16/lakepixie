@@ -2,7 +2,12 @@
  * WebSocket 関連の型定義
  */
 
-import type { SDKMessage, SDKUserMessage, SDKAuthStatusMessage } from './session.js';
+import type {
+  SDKMessage,
+  SDKUserMessage,
+  SDKAuthStatusMessage,
+  SessionResponse,
+} from './session.js';
 
 // SDKMessage, SDKUserMessage, SDKAuthStatusMessage を re-export（WebSocket でも使用）
 export type { SDKMessage, SDKUserMessage, SDKAuthStatusMessage };
@@ -152,6 +157,15 @@ export interface WsExitPlanModeRequest {
 }
 
 /**
+ * セッションコンテキスト更新通知（サーバー -> クライアント）
+ */
+export interface WsSessionContextUpdatedMessage {
+  type: 'session_context_updated';
+  session_id: string;
+  session: SessionResponse;
+}
+
+/**
  * WebSocket サーバー -> クライアントメッセージ
  */
 export type WsServerMessage =
@@ -161,7 +175,8 @@ export type WsServerMessage =
   | WsErrorMessage
   | WsControlResponse
   | WsAskUserQuestionRequest
-  | WsExitPlanModeRequest;
+  | WsExitPlanModeRequest
+  | WsSessionContextUpdatedMessage;
 
 /**
  * WebSocket KeepAlive メッセージ（クライアント -> サーバー）
