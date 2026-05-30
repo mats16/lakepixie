@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
+import path from 'node:path';
 import type {
   HookCallback,
   HookInput,
@@ -44,6 +46,23 @@ function isStopHookInput(input: HookInput): input is StopHookInput {
 function parsePositiveCount(stdout: string): number {
   const count = Number.parseInt(stdout.trim(), 10);
   return Number.isFinite(count) && count > 0 ? count : 0;
+}
+
+async function resolveComparablePath(filePath: string): Promise<string> {
+  try {
+    return await realpath(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+async function isSameFilesystemPath(left: string, right: string): Promise<boolean> {
+  if (left === '') return false;
+  const [resolvedLeft, resolvedRight] = await Promise.all([
+    resolveComparablePath(left),
+    resolveComparablePath(right),
+  ]);
+  return resolvedLeft === resolvedRight;
 }
 
 async function countUnpushedCommits(
@@ -130,8 +149,12 @@ export async function runStopHookGitCheck(
   const { cwd } = input;
   const signal = options.signal;
 
-  const gitDir = await git(['rev-parse', '--git-dir'], { cwd, signal });
-  if (gitDir.exitCode !== 0) return continueHook();
+  const gitRoot = await git(['rev-parse', '--show-toplevel'], { cwd, signal });
+  const gitRootPath = gitRoot.stdout.trim();
+  const isSessionGitRoot = await isSameFilesystemPath(gitRootPath, cwd);
+  if (gitRoot.exitCode !== 0 || !isSessionGitRoot) {
+    return continueHook();
+  }
 
   const remotes = await git(['remote'], { cwd, signal });
   if (remotes.stdout.trim() === '') return continueHook();
