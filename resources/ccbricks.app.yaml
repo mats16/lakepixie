@@ -4,6 +4,7 @@ resources:
       name: ccbricks-${bundle.target}
       description: Claude Code on Databricks
       source_code_path: ../
+      compute_size: LARGE
       resources:
         - name: lakebase
           postgres:
@@ -31,17 +32,17 @@ resources:
         - level: CAN_USE
           group_name: users
 
-  postgres_projects:
-    ccbricks_db:
-      project_id: ccbricks-db-${bundle.target}
-      display_name: 'ccbricks Database ${bundle.target}'
-      pg_version: 17
-      default_endpoint_settings:
-        autoscaling_limit_min_cu: 0.5
-        autoscaling_limit_max_cu: 4
-        suspend_timeout_duration: '300s'
-      custom_tags:
-        - key: Project
-          value: ccbricks
-        - key: Environment
-          value: ${bundle.target}
+  #postgres_projects:
+  #  ccbricks_db:
+  #    project_id: ccbricks-db-${bundle.target}
+  #    display_name: 'ccbricks Database ${bundle.target}'
+  #    pg_version: 17
+  #    default_endpoint_settings:
+  #      autoscaling_limit_min_cu: 0.5
+  #      autoscaling_limit_max_cu: 4
+  #      suspend_timeout_duration: '300s'
+  #    custom_tags:
+  #      - key: Project
+  #        value: ccbricks
+  #      - key: Environment
+  #        value: ${bundle.target}
