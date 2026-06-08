@@ -11,6 +11,7 @@ import type {
   TelemetrySchemaListResponse,
   TelemetrySetupRequest,
   TelemetrySetupResponse,
+  DatabricksSecretScopeResponse,
   ApiError,
 } from '@repo/types';
 import { adminGuard } from '../hooks/admin-guard.js';
@@ -27,6 +28,7 @@ import {
   updateGitHubOAuthAdminSettings,
 } from '../services/github-oauth.service.js';
 import { DatabricksSecretsPermissionError } from '../services/databricks-secrets.service.js';
+import { getAppSecretScope } from '../services/encryption-key.service.js';
 import { getGitHubOAuthRedirectUri } from './github-oauth.js';
 import {
   listTelemetryCatalogs,
@@ -316,6 +318,16 @@ const adminRoute: FastifyPluginAsync = async fastify => {
       return reply.status(apiError.statusCode).send(apiError);
     }
   });
+
+  fastify.get<{ Reply: DatabricksSecretScopeResponse }>(
+    '/admin/databricks/secrets/scope',
+    { preHandler: guard },
+    () => {
+      return {
+        app_secret_scope: getAppSecretScope(fastify),
+      };
+    }
+  );
 
   // GitHub OAuth 設定取得（client secret は返さない）
   fastify.get<{ Reply: GitHubOAuthAdminResponse | ApiError }>(

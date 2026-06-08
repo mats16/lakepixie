@@ -99,7 +99,7 @@ function AdminSidebarContent() {
 
   const navItems: AdminNavItem[] = [
     { path: '/admin/general', label: t('admin.general'), icon: Settings },
-    { path: '/admin/repo', label: t('admin.repositories'), icon: Blocks },
+    { path: '/admin/integration', label: t('admin.integration'), icon: Blocks },
     { path: '/admin/monitoring', label: t('admin.monitoring'), icon: Activity },
     { path: '/admin/branding', label: t('admin.branding'), icon: Palette },
     { path: '/admin/users', label: t('admin.userManagement'), icon: UsersRound },

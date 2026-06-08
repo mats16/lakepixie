@@ -1,6 +1,7 @@
 import type {
   AdminUserListResponse,
   AppSettingsResponse,
+  DatabricksSecretScopeResponse,
   GitHubOAuthAdminResponse,
   GitHubOAuthEncryptionKeyRotateResponse,
   ServingEndpointsByTier,
@@ -43,6 +44,9 @@ export const adminService = {
       method: 'POST',
       body: JSON.stringify(settings),
     }),
+
+  getDatabricksSecretScope: () =>
+    apiClient<DatabricksSecretScopeResponse>('/api/admin/databricks/secrets/scope'),
 
   getGitHubOAuth: () => apiClient<GitHubOAuthAdminResponse>('/api/admin/github/oauth'),
 

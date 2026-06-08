@@ -414,9 +414,8 @@ async function updateGitHubOAuthClientId(
 
 async function getGitHubOAuthClientSecret(fastify: FastifyInstance): Promise<string | null> {
   try {
-    return (
-      await getSecret(fastify, getAppSecretScope(fastify), GITHUB_OAUTH_CLIENT_SECRET_KEY)
-    ).trim();
+    const scope = getAppSecretScope(fastify);
+    return (await getSecret(fastify, scope, GITHUB_OAUTH_CLIENT_SECRET_KEY)).trim();
   } catch (error) {
     if (error instanceof DatabricksSecretNotFoundError) return null;
     throw error;
@@ -501,10 +500,11 @@ export async function updateGitHubOAuthAdminSettings(
 
   if (request.client_secret !== undefined) {
     const value = request.client_secret?.trim() ?? '';
+    const scope = getAppSecretScope(fastify);
     if (value) {
-      await putSecret(fastify, getAppSecretScope(fastify), GITHUB_OAUTH_CLIENT_SECRET_KEY, value);
+      await putSecret(fastify, scope, GITHUB_OAUTH_CLIENT_SECRET_KEY, value);
     } else {
-      await deleteSecret(fastify, getAppSecretScope(fastify), GITHUB_OAUTH_CLIENT_SECRET_KEY);
+      await deleteSecret(fastify, scope, GITHUB_OAUTH_CLIENT_SECRET_KEY);
     }
   }
 

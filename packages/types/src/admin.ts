@@ -81,3 +81,7 @@ export interface TelemetrySetupResponse {
   experiment_id: string;
   experiment_path: string;
 }
+
+export interface DatabricksSecretScopeResponse {
+  app_secret_scope: string;
+}
