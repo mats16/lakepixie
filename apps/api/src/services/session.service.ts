@@ -2089,6 +2089,8 @@ async function cloneGitRepositorySource(
     ? await createGitHubUserGitAuthEnvironment(fastify, userId, source.url, gitAccessToken)
     : null;
   try {
+    const gitOptions = { timeout: GIT_COMMAND_TIMEOUT_MS, env: gitAuth?.env };
+    const gitCwdOptions = { ...gitOptions, cwd };
     await spawnAsync(
       'git',
       [
@@ -2102,28 +2104,23 @@ async function cloneGitRepositorySource(
         source.url,
         cwd,
       ],
-      { timeout: GIT_COMMAND_TIMEOUT_MS, env: gitAuth?.env }
+      gitOptions
     );
+
+    if (source.sparse_checkout_paths.length > 0) {
+      await spawnAsync('git', ['sparse-checkout', 'init', '--cone'], gitCwdOptions);
+      await spawnAsync(
+        'git',
+        ['sparse-checkout', 'set', ...source.sparse_checkout_paths],
+        gitCwdOptions
+      );
+    }
+
+    await spawnAsync('git', ['checkout'], gitCwdOptions);
+    await spawnAsync('git', ['checkout', '-B', targetBranch], gitCwdOptions);
   } finally {
     await gitAuth?.cleanup();
   }
-
-  if (source.sparse_checkout_paths.length > 0) {
-    await spawnAsync('git', ['sparse-checkout', 'init', '--cone'], {
-      cwd,
-      timeout: GIT_COMMAND_TIMEOUT_MS,
-    });
-    await spawnAsync('git', ['sparse-checkout', 'set', ...source.sparse_checkout_paths], {
-      cwd,
-      timeout: GIT_COMMAND_TIMEOUT_MS,
-    });
-  }
-
-  await spawnAsync('git', ['checkout'], { cwd, timeout: GIT_COMMAND_TIMEOUT_MS });
-  await spawnAsync('git', ['checkout', '-B', targetBranch], {
-    cwd,
-    timeout: GIT_COMMAND_TIMEOUT_MS,
-  });
 }
 
 /**

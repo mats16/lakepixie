@@ -449,19 +449,88 @@ describe('session.service', () => {
           'https://github.com/aws-startup-community/aws-startup-case-studies-jp',
           '/tmp/session-cwd',
         ],
-        expect.objectContaining({ shell: false })
+        expect.objectContaining({ env: undefined, shell: false })
       );
       expect(mockSpawn).toHaveBeenNthCalledWith(
         2,
         'git',
         ['checkout'],
-        expect.objectContaining({ cwd: '/tmp/session-cwd', shell: false })
+        expect.objectContaining({ cwd: '/tmp/session-cwd', env: undefined, shell: false })
       );
       expect(mockSpawn).toHaveBeenNthCalledWith(
         3,
         'git',
         ['checkout', '-B', 'ccbricks/hobe-piyp-fuga'],
-        expect.objectContaining({ cwd: '/tmp/session-cwd', shell: false })
+        expect.objectContaining({ cwd: '/tmp/session-cwd', env: undefined, shell: false })
+      );
+    });
+
+    it('should keep temporary git authentication through sparse checkout and checkout', async () => {
+      const fastify = createMockFastify();
+
+      await __testing.cloneGitRepositorySource(
+        'test-user-id',
+        {
+          allow_unrestricted_git_push: true,
+          revision: 'refs/heads/main',
+          sparse_checkout_paths: ['apps/api'],
+          type: 'git_repository',
+          url: 'https://github.com/acme/private-repo',
+        },
+        {
+          type: 'git_repository',
+          git_info: {
+            type: 'github',
+            repo: 'acme/private-repo',
+            branches: ['ccbricks/test-branch'],
+          },
+        },
+        '/tmp/session-cwd',
+        fastify,
+        'github-user-token'
+      );
+
+      const authenticatedGitSpawnOptions = {
+        env: expect.objectContaining({
+          GIT_TERMINAL_PROMPT: '0',
+          GITHUB_OAUTH_TOKEN: 'github-user-token',
+        }),
+        shell: false,
+      };
+      const authenticatedCwdGitSpawnOptions = expect.objectContaining({
+        cwd: '/tmp/session-cwd',
+        ...authenticatedGitSpawnOptions,
+      });
+
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        1,
+        'git',
+        expect.any(Array),
+        expect.objectContaining(authenticatedGitSpawnOptions)
+      );
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        2,
+        'git',
+        ['sparse-checkout', 'init', '--cone'],
+        authenticatedCwdGitSpawnOptions
+      );
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        3,
+        'git',
+        ['sparse-checkout', 'set', 'apps/api'],
+        authenticatedCwdGitSpawnOptions
+      );
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        4,
+        'git',
+        ['checkout'],
+        authenticatedCwdGitSpawnOptions
+      );
+      expect(mockSpawn).toHaveBeenNthCalledWith(
+        5,
+        'git',
+        ['checkout', '-B', 'ccbricks/test-branch'],
+        authenticatedCwdGitSpawnOptions
       );
     });
 
