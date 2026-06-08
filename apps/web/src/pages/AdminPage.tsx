@@ -18,6 +18,7 @@ import {
 import type {
   AdminUserInfo,
   AppSettingsResponse,
+  DatabricksSecretScopeResponse,
   GitHubOAuthAdminResponse,
   ServingEndpointsByTier,
   UpdateAppSettingsRequest,
@@ -192,6 +193,37 @@ function useGitHubOAuth() {
     isRotatingEncryptionKey,
     rotateEncryptionKey,
     saveGitHubOAuth,
+  };
+}
+
+function useDatabricksSecretScope() {
+  const { t } = useTranslation();
+  const [secretScope, setSecretScope] = useState<DatabricksSecretScopeResponse | null>(null);
+  const [isLoadingSecretScope, setIsLoadingSecretScope] = useState(true);
+  const [isSecretScopeError, setIsSecretScopeError] = useState(false);
+
+  const fetchSecretScope = useCallback(async () => {
+    try {
+      setIsLoadingSecretScope(true);
+      setIsSecretScopeError(false);
+      const data = await adminService.getDatabricksSecretScope();
+      setSecretScope(data);
+    } catch {
+      setIsSecretScopeError(true);
+      toast.error(t('admin.fetchDatabricksSecretScopeError'));
+    } finally {
+      setIsLoadingSecretScope(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    fetchSecretScope();
+  }, [fetchSecretScope]);
+
+  return {
+    secretScope,
+    isLoadingSecretScope,
+    isSecretScopeError,
   };
 }
 
@@ -829,7 +861,7 @@ function AdminMonitoringContent({
   );
 }
 
-function AdminRepositoryContent() {
+function AdminIntegrationContent() {
   const { t } = useTranslation();
   const {
     githubOAuth,
@@ -839,6 +871,7 @@ function AdminRepositoryContent() {
     rotateEncryptionKey,
     saveGitHubOAuth,
   } = useGitHubOAuth();
+  const { secretScope, isLoadingSecretScope, isSecretScopeError } = useDatabricksSecretScope();
 
   const [clientIdInput, setClientIdInput] = useState('');
   const [clientSecretInput, setClientSecretInput] = useState('');
@@ -1013,9 +1046,31 @@ function AdminRepositoryContent() {
             </div>
           </div>
           <div className="mt-6 mb-4">
-            <h2 className="text-lg font-semibold">{t('admin.encryptionConfiguration')}</h2>
+            <h2 className="text-lg font-semibold">{t('admin.databricksSecretsConfiguration')}</h2>
           </div>
-          <div className="border border-border rounded-lg p-4">
+          <div className="border border-border rounded-lg p-4 space-y-4">
+            <p className="text-xs text-muted-foreground">
+              {t('admin.databricksSecretsDescription')}
+            </p>
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('admin.databricksAppSecretScope')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t('admin.databricksAppSecretScopeDescription')}
+                </p>
+              </div>
+              <div className="w-full max-w-md rounded-md border border-border bg-muted px-3 py-2 font-mono text-xs xl:w-[380px]">
+                {isLoadingSecretScope ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                ) : isSecretScopeError ? (
+                  <span className="font-sans text-destructive">
+                    {t('admin.fetchDatabricksSecretScopeError')}
+                  </span>
+                ) : (
+                  (secretScope?.app_secret_scope ?? '-')
+                )}
+              </div>
+            </div>
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -1356,7 +1411,7 @@ function AdminUsersContent({
   );
 }
 
-type AdminTab = 'general' | 'repo' | 'monitoring' | 'branding' | 'users';
+type AdminTab = 'general' | 'integration' | 'monitoring' | 'branding' | 'users';
 
 function getAdminTab(pathname: string): AdminTab {
   switch (pathname) {
@@ -1366,8 +1421,8 @@ function getAdminTab(pathname: string): AdminTab {
       return 'branding';
     case '/admin/monitoring':
       return 'monitoring';
-    case '/admin/repo':
-      return 'repo';
+    case '/admin/integration':
+      return 'integration';
     default:
       return 'general';
   }
@@ -1389,8 +1444,8 @@ function AdminContentPanels() {
       <div className={activeTab === 'general' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
         {mounted.has('general') && <AdminGeneralContent {...adminSettings} />}
       </div>
-      <div className={activeTab === 'repo' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
-        {mounted.has('repo') && <AdminRepositoryContent />}
+      <div className={activeTab === 'integration' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
+        {mounted.has('integration') && <AdminIntegrationContent />}
       </div>
       <div className={activeTab === 'monitoring' ? 'min-h-0 flex-1 flex flex-col' : 'hidden'}>
         {mounted.has('monitoring') && <AdminMonitoringContent {...adminSettings} />}
