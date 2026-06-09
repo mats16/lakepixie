@@ -1,47 +1,50 @@
-# 外部 API 連携ガイド
+# 外部セッション API 連携ガイド
 
 [English](../en/integration.md)
 
-このドキュメントは、Databricks Apps 上で動作する ccbricks を外部システムから直接呼び出し、Claude Agent セッションとしてジョブ実行や調査を開始するためのガイドです。
+このドキュメントは、外部システムから ccbricks の `POST /api/sessions` を呼び出し、Claude Agent セッションとして作業を依頼する連携にフォーカスしたガイドです。
 
 作成日: 2026-06-09
 
-## 現状
+## スコープ
 
-- ccbricks は `/api/*` ルートを Fastify で公開しており、Databricks Apps の API token authentication で外部から呼び出せる前提です。
-- ccbricks にある Databricks Jobs 向け API は、現在 `GET /api/databricks/jobs/list` と `GET /api/databricks/jobs/runs/list` のみです。`jobs/run-now` を中継するエンドポイントは未実装です。
-- 外部から「Claude に作業させる」場合は、`POST /api/sessions` でセッションを作成し、初回ユーザーメッセージに実行したい内容を渡します。
-- 外部から「Databricks Job を起動するだけ」の場合は、ccbricks を経由せず Databricks Jobs API `POST /api/2.2/jobs/run-now` を直接呼ぶほうが単純です。
+この連携は、外部システムから Claude に次のような作業をさせたい場合に使います。
 
-## 認証と実行権限の考え方
+- Databricks Job を起動または調査し、結果を要約する
+- 失敗した run、SQL query、Workspace file、repository の状態を調査する
+- Agent が利用できる tool を使って複数ステップの Databricks 操作を実行する
+- Workspace または Git source を修正し、レビュー可能な outcome を返す
 
-外部連携では、App への入場、ccbricks 内部の実行主体、ユーザー代理トークンを分けて考えます。
+`POST /api/sessions` は非同期のタスク投入 API です。`201` が返った時点では、ccbricks がセッションを受け付けて初期化したことを意味します。Claude の作業完了を意味しません。進捗と最終回答は session stream または events から取得してください。
 
-| 観点                                      | 使われる権限                                                        | 現在の実装での扱い                                                                                            |
-| ----------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| ccbricks App への入場                     | 外部呼び出し元の OAuth token。Service Principal の M2M OAuth を推奨 | Databricks Apps のリバースプロキシが `Authorization: Bearer ...` を検証する                                   |
-| ccbricks 内から Databricks API を呼ぶ権限 | ccbricks App に割り当てられた service principal                     | `apps/api/src/lib/databricks-auth.ts` の `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` を使う           |
-| ユーザー代理トークン                      | Databricks Apps が転送する `x-forwarded-access-token`               | Workspace source の export でのみ使用。Jobs proxy や Agent 実行の Databricks API 呼び出しは基本的に App SP 側 |
+外部システムが Claude の判断を必要とせず、決定的に Databricks Job を起動するだけなら、Databricks Jobs API を直接呼んでください。現在の ccbricks には read-only の Jobs proxy endpoint はありますが、`jobs/run-now` の proxy endpoint はありません。
 
-つまり、外部の Service Principal token で ccbricks App を呼んでも、現在の ccbricks 内部実行は原則として「ccbricks App の service principal」権限で動きます。外部呼び出し元の Service Principal 権限で Databricks Jobs を起動したい場合は、ccbricks を経由せず Jobs API を直接呼ぶか、呼び出し元トークンを使う専用の中継実装を追加してください。
+## 権限モデル
 
-PAT については、Databricks workspace REST API では legacy な認証方式として使えますが、Databricks Apps の API token authentication は公式ドキュメント上 OAuth Bearer token を前提に説明されています。PAT で Databricks Apps の公開 URL を直接呼べるかは未検証です。運用前に「PAT で `/api/health` が 200 になるか」を確認してください。
+Databricks App への入場、Agent runtime の実行主体、ユーザー代理 token は分けて考えます。
+
+| 観点                                    | 使われる権限                                                        | 現在の挙動                                                                                                       |
+| --------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| ccbricks App への入場                   | 外部呼び出し元の OAuth token。Service Principal の M2M OAuth を推奨 | Databricks Apps が `Authorization: Bearer ...` を検証してから ccbricks にリクエストを渡す                        |
+| ccbricks から Databricks API を呼ぶ権限 | ccbricks App に割り当てられた service principal                     | `apps/api/src/lib/databricks-auth.ts` が `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` を使う              |
+| forwarded user token                    | Databricks Apps が転送する `x-forwarded-access-token`               | Workspace source export と一部の OBO-token MCP server 設定で使う。Service Principal 呼び出し時の挙動は未検証です |
+
+実務上は、外部の service principal が ccbricks を呼び出しても、Agent 内で行われる Databricks 操作は基本的に ccbricks App の service principal として実行されます。Databricks Job を外部呼び出し元 service principal の権限で実行する必要がある場合は、Databricks Jobs API を直接呼ぶか、呼び出し元 token を明示的に使う専用 proxy を追加してください。
+
+PAT は Databricks workspace REST API では legacy な認証方式として使えますが、Databricks Apps の公開 URL を PAT で呼べるかは未検証です。App への入場には OAuth Bearer token を推奨します。PAT を使う場合は、運用前に `/api/health` が成功するか確認してください。
 
 ## 前提条件
 
-- ccbricks App が Databricks Apps 上で起動していること
-- App に `/api/*` ルートが公開されていること
-- 外部呼び出し元の user または service principal に、対象 Databricks App の `CAN USE` 権限があること
-- Service Principal で外部から呼ぶ場合、OAuth secret が発行済みであること
-- ccbricks App の service principal に、実行したい Databricks resources への必要権限があること
-  - Jobs を実行する場合は対象 Job への実行権限
-  - SQL warehouse / Unity Catalog / Workspace file などを使う場合は、それぞれの権限
+- ccbricks が Databricks Apps 上に deploy され、起動していること
+- 外部呼び出し元 user または service principal に、対象 Databricks App の `CAN USE` 権限があること
+- Service Principal 呼び出しでは OAuth secret が発行済みであること
+- ccbricks App の service principal に、Claude に依頼する作業に必要な Databricks 権限があること
+  - 対象 Jobs の実行または閲覧権限
+  - SQL warehouses、Unity Catalog objects、Workspace files などへのアクセス権限
+- 指定する `session_context.model` が ccbricks の admin settings で許可されていること
+- Git repository sources を使う場合、想定する呼び出し経路で GitHub OAuth と repository permission が設定されていること
 
-## 方式 A: ccbricks セッションとして実行する
-
-Claude Agent に自然言語で指示を渡し、Databricks CLI / MCP / Workspace 操作を含む作業を実行させる方式です。調査、修正、複数 API の組み合わせ、結果要約が必要な場合はこちらを使います。
-
-### 1. 外部呼び出し用トークンを取得する
+## 1. App へのアクセス token を取得する
 
 Service Principal の M2M OAuth 例です。
 
@@ -58,9 +61,9 @@ export CCBRICKS_TOKEN="$(
 )"
 ```
 
-Databricks SDK を使う場合は、`WorkspaceClient().config.authenticate()` で `Authorization` ヘッダーを生成できます。
+Databricks SDK を使う場合は、`WorkspaceClient().config.authenticate()` で `Authorization` header を生成できます。
 
-### 2. 疎通確認
+## 2. ccbricks への疎通を確認する
 
 ```bash
 export CCBRICKS_APP_URL="https://<app-name>-<id>.<region>.databricksapps.com"
@@ -79,13 +82,14 @@ curl -fsS "${CCBRICKS_APP_URL}/api/health" \
 }
 ```
 
-### 3. セッションを作成して実行を開始する
+## 3. Claude Agent セッションを作成する
 
-`POST /api/sessions` は 201 を返した時点でセッション作成済みです。Claude Agent の実行はバックグラウンドで進みます。
+`POST /api/sessions` の初回 user event に、Claude に依頼したい作業を入れます。
 
 ```bash
 export JOB_ID="11223344"
-export IDEMPOTENCY_TOKEN="$(uuidgen | tr "[:upper:]" "[:lower:]")"
+export EXTERNAL_REQUEST_ID="$(uuidgen | tr "[:upper:]" "[:lower:]")"
+export JOB_IDEMPOTENCY_TOKEN="$(uuidgen | tr "[:upper:]" "[:lower:]")"
 export MESSAGE_UUID="$(uuidgen | tr "[:upper:]" "[:lower:]")"
 
 curl -fsS --request POST "${CCBRICKS_APP_URL}/api/sessions" \
@@ -93,7 +97,7 @@ curl -fsS --request POST "${CCBRICKS_APP_URL}/api/sessions" \
   -H "Content-Type: application/json" \
   --data-binary @- <<JSON | tee /tmp/ccbricks-session.json
 {
-  "title": "Run Databricks job ${JOB_ID}",
+  "title": "External request ${EXTERNAL_REQUEST_ID}: run job ${JOB_ID}",
   "events": [
     {
       "type": "event",
@@ -104,7 +108,7 @@ curl -fsS --request POST "${CCBRICKS_APP_URL}/api/sessions" \
         "parent_tool_use_id": null,
         "message": {
           "role": "user",
-          "content": "Databricks job_id=${JOB_ID} を idempotency_token=${IDEMPOTENCY_TOKEN} で起動してください。起動後、run_id、run_page_url、現在の状態を返してください。"
+          "content": "External request ${EXTERNAL_REQUEST_ID}: Databricks job_id=${JOB_ID} を idempotency_token=${JOB_IDEMPOTENCY_TOKEN} で起動してください。起動後、run_id、run_page_url、確認できた実行主体、現在の状態、発生したエラーを返してください。起動できない場合は、どの permission、tool、API call が不足しているかを具体的に説明してください。"
         }
       }
     }
@@ -122,13 +126,18 @@ curl -fsS --request POST "${CCBRICKS_APP_URL}/api/sessions" \
 JSON
 ```
 
-`session_context.model` は管理画面で許可された実モデル ID を指定します。UI も通常は選択値を `databricks-claude-sonnet-4-6` のような実モデル ID に解決してから送信します。API 側には `opus` / `sonnet` / `haiku` の短縮名を解決する後方互換がありますが、外部連携では実モデル ID を使ってください。
+重要な点:
 
-初回の `POST /api/sessions` は `{ "type": "event", "data": { ... } }` というラップされたイベント形式を使います。一方、追加指示を送る `POST /api/sessions/:id/events` は `{ "type": "user", ... }` というフラットな SDK イベント形式を使います。セッション作成用のイベントラッパーを追加メッセージに流用しないでください。
+- `session_context.model` は `databricks-claude-sonnet-4-6` のような許可済みの実モデル ID を指定します。UI も通常は選択値を実モデル ID に解決してから送ります。`sonnet` のような短縮名は後方互換用です。
+- 初回 event は `{ "type": "event", "data": { ... } }` という session-create 用の wrapper 形式です。
+- create 時の `data.session_id` は空文字で送ります。実際の session ID はレスポンスで返ります。
+- 無人実行では `permission_mode: "auto"` を使ってください。`permission_mode: "plan"` は plan approval event への応答実装が必要です。
+- runtime tool や Databricks API だけで完結する作業では、`sources: []` と `outcomes: []` で問題ありません。
+- session API 自体には idempotency key がありません。返却された session ID を保存し、client 側 timeout 時に同じ副作用のある作業を無条件で再投入しないでください。副作用のある作業では、external request ID と Databricks job idempotency token を prompt に含めてください。
 
-### 4. 結果を取得する
+## 4. Claude の進捗と最終回答を読む
 
-SSE でリアルタイムに読む場合:
+長時間セッションでは SSE を推奨します。
 
 ```bash
 export SESSION_ID="$(jq -r ".id" /tmp/ccbricks-session.json)"
@@ -137,7 +146,7 @@ curl -N "${CCBRICKS_APP_URL}/api/sessions/${SESSION_ID}/stream" \
   -H "Authorization: Bearer ${CCBRICKS_TOKEN}"
 ```
 
-ポーリングで読む場合:
+ポーリングも可能です。
 
 ```bash
 curl -fsS "${CCBRICKS_APP_URL}/api/sessions/${SESSION_ID}" \
@@ -149,21 +158,23 @@ curl -fsS "${CCBRICKS_APP_URL}/api/sessions/${SESSION_ID}/events?limit=100" \
   | jq
 ```
 
-ポーリングする場合は、2-5 秒程度の間隔とバックオフを入れてください。`session_status` が `idle`, `error`, `archived` になったら終了し、イベント取得では `after` カーソルまたはレスポンスの `last_id` を使って同じイベントを繰り返し取得しないようにしてください。長時間セッションでは SSE を推奨します。
+ポーリングする場合は、2-5 秒程度の間隔とバックオフを入れてください。`session_status` が `idle`, `error`, `archived` になったら終了します。events 取得では `after` cursor または response の `last_id` を使い、同じ event を繰り返し取得しないようにしてください。
 
 セッション状態の目安:
 
-| `session_status` | 意味                                                                |
-| ---------------- | ------------------------------------------------------------------- |
-| `init`           | セッション作成直後。workspace export / git clone / Agent 起動準備中 |
-| `running`        | Agent 実行中                                                        |
-| `idle`           | Agent 応答完了。追加メッセージを送れる                              |
-| `error`          | セットアップまたは Agent 実行でエラー                               |
-| `archived`       | アーカイブ済み                                                      |
+| `session_status` | 意味                                                                    |
+| ---------------- | ----------------------------------------------------------------------- |
+| `init`           | セッション作成直後。Workspace export、git clone、Agent 起動準備中です。 |
+| `running`        | Claude Agent が実行中です。                                             |
+| `idle`           | Claude Agent が現在の応答を完了しています。                             |
+| `error`          | setup または Agent 実行で失敗しています。                               |
+| `archived`       | セッションが archive 済みです。                                         |
 
-### 5. 追加指示や中断を送る
+Event stream には Claude Agent SDK message が流れます。外部連携では、session が `idle` になった後の最終 `assistant` または `result` message を canonical response として扱い、監査用に event log 全体を保存してください。
 
-追加メッセージ:
+## 5. 追加指示を送る
+
+追加メッセージでは、flat な SDK user event 形式を使います。create 時の `{ "type": "event", "data": ... }` wrapper は使い回さないでください。
 
 ```bash
 export NEXT_MESSAGE_UUID="$(uuidgen | tr "[:upper:]" "[:lower:]")"
@@ -181,7 +192,7 @@ curl -fsS --request POST "${CCBRICKS_APP_URL}/api/sessions/${SESSION_ID}/events"
       "parent_tool_use_id": null,
       "message": {
         "role": "user",
-        "content": "この run の完了まで監視し、失敗した場合は原因を要約してください。"
+        "content": "この run の完了まで監視を続けてください。失敗した場合は、失敗した task、error class、推奨される次の対応を特定してください。"
       }
     }
   ]
@@ -189,9 +200,9 @@ curl -fsS --request POST "${CCBRICKS_APP_URL}/api/sessions/${SESSION_ID}/events"
 JSON
 ```
 
-上記は Bash の例です。Python、JavaScript、Windows PowerShell などで実装する場合は、その実行環境で UUID を生成してください。`$(uuidgen ...)` のようなシェル式を文字列として送らないでください。
+`permission_mode: "plan"` を使う場合、呼び出し側は `exit_plan_mode` request を監視し、`exit_plan_mode_response` control request を返す必要があります。無人連携では、その approval loop を実装していない限り plan mode を避けてください。
 
-中断:
+## 6. 実行中のセッションを中断する
 
 ```bash
 curl -fsS --request POST "${CCBRICKS_APP_URL}/api/sessions/${SESSION_ID}/events" \
@@ -212,89 +223,32 @@ curl -fsS --request POST "${CCBRICKS_APP_URL}/api/sessions/${SESSION_ID}/events"
 JSON
 ```
 
-## 方式 B: Databricks Job を直接起動する
+上記は Bash の例です。Python、JavaScript、Windows PowerShell などで実装する場合は、その実行環境で UUID を生成してください。`$(uuidgen ...)` のような shell expression を文字列として送らないでください。
 
-Claude Agent を介さず、保存済み Databricks Job を単純に起動したいだけなら、Databricks Jobs API を直接呼びます。この場合、ジョブは `Authorization` に渡した token の主体で実行されます。
-
-```bash
-export DATABRICKS_HOST="https://<workspace-host>"
-export DATABRICKS_TOKEN="<oauth-or-pat-token>"
-export JOB_ID="11223344"
-export IDEMPOTENCY_TOKEN="$(uuidgen | tr "[:upper:]" "[:lower:]")"
-
-curl -fsS --request POST "${DATABRICKS_HOST}/api/2.2/jobs/run-now" \
-  -H "Authorization: Bearer ${DATABRICKS_TOKEN}" \
-  -H "Content-Type: application/json" \
-  --data-binary @- <<JSON
-{
-  "job_id": ${JOB_ID},
-  "idempotency_token": "${IDEMPOTENCY_TOKEN}",
-  "job_parameters": {
-    "example_param": "example_value"
-  }
-}
-JSON
-```
-
-レスポンス例:
-
-```json
-{
-  "run_id": 455644833,
-  "number_in_job": 455644833
-}
-```
-
-run の状態確認:
-
-```bash
-export RUN_ID="455644833"
-
-curl -fsS "${DATABRICKS_HOST}/api/2.2/jobs/runs/get?run_id=${RUN_ID}" \
-  -H "Authorization: Bearer ${DATABRICKS_TOKEN}" \
-  | jq
-```
-
-## 現在の ccbricks Jobs proxy API
-
-ccbricks には Jobs API の読み取り用 proxy が実装されています。どちらも ccbricks App の service principal で Databricks Jobs API を呼びます。
-
-### ジョブ一覧
-
-```bash
-curl -fsS "${CCBRICKS_APP_URL}/api/databricks/jobs/list?limit=20&name=my-job" \
-  -H "Authorization: Bearer ${CCBRICKS_TOKEN}" \
-  | jq
-```
-
-### Run 一覧
-
-```bash
-curl -fsS "${CCBRICKS_APP_URL}/api/databricks/jobs/runs/list?job_id=${JOB_ID}&limit=25" \
-  -H "Authorization: Bearer ${CCBRICKS_TOKEN}" \
-  | jq
-```
-
-## セッション payload リファレンス
+## 7. Payload リファレンス
 
 ### `SessionCreateRequest`
 
 | フィールド                         | 必須 | 説明                                                                     |
 | ---------------------------------- | ---- | ------------------------------------------------------------------------ |
-| `title`                            | 任意 | セッションタイトル                                                       |
-| `events`                           | 必須 | 初回ユーザーメッセージ。1 件以上必要                                     |
-| `session_context.model`            | 必須 | 許可済み実モデル ID。例: `databricks-claude-sonnet-4-6`                  |
+| `title`                            | 任意 | 人間が読める session title。可能なら external request ID を含めます。    |
+| `events`                           | 必須 | 初回 user message。1 件以上の wrapped event が必要です。                 |
+| `session_context.model`            | 必須 | 許可済みの実モデル ID。                                                  |
 | `session_context.permission_mode`  | 任意 | `auto`, `default`, `acceptEdits`, `bypassPermissions`, `plan`, `dontAsk` |
 | `session_context.effort_level`     | 任意 | `low`, `medium`, `high`, `xhigh`, `max`                                  |
-| `session_context.sources`          | 必須 | 作業対象の Databricks Workspace path または Git repository。空配列可     |
-| `session_context.outcomes`         | 必須 | 期待する成果物。空配列可                                                 |
-| `session_context.allowed_tools`    | 任意 | セッション単位で追加許可する MCP tool pattern                            |
-| `session_context.disallowed_tools` | 任意 | セッション単位で禁止する MCP tool pattern                                |
-| `session_context.mcp_config`       | 任意 | セッション単位の MCP 設定                                                |
+| `session_context.sources`          | 必須 | Databricks Workspace paths または Git repositories。空配列も可能です。   |
+| `session_context.outcomes`         | 必須 | 期待する出力先。空配列も可能です。                                       |
+| `session_context.allowed_tools`    | 任意 | 追加で許可する Claude Code または MCP tool pattern。                     |
+| `session_context.disallowed_tools` | 任意 | 禁止する Claude Code または MCP tool pattern。                           |
+| `session_context.mcp_config`       | 任意 | セッション単位の MCP server 設定。                                       |
 
-外部からの無人実行では、基本的に `permission_mode: "auto"` を使ってください。`permission_mode: "plan"` は `exit_plan_mode` イベントを受け取り、`exit_plan_mode_response` を返す実装が必要です。応答しない場合、Agent は最大 10 分待機し、タイムアウトでセッションが失敗する可能性があります。
+外部連携では、初回 prompt に objective、resource IDs、許可する副作用、必須の出力項目、失敗時の報告形式を明確に書いてください。Claude に渡るのは自然言語タスクなので、prompt の曖昧さはそのまま運用上の曖昧さになります。
 
-### Workspace source を指定する例
+## 8. Sources と outcomes
+
+Claude の working directory に Databricks Workspace file や Git repository を配置する必要がある場合に、sources と outcomes を使います。`Job run を調査して error を要約する` のような運用タスクでは空配列で構いません。
+
+### Workspace source の例
 
 ```json
 {
@@ -313,11 +267,11 @@ curl -fsS "${CCBRICKS_APP_URL}/api/databricks/jobs/runs/list?job_id=${JOB_ID}&li
 }
 ```
 
-Workspace source の export には `x-forwarded-access-token` が使われます。Service Principal M2M 呼び出しでこのヘッダーがどう渡るかは未検証です。Workspace source を使う外部連携では、最初に小さいディレクトリで export が成功するか確認してください。
+Workspace source export では `x-forwarded-access-token` が使われます。Service Principal M2M 呼び出しでこの header がどう渡るかは未検証です。外部連携で Workspace sources を使う場合は、最初に小さい directory で export を検証してください。
 
-`x-forwarded-access-token` がない場合、現在の実装はセッションを失敗させず、警告ログを出して Workspace export をスキップします。Service Principal M2M 連携では、この経路をエンドツーエンドで検証するまで Workspace source の指定を避けるか、セッション作業ディレクトリへの export に依存しないプロンプトにしてください。
+`x-forwarded-access-token` がない場合、現在の実装は session を失敗させず、warning log を出して Workspace export を skip します。この経路を end-to-end で検証するまで、export された file に prompt が依存しないようにしてください。
 
-### Git repository source を指定する例
+### Git repository source の例
 
 ```json
 {
@@ -336,20 +290,20 @@ Workspace source の export には `x-forwarded-access-token` が使われます
       "git_info": {
         "type": "github",
         "repo": "example/repo",
-        "branches": ["ccbricks/job-run-11223344"]
+        "branches": ["ccbricks/external-request-123"]
       }
     }
   ]
 }
 ```
 
-Git repository source を使う場合は、ccbricks 側の GitHub OAuth 設定と外部呼び出し主体のユーザー分離に注意してください。
+現在、`allow_unrestricted_git_push` は `true` である必要があります。read-only の Git repository session は session validation で拒否されます。Git session は強い権限を持つものとして扱い、専用 branch を使い、本番 branch は避け、`outcomes.git_info.branches` で期待する branch を明示してください。
 
-現在、`allow_unrestricted_git_push` は `true` である必要があります。読み取り専用の Git repository session はセッション検証で拒否されます。これは強い権限を持つモードとして扱い、専用リポジトリまたは専用ブランチを使い、本番ブランチは避け、`outcomes.git_info.branches` で期待するブランチを明示してください。
+## 9. MCP と tool 制御
 
-### MCP config の例
+`allowed_tools` と `disallowed_tools` は user settings と merge されます。無人セッションでは、ここで tool を制約してください。たとえば SQL write が明示的に必要でない限り、`mcp__dbsql__execute_sql` は `disallowed_tools` に入れておきます。
 
-`mcp_config` は標準の `mcpServers` 形式です。セッション単位で MCP サーバーを追加する必要がない場合は省略してください。
+`mcp_config` は標準の `mcpServers` 形式です。
 
 ```json
 {
@@ -365,40 +319,36 @@ Git repository source を使う場合は、ccbricks 側の GitHub OAuth 設定�
 }
 ```
 
-`http` / `sse` の MCP サーバーでは、ccbricks が forwarded OBO token を `Authorization` ヘッダーとして注入します。OBO token がない場合、そのサーバーは Agent runtime に追加されません。`stdio` サーバーは OBO token を必要としませんが、アプリ runtime 上でローカルコマンドを実行するため、信頼済み設定に限定してください。
+`http` / `sse` MCP server では、ccbricks が forwarded OBO token を `Authorization` header として注入します。OBO token がない場合、それらの server は Agent runtime に追加されません。`stdio` server は OBO token を必要としませんが、app runtime 上で local command を実行するため、信頼済み設定に限定してください。
 
-## 運用前の検証チェックリスト
+## 10. エラーハンドリング
 
-1. Service Principal M2M OAuth token で `${CCBRICKS_APP_URL}/api/health` が 200 になる。
-2. 呼び出し元 service principal に Databricks App の `CAN USE` 権限がある。
-3. ccbricks App の service principal に、対象 Job / SQL warehouse / Unity Catalog / Workspace path への権限がある。
-4. `POST /api/sessions` が 201 を返し、`GET /api/sessions/:id/events` で `assistant` または `result` event を取得できる。
-5. Job 実行を伴う場合、`GET /api/databricks/jobs/runs/list?job_id=...` または Databricks Jobs API `runs/get` で実行主体と状態を確認する。
-6. PAT を使う場合、まず `${CCBRICKS_APP_URL}/api/health` で検証する。失敗する場合は OAuth token に切り替える。
-7. 同じ外部リクエストを再送する可能性がある処理では、Databricks Jobs API の `idempotency_token` を必ず使う。
+よくある response:
 
-## 追加実装が必要なケース
+| Status | Meaning                                                                                                 |
+| ------ | ------------------------------------------------------------------------------------------------------- |
+| `201`  | Session が作成されました。進捗と最終出力は stream または events から読んでください。                    |
+| `400`  | invalid payload、invalid session context、invalid model、invalid event shape、archived state などです。 |
+| `401`  | App authentication 失敗、user ID missing、または GitHub authorization required です。                   |
+| `503`  | requested Git source に対して GitHub OAuth が設定されていません。                                       |
+| `500`  | internal setup、telemetry、Agent startup failure などです。                                             |
 
-### ccbricks 経由で `jobs/run-now` を直接公開したい
+推奨する retry behavior:
 
-`apps/api/src/routes/jobs.ts` に `POST /jobs/run-now` を追加し、`packages/types/src/jobs.ts` に request / response 型を追加します。既存の `jobs/list` と同じ構造で Databricks Jobs API に中継できます。
+- `POST /api/sessions` が client 側で timeout した場合、同じ副作用のある task をすぐ再投入しないでください。自分たちの integration state で external request ID に対応する session が既にないか確認します。
+- Claude に Databricks Job 起動を依頼する場合は、prompt に Databricks `idempotency_token` を含めます。
+- `/stream`, `/events`, `/sessions/:id` の read は backoff 付きで retry します。
+- auditability のため、`session_id`、external request ID、model ID、initial prompt、final event IDs を保存します。
 
-注意点:
+## 運用前チェックリスト
 
-- そのまま実装すると ccbricks App の service principal 権限で実行されます。
-- 外部呼び出し元 token の権限で実行したい場合は、`ctx.oboAccessToken` または Databricks Apps から転送される caller token の仕様を検証したうえで、AuthProvider の選択を設計する必要があります。
-- 冪等性のため `idempotency_token` を必須または強く推奨にしてください。
-- 許可する Job ID を allowlist 化することを推奨します。
-
-### 外部システム向けの安定 API を作りたい
-
-現在の `POST /api/sessions` は UI と共有される汎用セッション API です。外部ジョブ起動を本番運用するなら、次のような薄い専用 API を追加すると呼び出し側が安定します。
-
-```http
-POST /api/integrations/jobs/:job_id/run
-```
-
-内部では固定テンプレートからセッションを作る、または Databricks Jobs API を直接呼ぶ実装にします。これにより、外部連携側に Claude セッション payload の詳細を公開せずに済みます。
+1. Service Principal M2M OAuth token で `${CCBRICKS_APP_URL}/api/health` が `200` になる。
+2. caller service principal に Databricks App の `CAN USE` 権限がある。
+3. ccbricks App service principal に、prompt が必要とする Jobs、SQL warehouses、Unity Catalog objects、Workspace paths、repositories への権限がある。
+4. `POST /api/sessions` が `201` を返し、`/api/sessions/:id/stream` または `/api/sessions/:id/events` から Claude Agent events を取得できる。
+5. integration が `idle`, `error`, `archived` の session state を検知できる。
+6. 副作用のある prompt に external request ID と Databricks idempotency token が含まれている。
+7. PAT usage、Workspace source export、Git source handling、OBO-token MCP servers は本番運用前に end-to-end で検証済みである。
 
 ## 参考リンク
 
