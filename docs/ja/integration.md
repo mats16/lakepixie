@@ -1,6 +1,6 @@
 # 外部 API 連携ガイド
 
-[English](./INTEGRATION.md)
+[English](../en/integration.md)
 
 このドキュメントは、Databricks Apps 上で動作する ccbricks を外部システムから直接呼び出し、Claude Agent セッションとしてジョブ実行や調査を開始するためのガイドです。
 

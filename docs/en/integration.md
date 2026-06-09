@@ -1,6 +1,6 @@
 # External API Integration Guide
 
-[日本語](./INTEGRATION.ja.md)
+[日本語](../ja/integration.md)
 
 This guide explains how to call ccbricks directly from an external system while it is running on Databricks Apps, and how to start job execution or investigation work as a Claude Agent session.
 
