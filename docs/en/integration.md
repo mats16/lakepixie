@@ -23,15 +23,15 @@ If the external system only needs a deterministic Databricks Job trigger and doe
 
 Treat access to the Databricks App, the Agent runtime identity, and delegated user tokens separately.
 
-| Concern                               | Identity or credential                                                            | Current behavior                                                                                              |
-| ------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Access to the ccbricks App            | OAuth token from the external caller. Service Principal M2M OAuth is recommended. | Databricks Apps validates `Authorization: Bearer ...` before the request reaches ccbricks.                    |
-| Databricks API calls made by ccbricks | The service principal assigned to the ccbricks App                                | `apps/api/src/lib/databricks-auth.ts` uses `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET`.               |
-| Forwarded user token                  | `x-forwarded-access-token` from Databricks Apps                                   | Used for Workspace source export and some OBO-token MCP server setup. Service Principal behavior is untested. |
+| Concern                               | Identity or credential                                                                   | Current behavior                                                                                              |
+| ------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Access to the ccbricks App            | OAuth Bearer token from the external caller. Service Principal M2M OAuth is recommended. | Databricks Apps validates `Authorization: Bearer ...` before the request reaches ccbricks.                    |
+| Databricks API calls made by ccbricks | The service principal assigned to the ccbricks App                                       | `apps/api/src/lib/databricks-auth.ts` uses `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET`.               |
+| Forwarded user token                  | `x-forwarded-access-token` from Databricks Apps                                          | Used for Workspace source export and some OBO-token MCP server setup. Service Principal behavior is untested. |
 
 The key caveat is that the caller identity grants access to the App, while Databricks work inside the Agent usually runs as the ccbricks App service principal. If a Databricks Job must run as the external caller service principal, use the Databricks Jobs API directly or add a dedicated proxy that explicitly uses the caller token.
 
-PATs are supported by Databricks workspace REST APIs as a legacy authentication method. Calling the Databricks Apps public URL with a PAT is unverified. Prefer OAuth Bearer tokens for App access, and verify `/api/health` before relying on PATs.
+PATs cannot be used to call the Databricks Apps public URL, including `/api/health` and `/api/sessions`. PATs may still be valid for Databricks workspace REST APIs, but ccbricks App access requires an OAuth Bearer token.
 
 ## Prerequisites
 
@@ -45,6 +45,8 @@ PATs are supported by Databricks workspace REST APIs as a legacy authentication 
 - If using Git repository sources, GitHub OAuth and repository permissions are configured for the caller path you expect.
 
 ## 1. Get an App Access Token
+
+Use an OAuth Bearer token for every request to the ccbricks App.
 
 Service Principal M2M OAuth example:
 
@@ -325,13 +327,13 @@ For `http` and `sse` MCP servers, ccbricks injects the forwarded OBO token as an
 
 Common responses:
 
-| Status | Meaning                                                                                          |
-| ------ | ------------------------------------------------------------------------------------------------ |
-| `201`  | Session was created. Read stream or events for progress and final output.                        |
-| `400`  | Invalid payload, invalid session context, invalid model, invalid event shape, or archived state. |
-| `401`  | App authentication failed, user ID is missing, or GitHub authorization is required.              |
-| `503`  | GitHub OAuth is not configured for a requested Git source.                                       |
-| `500`  | Internal setup, telemetry, or Agent startup failure.                                             |
+| Status | Meaning                                                                                                                  |
+| ------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `201`  | Session was created. Read stream or events for progress and final output.                                                |
+| `400`  | Invalid payload, invalid session context, invalid model, invalid event shape, or archived state.                         |
+| `401`  | App OAuth authentication failed, a PAT was used for App access, user ID is missing, or GitHub authorization is required. |
+| `503`  | GitHub OAuth is not configured for a requested Git source.                                                               |
+| `500`  | Internal setup, telemetry, or Agent startup failure.                                                                     |
 
 Recommended retry behavior:
 
@@ -348,7 +350,7 @@ Recommended retry behavior:
 4. `POST /api/sessions` returns `201`, and `/api/sessions/:id/stream` or `/api/sessions/:id/events` produces Claude Agent events.
 5. The integration detects `idle`, `error`, and `archived` session states.
 6. Side-effecting prompts include external request IDs and Databricks idempotency tokens.
-7. PAT usage, Workspace source export, Git source handling, and OBO-token MCP servers are verified end to end before production use.
+7. No caller uses PATs for ccbricks App access; Workspace source export, Git source handling, and OBO-token MCP servers are verified end to end before production use.
 
 ## References
 
@@ -356,5 +358,4 @@ Recommended retry behavior:
 - Databricks Apps authorization model: https://docs.databricks.com/aws/en/dev-tools/databricks-apps/auth
 - HTTP headers forwarded by Databricks Apps: https://docs.databricks.com/aws/en/dev-tools/databricks-apps/http-headers
 - Service Principal OAuth M2M: https://docs.databricks.com/aws/en/dev-tools/auth/oauth-m2m
-- Personal Access Tokens: https://docs.databricks.com/aws/en/dev-tools/auth/pat
 - Jobs API `run-now`: https://docs.databricks.com/api/workspace/jobs/runNow

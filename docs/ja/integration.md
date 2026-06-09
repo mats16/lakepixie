@@ -23,15 +23,15 @@
 
 Databricks App への入場、Agent runtime の実行主体、ユーザー代理 token は分けて考えます。
 
-| 観点                                    | 使われる権限                                                        | 現在の挙動                                                                                                       |
-| --------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| ccbricks App への入場                   | 外部呼び出し元の OAuth token。Service Principal の M2M OAuth を推奨 | Databricks Apps が `Authorization: Bearer ...` を検証してから ccbricks にリクエストを渡す                        |
-| ccbricks から Databricks API を呼ぶ権限 | ccbricks App に割り当てられた service principal                     | `apps/api/src/lib/databricks-auth.ts` が `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` を使う              |
-| forwarded user token                    | Databricks Apps が転送する `x-forwarded-access-token`               | Workspace source export と一部の OBO-token MCP server 設定で使う。Service Principal 呼び出し時の挙動は未検証です |
+| 観点                                    | 使われる権限                                                               | 現在の挙動                                                                                                       |
+| --------------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| ccbricks App への入場                   | 外部呼び出し元の OAuth Bearer token。Service Principal の M2M OAuth を推奨 | Databricks Apps が `Authorization: Bearer ...` を検証してから ccbricks にリクエストを渡す                        |
+| ccbricks から Databricks API を呼ぶ権限 | ccbricks App に割り当てられた service principal                            | `apps/api/src/lib/databricks-auth.ts` が `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` を使う              |
+| forwarded user token                    | Databricks Apps が転送する `x-forwarded-access-token`                      | Workspace source export と一部の OBO-token MCP server 設定で使う。Service Principal 呼び出し時の挙動は未検証です |
 
 重要な注意点は、caller identity は App への入場権限であり、Agent 内の Databricks 操作は基本的に ccbricks App の service principal として実行されることです。Databricks Job を外部呼び出し元 service principal の権限で実行する必要がある場合は、Databricks Jobs API を直接呼ぶか、呼び出し元 token を明示的に使う専用 proxy を追加してください。
 
-PAT は Databricks workspace REST API では legacy な認証方式として使えますが、Databricks Apps の公開 URL を PAT で呼べるかは未検証です。App への入場には OAuth Bearer token を推奨します。PAT を使う場合は、運用前に `/api/health` が成功するか確認してください。
+PAT では Databricks Apps の公開 URL を呼び出せません。`/api/health` と `/api/sessions` を含む ccbricks App へのアクセスには OAuth Bearer token が必要です。PAT は Databricks workspace REST API では使える場合がありますが、ccbricks App への入場には使わないでください。
 
 ## 前提条件
 
@@ -45,6 +45,8 @@ PAT は Databricks workspace REST API では legacy な認証方式として使�
 - Git repository sources を使う場合、想定する呼び出し経路で GitHub OAuth と repository permission が設定されていること
 
 ## 1. App へのアクセス token を取得する
+
+ccbricks App へのすべてのリクエストには OAuth Bearer token を使います。
 
 Service Principal の M2M OAuth 例です。
 
@@ -325,13 +327,13 @@ Workspace source export では `x-forwarded-access-token` が使われます。S
 
 よくある response:
 
-| Status | Meaning                                                                                                 |
-| ------ | ------------------------------------------------------------------------------------------------------- |
-| `201`  | Session が作成されました。進捗と最終出力は stream または events から読んでください。                    |
-| `400`  | invalid payload、invalid session context、invalid model、invalid event shape、archived state などです。 |
-| `401`  | App authentication 失敗、user ID missing、または GitHub authorization required です。                   |
-| `503`  | requested Git source に対して GitHub OAuth が設定されていません。                                       |
-| `500`  | internal setup、telemetry、Agent startup failure などです。                                             |
+| Status | Meaning                                                                                                                     |
+| ------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `201`  | Session が作成されました。進捗と最終出力は stream または events から読んでください。                                        |
+| `400`  | invalid payload、invalid session context、invalid model、invalid event shape、archived state などです。                     |
+| `401`  | App OAuth authentication 失敗、App access に PAT を使っている、user ID missing、または GitHub authorization required です。 |
+| `503`  | requested Git source に対して GitHub OAuth が設定されていません。                                                           |
+| `500`  | internal setup、telemetry、Agent startup failure などです。                                                                 |
 
 推奨する retry behavior:
 
@@ -348,7 +350,7 @@ Workspace source export では `x-forwarded-access-token` が使われます。S
 4. `POST /api/sessions` が `201` を返し、`/api/sessions/:id/stream` または `/api/sessions/:id/events` から Claude Agent events を取得できる。
 5. integration が `idle`, `error`, `archived` の session state を検知できる。
 6. 副作用のある prompt に external request ID と Databricks idempotency token が含まれている。
-7. PAT usage、Workspace source export、Git source handling、OBO-token MCP servers は本番運用前に end-to-end で検証済みである。
+7. ccbricks App access に PAT を使っていない。Workspace source export、Git source handling、OBO-token MCP servers は本番運用前に end-to-end で検証済みである。
 
 ## 参考リンク
 
@@ -356,5 +358,4 @@ Workspace source export では `x-forwarded-access-token` が使われます。S
 - Databricks Apps の authorization model: https://docs.databricks.com/aws/en/dev-tools/databricks-apps/auth
 - Databricks Apps が転送する HTTP headers: https://docs.databricks.com/aws/en/dev-tools/databricks-apps/http-headers
 - Service Principal OAuth M2M: https://docs.databricks.com/aws/en/dev-tools/auth/oauth-m2m
-- Personal Access Tokens: https://docs.databricks.com/aws/en/dev-tools/auth/pat
 - Jobs API `run-now`: https://docs.databricks.com/api/workspace/jobs/runNow
