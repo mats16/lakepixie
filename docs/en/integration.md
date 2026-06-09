@@ -15,7 +15,7 @@ Use this integration when an external system needs Claude to:
 - perform multi-step Databricks operations through the tools available to the Agent
 - modify a Workspace or Git source and return a reviewable outcome
 
-`POST /api/sessions` is an asynchronous task submission API. A `201` response means that ccbricks accepted and initialized the session; it does not mean that Claude has finished the work. Read the session stream or events to track progress and collect the final answer.
+`POST /api/sessions` is asynchronous. A `201` response means ccbricks accepted and initialized the session, not that Claude has finished. Use the session stream or events to track progress and collect the final answer.
 
 If the external system only needs a deterministic Databricks Job trigger and does not need Claude reasoning, call the Databricks Jobs API directly instead. ccbricks currently has read-only Jobs proxy endpoints, but no `jobs/run-now` proxy endpoint.
 
@@ -29,15 +29,15 @@ Treat access to the Databricks App, the Agent runtime identity, and delegated us
 | Databricks API calls made by ccbricks | The service principal assigned to the ccbricks App                                | `apps/api/src/lib/databricks-auth.ts` uses `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET`.               |
 | Forwarded user token                  | `x-forwarded-access-token` from Databricks Apps                                   | Used for Workspace source export and some OBO-token MCP server setup. Service Principal behavior is untested. |
 
-The practical result is that an external service principal can call ccbricks, but Databricks operations performed inside the Agent generally run as the ccbricks App service principal. If a Databricks Job must run as the external caller service principal, use the Databricks Jobs API directly or add a dedicated proxy that explicitly uses the caller token.
+The key caveat is that the caller identity grants access to the App, while Databricks work inside the Agent usually runs as the ccbricks App service principal. If a Databricks Job must run as the external caller service principal, use the Databricks Jobs API directly or add a dedicated proxy that explicitly uses the caller token.
 
 PATs are supported by Databricks workspace REST APIs as a legacy authentication method. Calling the Databricks Apps public URL with a PAT is unverified. Prefer OAuth Bearer tokens for App access, and verify `/api/health` before relying on PATs.
 
 ## Prerequisites
 
 - ccbricks is deployed and running on Databricks Apps.
-- The external caller user or service principal has `CAN USE` permission on the Databricks App.
-- For service-principal callers, an OAuth secret has been created.
+- The external caller has `CAN USE` permission on the Databricks App.
+- Service-principal callers have an OAuth secret.
 - The ccbricks App service principal has the Databricks permissions needed by Claude's task:
   - permission to run or inspect target Jobs
   - access to SQL warehouses, Unity Catalog objects, Workspace files, and other required resources
@@ -128,12 +128,12 @@ JSON
 
 Important details:
 
-- `session_context.model` should be an actual allowed model ID, for example `databricks-claude-sonnet-4-6`. The UI also normally resolves selections to actual model IDs before sending them. Short names such as `sonnet` exist only for backward compatibility.
-- The first event must use the session-create wrapper shape: `{ "type": "event", "data": { ... } }`.
-- `data.session_id` is sent as an empty string on create. ccbricks returns the real session ID in the response.
-- Use `permission_mode: "auto"` for unattended automation. `permission_mode: "plan"` requires the caller to handle plan approval events.
+- Use an actual allowed model ID such as `databricks-claude-sonnet-4-6`. Short names such as `sonnet` are only for backward compatibility.
+- Create requests use the wrapper shape `{ "type": "event", "data": { ... } }`; follow-up messages do not.
+- Send `data.session_id` as an empty string. ccbricks returns the real session ID.
+- Use `permission_mode: "auto"` for unattended automation. `plan` mode requires a plan-approval loop.
 - `sources: []` and `outcomes: []` are valid for tasks that only need runtime tools or Databricks APIs.
-- The session API itself has no idempotency key. Store the returned session ID and avoid blindly retrying a timed-out create request. Put your external request ID and Databricks job idempotency token in the prompt when the task may trigger side effects.
+- `POST /api/sessions` has no idempotency key. Store the returned session ID and avoid blindly retrying timed-out, side-effecting requests. Put your external request ID and Databricks job idempotency token in the prompt.
 
 ## 4. Read Claude's Progress and Final Answer
 
@@ -158,7 +158,7 @@ curl -fsS "${CCBRICKS_APP_URL}/api/sessions/${SESSION_ID}/events?limit=100" \
   | jq
 ```
 
-When polling, use a bounded interval such as 2-5 seconds with backoff. Stop when `session_status` becomes `idle`, `error`, or `archived`. Use the `after` cursor or response `last_id` to avoid repeatedly fetching the same events.
+When polling, use a 2-5 second interval with backoff. Stop when `session_status` becomes `idle`, `error`, or `archived`, and use the `after` cursor or response `last_id` to avoid refetching events.
 
 Session status reference:
 
@@ -170,7 +170,7 @@ Session status reference:
 | `error`          | Setup or Agent execution failed.                                               |
 | `archived`       | Session has been archived.                                                     |
 
-Event streams contain Claude Agent SDK messages. In external automation, treat the final `assistant` or `result` message after the session becomes `idle` as the canonical response, and keep the full event log for auditability.
+Event streams contain Claude Agent SDK messages. Treat the final `assistant` or `result` message after `idle` as the canonical response, and keep the full event log for auditability.
 
 ## 5. Send Follow-Up Instructions
 
@@ -200,7 +200,7 @@ curl -fsS --request POST "${CCBRICKS_APP_URL}/api/sessions/${SESSION_ID}/events"
 JSON
 ```
 
-If `permission_mode: "plan"` is used, the caller must watch for an `exit_plan_mode` request and respond with an `exit_plan_mode_response` control request. For unattended integrations, avoid plan mode unless that approval loop is implemented.
+If `permission_mode: "plan"` is used, the caller must watch for `exit_plan_mode` and respond with an `exit_plan_mode_response` control request. Avoid plan mode in unattended integrations unless that approval loop exists.
 
 ## 6. Abort an Active Session
 
@@ -242,11 +242,11 @@ The examples above are Bash snippets. If you implement the same calls in Python,
 | `session_context.disallowed_tools` | No       | Claude Code or MCP tool patterns to block.                                  |
 | `session_context.mcp_config`       | No       | Session-scoped MCP server configuration.                                    |
 
-For external automation, keep the first prompt explicit about the objective, resource IDs, allowed side effects, required output fields, and failure reporting format. Claude is receiving a natural-language task, so ambiguity in the prompt becomes operational ambiguity.
+For external automation, make the first prompt explicit about the objective, resource IDs, allowed side effects, required output fields, and failure format. Claude receives a natural-language task, so prompt ambiguity becomes operational ambiguity.
 
 ## 8. Sources and Outcomes
 
-Use sources and outcomes when Claude needs a working directory populated from Databricks Workspace files or Git repositories. Leave them empty for pure operational tasks such as "inspect this Job run and summarize the error."
+Use sources and outcomes only when Claude needs Workspace files or Git repositories in its working directory. Leave them empty for operational tasks such as "inspect this Job run and summarize the error."
 
 ### Workspace Source Example
 
@@ -267,7 +267,7 @@ Use sources and outcomes when Claude needs a working directory populated from Da
 }
 ```
 
-Workspace source export uses `x-forwarded-access-token`. How this header behaves for Service Principal M2M calls is unverified. For external integrations that use Workspace sources, first validate export with a small directory.
+Workspace source export uses `x-forwarded-access-token`. Service Principal M2M behavior is unverified, so validate export with a small directory before using Workspace sources in external integrations.
 
 If `x-forwarded-access-token` is missing, the current implementation logs a warning and skips Workspace export instead of failing the session. Do not make the prompt depend on exported files until this path is verified end to end.
 
@@ -297,11 +297,11 @@ If `x-forwarded-access-token` is missing, the current implementation logs a warn
 }
 ```
 
-`allow_unrestricted_git_push` must currently be `true`; read-only Git repository sessions are rejected during session validation. Treat Git sessions as privileged. Use dedicated branches, avoid production branches, and make the expected branch explicit in `outcomes.git_info.branches`.
+`allow_unrestricted_git_push` must currently be `true`; read-only Git repository sessions are rejected during validation. Treat Git sessions as privileged: use dedicated branches, avoid production branches, and set the expected branch in `outcomes.git_info.branches`.
 
 ## 9. MCP and Tool Controls
 
-`allowed_tools` and `disallowed_tools` are merged with user settings. Use them to constrain unattended sessions. For example, keep `mcp__dbsql__execute_sql` in `disallowed_tools` unless SQL writes are explicitly required.
+`allowed_tools` and `disallowed_tools` are merged with user settings. Use them to constrain unattended sessions; for example, keep `mcp__dbsql__execute_sql` in `disallowed_tools` unless SQL writes are required.
 
 `mcp_config` follows the standard `mcpServers` shape:
 
@@ -319,7 +319,7 @@ If `x-forwarded-access-token` is missing, the current implementation logs a warn
 }
 ```
 
-For `http` and `sse` MCP servers, ccbricks injects the forwarded OBO token as an `Authorization` header. If no OBO token is available, those servers are not added to the Agent runtime. `stdio` servers do not require OBO token injection but execute local commands in the app runtime, so use them only with trusted configuration.
+For `http` and `sse` MCP servers, ccbricks injects the forwarded OBO token as an `Authorization` header. Without an OBO token, those servers are not added to the Agent runtime. `stdio` servers execute local commands in the app runtime, so use them only with trusted configuration.
 
 ## 10. Error Handling
 
@@ -335,7 +335,7 @@ Common responses:
 
 Recommended retry behavior:
 
-- If `POST /api/sessions` times out client-side, do not immediately submit the same side-effecting task again. Check whether a session with the external request ID already exists in your own integration state.
+- If `POST /api/sessions` times out client-side, do not immediately resubmit the same side-effecting task. Check your integration state for an existing session with the external request ID.
 - If the prompt asks Claude to trigger a Databricks Job, include a Databricks `idempotency_token` in the instruction.
 - Retry reads from `/stream`, `/events`, and `/sessions/:id` with backoff.
 - Store `session_id`, external request ID, model ID, initial prompt, and final event IDs for auditability.
